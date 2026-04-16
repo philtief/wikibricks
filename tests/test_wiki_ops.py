@@ -275,8 +275,10 @@ class TestCreateUcFunctionsSql:
         stmts = create_uc_functions_sql("wh-123")
         write_fn = stmts[2]
         assert "fn_wiki_write" in write_fn
+        assert "PROCEDURE" in write_fn
+        assert "SQL SECURITY INVOKER" in write_fn
         assert "page_path STRING" in write_fn
-        assert "title STRING" in write_fn
+        assert "new_title STRING" in write_fn
         assert "content_json STRING" in write_fn
         assert PAGES_TABLE in write_fn
 
@@ -286,6 +288,8 @@ class TestCreateUcFunctionsSql:
         assert "fn_wiki_history" in history_fn
         assert "page_path STRING" in history_fn
         assert HISTORY_TABLE in history_fn
+        # Uses subquery for ORDER BY before aggregation
+        assert history_fn.count("SELECT") >= 2
 
     def test_all_functions_use_catalog_schema(self):
         stmts = create_uc_functions_sql("wh-123")

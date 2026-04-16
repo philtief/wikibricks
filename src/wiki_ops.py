@@ -87,6 +87,7 @@ def write_page_sql(path, title, page_type, content_json, created_by, tags=None):
     """
     tags_sql = f"ARRAY({','.join(repr(t) for t in tags)})" if tags else "ARRAY()"
     content_escaped = json.dumps(content_json) if isinstance(content_json, dict) else content_json
+    content_escaped = content_escaped.replace("'", "''")
 
     archive_sql = f"""
     INSERT INTO {HISTORY_TABLE}
@@ -240,62 +241,60 @@ def create_uc_functions_sql(warehouse_id):
         page_path STRING COMMENT 'The wiki page path, e.g. claims/fraud/patterns'
     )
     RETURNS STRING
-    COMMENT 'Read a wiki page by path. Returns JSON with page content and cross-references.'
+    COMMENT 'Read a wiki page by path. Returns JSON with full page content.'
     RETURN (
-        SELECT to_json(struct(
-            p.page_id, p.path, p.title, p.page_type, p.content, p.tags,
-            p.created_by, p.created_at, p.updated_at, p.version,
-            collect_list(struct(l.target_page_id, l.link_type,
-                               t.path AS target_path, t.title AS target_title)) AS links
-        ))
-        FROM {PAGES_TABLE} p
-        LEFT JOIN {LINKS_TABLE} l ON p.page_id = l.source_page_id
-        LEFT JOIN {PAGES_TABLE} t ON l.target_page_id = t.page_id
-        WHERE p.path = page_path
-        GROUP BY p.page_id, p.path, p.title, p.page_type, p.content, p.tags,
-                 p.created_by, p.created_at, p.updated_at, p.version
+        SELECT first(to_json(struct(
+            page_id, path, title, page_type, content, tags,
+            created_by, created_at, updated_at, version
+        )))
+        FROM {PAGES_TABLE}
+        WHERE path = page_path
     )
     """
 
     fn_write = f"""
-    CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_write(
+    CREATE OR REPLACE PROCEDURE {CATALOG}.{SCHEMA}.fn_wiki_write(
         page_path STRING COMMENT 'The wiki page path, e.g. claims/fraud/patterns',
-        title STRING COMMENT 'Page title',
-        page_type STRING DEFAULT 'concept' COMMENT 'Page type: entity, concept, synthesis, or comparison',
+        new_title STRING COMMENT 'Page title',
         content_json STRING COMMENT 'Page content as JSON with summary and body fields',
-        created_by STRING DEFAULT 'agent' COMMENT 'Who created this version'
+        page_type STRING DEFAULT 'concept'
+            COMMENT 'Page type: entity, concept, synthesis, or comparison',
+        author STRING DEFAULT 'agent' COMMENT 'Who created this version'
     )
-    RETURNS STRING
-    COMMENT 'Write or update a wiki page. Archives the previous version to history, then MERGE into current table.'
-    LANGUAGE SQL
-    NOT DETERMINISTIC
+    SQL SECURITY INVOKER
     BEGIN
-        -- Archive current version to history
         INSERT INTO {HISTORY_TABLE}
-        (page_id, path, title, page_type, content, content_text, tags, created_by, created_at, version)
-        SELECT page_id, path, title, page_type, content, content_text, tags, created_by, created_at, version
+        (page_id, path, title, page_type, content, content_text, tags,
+         created_by, created_at, version)
+        SELECT page_id, path, title, page_type, content, content_text,
+               tags, created_by, created_at, version
         FROM {PAGES_TABLE}
         WHERE path = page_path;
 
-        -- MERGE into current table (upsert)
         MERGE INTO {PAGES_TABLE} AS target
         USING (SELECT page_path AS path) AS source
         ON target.path = source.path
         WHEN MATCHED THEN UPDATE SET
-            title = title,
-            page_type = page_type,
+            title = new_title,
+            page_type = fn_wiki_write.page_type,
             content = PARSE_JSON(content_json),
-            content_text = concat(PARSE_JSON(content_json):summary::STRING, ' ', PARSE_JSON(content_json):body::STRING),
-            created_by = created_by,
+            content_text = concat(
+                PARSE_JSON(content_json):summary::STRING, ' ',
+                PARSE_JSON(content_json):body::STRING),
+            created_by = author,
             updated_at = current_timestamp(),
             version = target.version + 1
         WHEN NOT MATCHED THEN INSERT
-            (page_id, path, title, page_type, content, content_text, created_by, version)
-        VALUES (uuid(), page_path, title, page_type, PARSE_JSON(content_json),
-                concat(PARSE_JSON(content_json):summary::STRING, ' ', PARSE_JSON(content_json):body::STRING),
-                created_by, 1);
+            (page_id, path, title, page_type, content, content_text,
+             created_by, version)
+        VALUES (uuid(), page_path, new_title, fn_wiki_write.page_type,
+                PARSE_JSON(content_json),
+                concat(
+                    PARSE_JSON(content_json):summary::STRING, ' ',
+                    PARSE_JSON(content_json):body::STRING),
+                author, 1);
 
-        RETURN concat('wrote ', page_path);
+        SELECT concat('wrote ', page_path) AS result;
     END
     """
 
@@ -307,12 +306,15 @@ def create_uc_functions_sql(warehouse_id):
     COMMENT 'Get version history for a wiki page. Returns JSON array of past versions.'
     RETURN (
         SELECT to_json(collect_list(struct(
-            version, created_by, created_at,
-            content:summary::STRING AS summary
+            version, created_by, created_at, summary
         )))
-        FROM {HISTORY_TABLE}
-        WHERE path = page_path
-        ORDER BY version DESC
+        FROM (
+            SELECT version, created_by, created_at,
+                   content:summary::STRING AS summary
+            FROM {HISTORY_TABLE}
+            WHERE path = page_path
+            ORDER BY version DESC
+        )
     )
     """
 
