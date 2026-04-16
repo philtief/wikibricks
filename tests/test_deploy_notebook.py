@@ -1,7 +1,6 @@
 """Tests for the deployment notebook — validates it's valid Python and uses wiki_ops correctly."""
 
 import ast
-import importlib
 
 
 class TestDeployNotebookSyntax:

@@ -11,9 +11,10 @@ import json
 import sys
 import time
 
-sys.path.insert(0, "/Workspace/Repos/wikibricks/src")
+sys.path.insert(0, "/Workspace/Shared/wikibricks/src")
 
 from databricks.sdk import WorkspaceClient
+from databricks.sdk.service.vectorsearch import EndpointType
 
 from wiki_ops import (
     VS_ENDPOINT,
@@ -71,7 +72,7 @@ try:
 except Exception:
     endpoint = w.vector_search_endpoints.create_endpoint(
         name=VS_ENDPOINT,
-        endpoint_type="STANDARD",
+        endpoint_type=EndpointType.STANDARD,
     )
     print(f"Created endpoint {VS_ENDPOINT}")
 
@@ -132,18 +133,26 @@ for page in seed_pages():
 # COMMAND ----------
 
 spec = create_vs_index_spec()
-w.vector_search_indexes.sync_index(index_name=spec["name"])
-print("Triggered VS index sync. Waiting for completion...")
+# sync_index has a built-in 5-min wait that can timeout during initial provisioning.
+# Use a manual polling loop with a longer timeout instead.
+try:
+    w.vector_search_indexes.sync_index(index_name=spec["name"])
+    print("Triggered VS index sync.")
+except Exception as e:
+    print(f"sync_index returned: {e} — polling for readiness.")
 
-# Poll until sync completes (up to 5 minutes)
-for _ in range(30):
+# Poll until index is ready (up to 15 minutes for initial provisioning + sync)
+print("Waiting for index to be ready...")
+for i in range(90):
     index = w.vector_search_indexes.get_index(spec["name"])
     if index.status.ready:
         print(f"Index ready. Row count: {index.status.index_row_count}")
         break
+    if i % 6 == 0:
+        print(f"  [{i * 10}s] status: {index.status.detailed_state or index.status.message}")
     time.sleep(10)
 else:
-    print("Warning: index sync did not complete within 5 minutes")
+    print("Warning: index not ready after 15 minutes")
 
 # COMMAND ----------
 

@@ -10,7 +10,7 @@
 
 import sys
 
-sys.path.insert(0, "/Workspace/Repos/wikibricks/src")
+sys.path.insert(0, "/Workspace/Shared/wikibricks/src")
 
 from databricks.sdk import WorkspaceClient
 

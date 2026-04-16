@@ -2,6 +2,13 @@
 
 import json
 
+from databricks.sdk.service.vectorsearch import (
+    DeltaSyncVectorIndexSpecRequest,
+    EmbeddingSourceColumn,
+    PipelineType,
+    VectorIndexType,
+)
+
 CATALOG = "agent_marketplace_catalog"
 SCHEMA = "wiki"
 PAGES_TABLE = f"{CATALOG}.{SCHEMA}.pages"
@@ -17,14 +24,13 @@ def create_tables_sql():
     return [
         f"""
         CREATE TABLE IF NOT EXISTS {PAGES_TABLE} (
-            page_id      STRING        DEFAULT uuid(),
+            page_id      STRING        NOT NULL,
             path         STRING        NOT NULL,
             path_depth   INT           GENERATED ALWAYS AS (size(split(path, '/'))),
             title        STRING        NOT NULL,
             page_type    STRING        NOT NULL,
             content      VARIANT       NOT NULL,
-            content_text STRING        GENERATED ALWAYS AS (
-                             concat(content:summary::STRING, ' ', content:body::STRING)),
+            content_text STRING,
             tags         ARRAY<STRING>,
             created_by   STRING        NOT NULL,
             created_at   TIMESTAMP     DEFAULT current_timestamp(),
@@ -32,7 +38,10 @@ def create_tables_sql():
             version      INT           NOT NULL DEFAULT 1
         )
         USING DELTA
-        TBLPROPERTIES ('delta.enableChangeDataFeed' = 'true')
+        TBLPROPERTIES (
+            'delta.enableChangeDataFeed' = 'true',
+            'delta.feature.allowColumnDefaults' = 'supported'
+        )
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {HISTORY_TABLE} (
@@ -49,6 +58,7 @@ def create_tables_sql():
             archived_at  TIMESTAMP     DEFAULT current_timestamp()
         )
         USING DELTA
+        TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {LINKS_TABLE} (
@@ -58,6 +68,7 @@ def create_tables_sql():
             created_at      TIMESTAMP DEFAULT current_timestamp()
         )
         USING DELTA
+        TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
         """,
     ]
 
@@ -93,14 +104,21 @@ def write_page_sql(path, title, page_type, content_json, created_by, tags=None):
         title = '{title}',
         page_type = '{page_type}',
         content = PARSE_JSON('{content_escaped}'),
+        content_text = concat(
+            PARSE_JSON('{content_escaped}'):summary::STRING, ' ',
+            PARSE_JSON('{content_escaped}'):body::STRING),
         tags = {tags_sql},
         created_by = '{created_by}',
         updated_at = current_timestamp(),
         version = target.version + 1
     WHEN NOT MATCHED THEN INSERT
-        (path, title, page_type, content, tags, created_by, version)
-    VALUES ('{path}', '{title}', '{page_type}',
-            PARSE_JSON('{content_escaped}'), {tags_sql}, '{created_by}', 1)
+        (page_id, path, title, page_type, content, content_text, tags, created_by, version)
+    VALUES (uuid(), '{path}', '{title}', '{page_type}',
+            PARSE_JSON('{content_escaped}'),
+            concat(
+                PARSE_JSON('{content_escaped}'):summary::STRING, ' ',
+                PARSE_JSON('{content_escaped}'):body::STRING),
+            {tags_sql}, '{created_by}', 1)
     """
 
     return [archive_sql, merge_sql]
@@ -119,7 +137,7 @@ def search_query(query_text, mode="HYBRID", num_results=5):
 
     kwargs = {
         "index_name": VS_INDEX,
-        "columns": ["page_id", "path", "title", "page_type", "content", "tags", "version"],
+        "columns": ["page_id", "path", "title", "page_type", "content_text", "tags", "version"],
         "query_text": query_text,
         "num_results": num_results,
     }
@@ -165,31 +183,31 @@ def version_history_sql(path):
 
 
 def create_vs_index_spec():
-    """Return the spec for creating the Vector Search index."""
+    """Return kwargs for ``w.vector_search_indexes.create_index()``."""
     return {
         "name": VS_INDEX,
         "endpoint_name": VS_ENDPOINT,
         "primary_key": "page_id",
-        "index_type": "DELTA_SYNC",
-        "delta_sync_index_spec": {
-            "source_table": PAGES_TABLE,
-            "pipeline_type": "TRIGGERED",
-            "embedding_source_columns": [
-                {
-                    "name": "content_text",
-                    "embedding_model_endpoint_name": EMBEDDING_MODEL,
-                }
+        "index_type": VectorIndexType.DELTA_SYNC,
+        "delta_sync_index_spec": DeltaSyncVectorIndexSpecRequest(
+            source_table=PAGES_TABLE,
+            pipeline_type=PipelineType.TRIGGERED,
+            embedding_source_columns=[
+                EmbeddingSourceColumn(
+                    name="content_text",
+                    embedding_model_endpoint_name=EMBEDDING_MODEL,
+                )
             ],
-            "columns_to_sync": [
+            columns_to_sync=[
                 "page_id",
                 "path",
                 "title",
                 "page_type",
-                "content",
+                "content_text",
                 "tags",
                 "version",
             ],
-        },
+        ),
     }
 
 
@@ -209,7 +227,7 @@ def create_uc_functions_sql(warehouse_id):
     RETURN (
         SELECT to_json(collect_list(struct(
             page_id, path, title, page_type,
-            content:summary::STRING AS summary, tags, version
+            content_text, tags, version
         )))
         FROM {PAGES_TABLE}
         WHERE content_text LIKE concat('%', question, '%')
@@ -267,12 +285,15 @@ def create_uc_functions_sql(warehouse_id):
             title = title,
             page_type = page_type,
             content = PARSE_JSON(content_json),
+            content_text = concat(PARSE_JSON(content_json):summary::STRING, ' ', PARSE_JSON(content_json):body::STRING),
             created_by = created_by,
             updated_at = current_timestamp(),
             version = target.version + 1
         WHEN NOT MATCHED THEN INSERT
-            (path, title, page_type, content, created_by, version)
-        VALUES (page_path, title, page_type, PARSE_JSON(content_json), created_by, 1);
+            (page_id, path, title, page_type, content, content_text, created_by, version)
+        VALUES (uuid(), page_path, title, page_type, PARSE_JSON(content_json),
+                concat(PARSE_JSON(content_json):summary::STRING, ' ', PARSE_JSON(content_json):body::STRING),
+                created_by, 1);
 
         RETURN concat('wrote ', page_path);
     END

@@ -165,9 +165,9 @@ class TestSearchQuery:
         kwargs = search_query("test", num_results=10)
         assert kwargs["num_results"] == 10
 
-    def test_columns_include_content(self):
+    def test_columns_include_content_text(self):
         kwargs = search_query("test")
-        assert "content" in kwargs["columns"]
+        assert "content_text" in kwargs["columns"]
         assert "page_id" in kwargs["columns"]
         assert "path" in kwargs["columns"]
 
@@ -226,28 +226,28 @@ class TestCreateVsIndexSpec:
         assert spec["name"] == VS_INDEX
         assert spec["endpoint_name"] == VS_ENDPOINT
         assert spec["primary_key"] == "page_id"
-        assert spec["index_type"] == "DELTA_SYNC"
+        assert spec["index_type"].value == "DELTA_SYNC"
 
     def test_delta_sync_spec(self):
         spec = create_vs_index_spec()
         ds = spec["delta_sync_index_spec"]
-        assert ds["source_table"] == PAGES_TABLE
-        assert ds["pipeline_type"] == "TRIGGERED"
+        assert ds.source_table == PAGES_TABLE
+        assert ds.pipeline_type.value == "TRIGGERED"
 
     def test_embedding_config(self):
         spec = create_vs_index_spec()
-        emb = spec["delta_sync_index_spec"]["embedding_source_columns"][0]
-        assert emb["name"] == "content_text"
-        assert "bge" in emb["embedding_model_endpoint_name"]
+        emb = spec["delta_sync_index_spec"].embedding_source_columns[0]
+        assert emb.name == "content_text"
+        assert "bge" in emb.embedding_model_endpoint_name
 
     def test_columns_to_sync_no_is_current(self):
         """No is_current column — source table only has current pages."""
         spec = create_vs_index_spec()
-        cols = spec["delta_sync_index_spec"]["columns_to_sync"]
+        cols = spec["delta_sync_index_spec"].columns_to_sync
         assert "is_current" not in cols
         assert "page_id" in cols
         assert "path" in cols
-        assert "content" in cols
+        assert "content_text" in cols
 
 
 class TestCreateUcFunctionsSql:

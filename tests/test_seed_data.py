@@ -2,7 +2,7 @@
 
 import json
 
-from wiki_ops import PAGES_TABLE, VS_INDEX, seed_pages, autoeval_config
+from wiki_ops import VS_INDEX, autoeval_config, seed_pages
 
 
 class TestSeedPages:
