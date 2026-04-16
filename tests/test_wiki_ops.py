@@ -11,6 +11,7 @@ from wiki_ops import (
     add_link_sql,
     create_schema_sql,
     create_tables_sql,
+    create_uc_functions_sql,
     create_vs_index_spec,
     read_page_sql,
     read_subtree_sql,
@@ -247,6 +248,64 @@ class TestCreateVsIndexSpec:
         assert "page_id" in cols
         assert "path" in cols
         assert "content" in cols
+
+
+class TestCreateUcFunctionsSql:
+    def test_returns_four_functions(self):
+        stmts = create_uc_functions_sql("warehouse-id-123")
+        assert len(stmts) == 4
+
+    def test_fn_wiki_search(self):
+        stmts = create_uc_functions_sql("wh-123")
+        search_fn = stmts[0]
+        assert "fn_wiki_search" in search_fn
+        assert "CREATE OR REPLACE FUNCTION" in search_fn
+        assert "RETURNS STRING" in search_fn
+        assert "question STRING" in search_fn
+        assert "mode STRING" in search_fn
+
+    def test_fn_wiki_read(self):
+        stmts = create_uc_functions_sql("wh-123")
+        read_fn = stmts[1]
+        assert "fn_wiki_read" in read_fn
+        assert "page_path STRING" in read_fn
+        assert PAGES_TABLE in read_fn
+
+    def test_fn_wiki_write(self):
+        stmts = create_uc_functions_sql("wh-123")
+        write_fn = stmts[2]
+        assert "fn_wiki_write" in write_fn
+        assert "page_path STRING" in write_fn
+        assert "title STRING" in write_fn
+        assert "content_json STRING" in write_fn
+        assert PAGES_TABLE in write_fn
+
+    def test_fn_wiki_history(self):
+        stmts = create_uc_functions_sql("wh-123")
+        history_fn = stmts[3]
+        assert "fn_wiki_history" in history_fn
+        assert "page_path STRING" in history_fn
+        assert HISTORY_TABLE in history_fn
+
+    def test_all_functions_use_catalog_schema(self):
+        stmts = create_uc_functions_sql("wh-123")
+        for stmt in stmts:
+            assert f"{CATALOG}.{SCHEMA}" in stmt
+
+    def test_write_fn_uses_merge_pattern(self):
+        stmts = create_uc_functions_sql("wh-123")
+        write_fn = stmts[2]
+        assert "MERGE" in write_fn.upper()
+
+    def test_write_fn_archives_to_history(self):
+        stmts = create_uc_functions_sql("wh-123")
+        write_fn = stmts[2]
+        assert HISTORY_TABLE in write_fn
+
+    def test_search_fn_has_comment_about_modes(self):
+        stmts = create_uc_functions_sql("wh-123")
+        search_fn = stmts[0]
+        assert "KEYWORD" in search_fn or "keyword" in search_fn
 
 
 class TestAddLinkSql:
