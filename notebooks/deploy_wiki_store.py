@@ -1,0 +1,196 @@
+# Databricks notebook source
+# MAGIC %md
+# MAGIC # WikiBricks: Deploy Wiki Store
+# MAGIC
+# MAGIC Creates the wiki schema, tables, Vector Search index, UC functions,
+# MAGIC and seeds test data on the agent-marketplace FEVM workspace.
+
+# COMMAND ----------
+
+import json
+import sys
+import time
+
+sys.path.insert(0, "/Workspace/Repos/wikibricks/src")
+
+from databricks.sdk import WorkspaceClient
+
+from wiki_ops import (
+    VS_ENDPOINT,
+    autoeval_config,
+    create_schema_sql,
+    create_tables_sql,
+    create_uc_functions_sql,
+    create_vs_index_spec,
+    seed_pages,
+    write_page_sql,
+)
+
+w = WorkspaceClient()
+WAREHOUSE_ID = "41754a8563a43a49"
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 1: Create Schema
+
+# COMMAND ----------
+
+result = w.statement_execution.execute_statement(
+    warehouse_id=WAREHOUSE_ID,
+    statement=create_schema_sql(),
+)
+print(f"Schema: {result.status.state}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 2: Create Tables (pages, pages_history, links)
+
+# COMMAND ----------
+
+for i, stmt in enumerate(create_tables_sql()):
+    result = w.statement_execution.execute_statement(
+        warehouse_id=WAREHOUSE_ID,
+        statement=stmt,
+    )
+    table_names = ["pages", "pages_history", "links"]
+    print(f"Table {table_names[i]}: {result.status.state}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 3: Create Vector Search Endpoint + Index
+
+# COMMAND ----------
+
+# Create endpoint if it doesn't exist
+try:
+    endpoint = w.vector_search_endpoints.get_endpoint(VS_ENDPOINT)
+    print(f"Endpoint {VS_ENDPOINT} already exists: {endpoint.endpoint_status.state}")
+except Exception:
+    endpoint = w.vector_search_endpoints.create_endpoint(
+        name=VS_ENDPOINT,
+        endpoint_type="STANDARD",
+    )
+    print(f"Created endpoint {VS_ENDPOINT}")
+
+# COMMAND ----------
+
+# Create index
+spec = create_vs_index_spec()
+try:
+    index = w.vector_search_indexes.get_index(spec["name"])
+    print(f"Index {spec['name']} already exists: {index.status.ready}")
+except Exception:
+    index = w.vector_search_indexes.create_index(**spec)
+    print(f"Created index {spec['name']}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 4: Create UC Functions
+
+# COMMAND ----------
+
+for stmt in create_uc_functions_sql(WAREHOUSE_ID):
+    result = w.statement_execution.execute_statement(
+        warehouse_id=WAREHOUSE_ID,
+        statement=stmt,
+    )
+    print(f"UC function: {result.status.state}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 5: Seed Test Data
+
+# COMMAND ----------
+
+for page in seed_pages():
+    content_json = json.dumps(page["content"])
+    stmts = write_page_sql(
+        path=page["path"],
+        title=page["title"],
+        page_type=page["page_type"],
+        content_json=content_json,
+        created_by=page["created_by"],
+        tags=page["tags"],
+    )
+    for stmt in stmts:
+        w.statement_execution.execute_statement(
+            warehouse_id=WAREHOUSE_ID,
+            statement=stmt,
+        )
+    print(f"Seeded: {page['path']}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 6: Trigger VS Sync + Verify
+
+# COMMAND ----------
+
+spec = create_vs_index_spec()
+w.vector_search_indexes.sync_index(index_name=spec["name"])
+print("Triggered VS index sync. Waiting for completion...")
+
+# Poll until sync completes (up to 5 minutes)
+for _ in range(30):
+    index = w.vector_search_indexes.get_index(spec["name"])
+    if index.status.ready:
+        print(f"Index ready. Row count: {index.status.index_row_count}")
+        break
+    time.sleep(10)
+else:
+    print("Warning: index sync did not complete within 5 minutes")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 7: Test Search Queries
+
+# COMMAND ----------
+
+# Test keyword search
+results = w.vector_search_indexes.query_index(
+    index_name=spec["name"],
+    columns=["page_id", "path", "title"],
+    query_text="total loss",
+    query_type="KEYWORD",
+    num_results=3,
+)
+print("KEYWORD search for 'total loss':")
+for r in results.result.data_array:
+    print(f"  {r}")
+
+# COMMAND ----------
+
+# Test semantic search
+results = w.vector_search_indexes.query_index(
+    index_name=spec["name"],
+    columns=["page_id", "path", "title"],
+    query_text="how to detect fraud in insurance claims",
+    num_results=3,
+)
+print("ANN search for 'how to detect fraud in insurance claims':")
+for r in results.result.data_array:
+    print(f"  {r}")
+
+# COMMAND ----------
+
+# Test hybrid search
+results = w.vector_search_indexes.query_index(
+    index_name=spec["name"],
+    columns=["page_id", "path", "title"],
+    query_text="hail surge claim handling",
+    query_type="HYBRID",
+    num_results=3,
+)
+print("HYBRID search for 'hail surge claim handling':")
+for r in results.result.data_array:
+    print(f"  {r}")
+
+# COMMAND ----------
+
+print("WikiBricks deployment complete.")
