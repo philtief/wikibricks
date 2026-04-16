@@ -298,6 +298,141 @@ def create_uc_functions_sql(warehouse_id):
     return [fn_search, fn_read, fn_write, fn_history]
 
 
+def seed_pages():
+    """Return a list of sample wiki pages for testing the wiki store."""
+    return [
+        {
+            "path": "claims/fraud/patterns",
+            "title": "Fraud Patterns in Collision Claims",
+            "page_type": "concept",
+            "content": {
+                "summary": "Fraud patterns observed in collision claims Q1 2026.",
+                "body": (
+                    "Customers filing 3+ claims within 12 months show elevated fraud risk. "
+                    "Key indicators: same repair shop across claims, inconsistent damage photos, "
+                    "claims filed within 48 hours of policy changes. Three customers flagged by "
+                    "automated scoring in March 2026."
+                ),
+            },
+            "created_by": "promotion_pipeline",
+            "tags": ["fraud", "claims", "collision", "patterns"],
+        },
+        {
+            "path": "claims/fraud/repeat-claimants",
+            "title": "Repeat Claimant Analysis",
+            "page_type": "synthesis",
+            "content": {
+                "summary": "Analysis of customers with multiple claims in short timeframes.",
+                "body": (
+                    "Repeat claimants represent 2.3% of the portfolio but account for 14% of "
+                    "claim payouts. The top decile by claim frequency has an average loss ratio "
+                    "of 340%. Recommended action: mandatory adjuster review for any customer "
+                    "with 2+ claims in 6 months."
+                ),
+            },
+            "created_by": "promotion_pipeline",
+            "tags": ["fraud", "claims", "repeat-claimants", "analysis"],
+        },
+        {
+            "path": "customers/preferences/language",
+            "title": "Customer Language Preferences",
+            "page_type": "entity",
+            "content": {
+                "summary": "Recorded language preferences for customers in the portfolio.",
+                "body": (
+                    "Customer C-1005 prefers German for all communications. "
+                    "Customer C-2091 prefers Italian. Customer C-3344 requested English-only "
+                    "documentation despite being in the French market. These preferences were "
+                    "confirmed during claim handling conversations."
+                ),
+            },
+            "created_by": "agent",
+            "tags": ["customers", "preferences", "language"],
+        },
+        {
+            "path": "sops/motor/total-loss",
+            "title": "Total Loss Assessment SOP",
+            "page_type": "concept",
+            "content": {
+                "summary": "Standard operating procedure for motor total loss assessments.",
+                "body": (
+                    "When repair cost exceeds 70% of vehicle market value, initiate total loss "
+                    "assessment. Steps: 1) Obtain independent valuation. 2) Compare against "
+                    "repair estimate. 3) If total loss confirmed, offer settlement at market "
+                    "value minus salvage. 4) Allow 14-day dispute window. Average processing "
+                    "time: 8 business days."
+                ),
+            },
+            "created_by": "promotion_pipeline",
+            "tags": ["sop", "motor", "total-loss", "assessment"],
+        },
+        {
+            "path": "claims/liability/comparative-negligence",
+            "title": "Comparative Negligence in Liability Claims",
+            "page_type": "concept",
+            "content": {
+                "summary": "How comparative negligence affects liability claim settlements.",
+                "body": (
+                    "In comparative negligence jurisdictions, each party bears liability "
+                    "proportional to their fault. A 70/30 split means the insured pays 30% "
+                    "of damages. Key precedent: if the insured is over 50% at fault in a "
+                    "modified comparative negligence state, they recover nothing. Always verify "
+                    "the jurisdiction's threshold before settling."
+                ),
+            },
+            "created_by": "promotion_pipeline",
+            "tags": ["claims", "liability", "negligence", "legal"],
+        },
+        {
+            "path": "products/motor/coverage-tiers",
+            "title": "Motor Insurance Coverage Tiers",
+            "page_type": "comparison",
+            "content": {
+                "summary": "Comparison of Basic, Standard, and Premium motor coverage tiers.",
+                "body": (
+                    "Basic: third-party liability only. Standard: adds own-damage, theft, "
+                    "windscreen. Premium: adds breakdown assistance, courtesy car, legal "
+                    "expenses, new-for-old replacement under 12 months. Premium tier has "
+                    "12% higher retention rate but 8% higher loss ratio than Standard."
+                ),
+            },
+            "created_by": "promotion_pipeline",
+            "tags": ["products", "motor", "coverage", "comparison"],
+        },
+        {
+            "path": "claims/weather/hail-surge",
+            "title": "Hail Surge Event Playbook",
+            "page_type": "concept",
+            "content": {
+                "summary": "Operational playbook for handling hail surge claim events.",
+                "body": (
+                    "When hail events generate 50+ claims in 48 hours: 1) Activate surge "
+                    "team. 2) Deploy mobile assessment units to affected region. 3) Pre-approve "
+                    "PDR (paintless dent repair) for damage under threshold. 4) Extend "
+                    "reporting deadline by 7 days. 5) Communicate proactively via SMS. "
+                    "Last surge (March 2026, Munich): 340 claims, 92% resolved within 3 weeks."
+                ),
+            },
+            "created_by": "promotion_pipeline",
+            "tags": ["claims", "weather", "hail", "surge", "playbook"],
+        },
+    ]
+
+
+def autoeval_config():
+    """Return configuration for Vector Search AutoEval."""
+    return {
+        "index_name": VS_INDEX,
+        "num_queries": 20,
+        "metrics": {
+            "recall": {"k": [3, 5, 10]},
+            "ndcg": {"k": [3, 5, 10]},
+            "precision": {"k": [3, 5]},
+            "mrr": {"k": [5, 10]},
+        },
+    }
+
+
 def add_link_sql(source_page_id, target_page_id, link_type="related"):
     """Return SQL to add a cross-reference link (idempotent via MERGE)."""
     if link_type not in ("related", "contradicts", "extends", "supersedes", "cites"):
