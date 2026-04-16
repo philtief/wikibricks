@@ -149,9 +149,9 @@ class TestSearchQuery:
         assert kwargs["query_text"] == "fraud patterns"
         assert kwargs["query_type"] == "HYBRID"
 
-    def test_keyword_mode(self):
-        kwargs = search_query("CLM-4005", mode="KEYWORD")
-        assert kwargs["query_type"] == "KEYWORD"
+    def test_full_text_mode(self):
+        kwargs = search_query("CLM-4005", mode="FULL_TEXT")
+        assert kwargs["query_type"] == "FULL_TEXT"
 
     def test_ann_mode_has_no_query_type(self):
         kwargs = search_query("fraud patterns", mode="ANN")
@@ -309,7 +309,7 @@ class TestCreateUcFunctionsSql:
     def test_search_fn_has_comment_about_modes(self):
         stmts = create_uc_functions_sql("wh-123")
         search_fn = stmts[0]
-        assert "KEYWORD" in search_fn or "keyword" in search_fn
+        assert "FULL_TEXT" in search_fn or "full_text" in search_fn
 
 
 class TestAddLinkSql:

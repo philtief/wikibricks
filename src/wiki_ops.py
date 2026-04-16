@@ -130,11 +130,11 @@ def search_query(query_text, mode="HYBRID", num_results=5):
 
     Args:
         query_text: The search query.
-        mode: One of "ANN", "KEYWORD", "HYBRID".
+        mode: One of "ANN", "FULL_TEXT", "HYBRID".
         num_results: Max results to return.
     """
-    if mode not in ("ANN", "KEYWORD", "HYBRID"):
-        raise ValueError(f"Invalid search mode: {mode}. Must be ANN, KEYWORD, or HYBRID.")
+    if mode not in ("ANN", "FULL_TEXT", "HYBRID"):
+        raise ValueError(f"Invalid search mode: {mode}. Must be ANN, FULL_TEXT, or HYBRID.")
 
     kwargs = {
         "index_name": VS_INDEX,
@@ -221,7 +221,7 @@ def create_uc_functions_sql(warehouse_id):
     fn_search = f"""
     CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_search(
         question STRING COMMENT 'The search query text',
-        mode STRING DEFAULT 'HYBRID' COMMENT 'Search mode: ANN (semantic), KEYWORD (exact), or HYBRID (both)'
+        mode STRING DEFAULT 'HYBRID' COMMENT 'Search mode: ANN (semantic), FULL_TEXT (exact), or HYBRID (both)'
     )
     RETURNS STRING
     COMMENT 'Search wiki pages by semantic similarity, keyword match, or hybrid. Returns JSON array of matching pages.'

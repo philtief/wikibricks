@@ -166,10 +166,10 @@ results = w.vector_search_indexes.query_index(
     index_name=spec["name"],
     columns=["page_id", "path", "title"],
     query_text="total loss",
-    query_type="KEYWORD",
+    query_type="FULL_TEXT",
     num_results=3,
 )
-print("KEYWORD search for 'total loss':")
+print("FULL_TEXT search for 'total loss':")
 for r in results.result.data_array:
     print(f"  {r}")
 
