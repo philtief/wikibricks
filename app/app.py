@@ -23,8 +23,7 @@ Do not make up information that is not in the provided context."""
 
 def _get_token(ws):
     """Extract bearer token from WorkspaceClient auth (works with OAuth and PAT)."""
-    headers = {}
-    ws.config.authenticate(headers)
+    headers = ws.config.authenticate()
     return headers.get("Authorization", "").removeprefix("Bearer ")
 
 
