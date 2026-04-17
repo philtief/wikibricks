@@ -82,7 +82,7 @@ def validate_write_form(path, title, summary, body):
     if not path or not path.strip():
         errors.append("Path is required.")
     elif "/" not in path:
-        errors.append("Path should use slash hierarchy (e.g. 'claims/fraud/patterns').")
+        errors.append("Path should use slash hierarchy (e.g. 'databricks/delta-lake').")
     if not title or not title.strip():
         errors.append("Title is required.")
     if not summary or not summary.strip():
