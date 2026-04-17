@@ -21,17 +21,26 @@ If the context does not contain enough information to answer, say so clearly.
 Do not make up information that is not in the provided context."""
 
 
+def _get_token(ws):
+    """Extract bearer token from WorkspaceClient auth (works with OAuth and PAT)."""
+    headers = {}
+    ws.config.authenticate(headers)
+    return headers.get("Authorization", "").removeprefix("Bearer ")
+
+
 def get_clients():
     """Return WorkspaceClient, OpenAI client, and WikiClient (cached in session state)."""
     if "ws" not in st.session_state:
         ws = WorkspaceClient()
         st.session_state.ws = ws
-        st.session_state.openai = OpenAI(
-            api_key=ws.config.token,
-            base_url=f"{ws.config.host}/serving-endpoints",
-        )
         st.session_state.wiki = WikiClient(warehouse_id=WAREHOUSE_ID, workspace_client=ws)
-    return st.session_state.ws, st.session_state.openai, st.session_state.wiki
+    ws = st.session_state.ws
+    # Refresh OpenAI client each rerun so OAuth token stays fresh
+    openai_client = OpenAI(
+        api_key=_get_token(ws),
+        base_url=f"{ws.config.host}/serving-endpoints",
+    )
+    return ws, openai_client, st.session_state.wiki
 
 
 def search_wiki(wiki, query, num_results=5):
@@ -154,14 +163,14 @@ elif mode == "Browse":
 
     search_col, btn_col = st.columns([4, 1])
     with search_col:
-        query = st.text_input("Search pages", placeholder="e.g. fraud patterns, claims SOP...")
+        query = st.text_input("Search pages", placeholder="e.g. Delta Lake, Unity Catalog...")
     with btn_col:
         st.write("")  # vertical alignment spacer
         search_clicked = st.button("Search", use_container_width=True)
 
     # Read a specific page by path
     with st.expander("Read page by path"):
-        read_path = st.text_input("Page path", placeholder="claims/fraud/patterns", key="read_path")
+        read_path = st.text_input("Page path", placeholder="databricks/delta-lake", key="read_path")
         read_clicked = st.button("Read")
 
     if read_clicked and read_path:
@@ -216,10 +225,10 @@ elif mode == "Write":
     st.caption("Create a new page or update an existing one")
 
     with st.form("write_form"):
-        path = st.text_input("Page path", placeholder="claims/fraud/patterns")
-        title = st.text_input("Title", placeholder="Fraud Detection Patterns")
+        path = st.text_input("Page path", placeholder="databricks/new-topic")
+        title = st.text_input("Title", placeholder="My Wiki Page Title")
         page_type = st.selectbox("Page type", PAGE_TYPES)
-        tags_input = st.text_input("Tags (comma-separated)", placeholder="fraud, claims, sop")
+        tags_input = st.text_input("Tags (comma-separated)", placeholder="databricks, delta-lake, concept")
         summary = st.text_area("Summary", placeholder="Brief summary of the page content")
         body = st.text_area("Body", placeholder="Full page content (Markdown supported)", height=300)
         created_by = st.text_input("Author", value="user")
@@ -250,7 +259,7 @@ elif mode == "Write":
 
     # Quick-load existing page for editing
     with st.expander("Load existing page for editing"):
-        load_path = st.text_input("Path to load", placeholder="claims/fraud/patterns", key="load_path")
+        load_path = st.text_input("Path to load", placeholder="databricks/delta-lake", key="load_path")
         if st.button("Load"):
             ws, _, wiki = get_clients()
             with st.spinner("Loading..."):
