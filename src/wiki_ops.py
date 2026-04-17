@@ -87,7 +87,7 @@ def write_page_sql(path, title, page_type, content_json, created_by, tags=None):
     """
     tags_sql = f"ARRAY({','.join(repr(t) for t in tags)})" if tags else "ARRAY()"
     content_escaped = json.dumps(content_json) if isinstance(content_json, dict) else content_json
-    content_escaped = content_escaped.replace("'", "''")
+    content_escaped = content_escaped.replace("'", "\\'")
 
     archive_sql = f"""
     INSERT INTO {HISTORY_TABLE}
@@ -213,10 +213,10 @@ def create_vs_index_spec():
 
 
 def create_uc_functions_sql(warehouse_id):
-    """Return SQL statements to create the four wiki UC functions.
+    """Return SQL statements to create the wiki UC read functions.
 
-    Returns [fn_wiki_search, fn_wiki_read, fn_wiki_write, fn_wiki_history].
-    These are SQL UDFs that agents call as tools.
+    Returns [fn_wiki_search, fn_wiki_read, fn_wiki_history].
+    Write is handled by a custom agent tool (UC functions can't do DML).
     """
     fn_search = f"""
     CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_search(
@@ -252,52 +252,6 @@ def create_uc_functions_sql(warehouse_id):
     )
     """
 
-    fn_write = f"""
-    CREATE OR REPLACE PROCEDURE {CATALOG}.{SCHEMA}.fn_wiki_write(
-        page_path STRING COMMENT 'The wiki page path, e.g. claims/fraud/patterns',
-        new_title STRING COMMENT 'Page title',
-        content_json STRING COMMENT 'Page content as JSON with summary and body fields',
-        page_type STRING DEFAULT 'concept'
-            COMMENT 'Page type: entity, concept, synthesis, or comparison',
-        author STRING DEFAULT 'agent' COMMENT 'Who created this version'
-    )
-    SQL SECURITY INVOKER
-    BEGIN
-        INSERT INTO {HISTORY_TABLE}
-        (page_id, path, title, page_type, content, content_text, tags,
-         created_by, created_at, version)
-        SELECT page_id, path, title, page_type, content, content_text,
-               tags, created_by, created_at, version
-        FROM {PAGES_TABLE}
-        WHERE path = page_path;
-
-        MERGE INTO {PAGES_TABLE} AS target
-        USING (SELECT page_path AS path) AS source
-        ON target.path = source.path
-        WHEN MATCHED THEN UPDATE SET
-            title = new_title,
-            page_type = fn_wiki_write.page_type,
-            content = PARSE_JSON(content_json),
-            content_text = concat(
-                PARSE_JSON(content_json):summary::STRING, ' ',
-                PARSE_JSON(content_json):body::STRING),
-            created_by = author,
-            updated_at = current_timestamp(),
-            version = target.version + 1
-        WHEN NOT MATCHED THEN INSERT
-            (page_id, path, title, page_type, content, content_text,
-             created_by, version)
-        VALUES (uuid(), page_path, new_title, fn_wiki_write.page_type,
-                PARSE_JSON(content_json),
-                concat(
-                    PARSE_JSON(content_json):summary::STRING, ' ',
-                    PARSE_JSON(content_json):body::STRING),
-                author, 1);
-
-        SELECT concat('wrote ', page_path) AS result;
-    END
-    """
-
     fn_history = f"""
     CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_history(
         page_path STRING COMMENT 'The wiki page path to get history for'
@@ -318,7 +272,7 @@ def create_uc_functions_sql(warehouse_id):
     )
     """
 
-    return [fn_search, fn_read, fn_write, fn_history]
+    return [fn_search, fn_read, fn_history]
 
 
 def seed_pages():

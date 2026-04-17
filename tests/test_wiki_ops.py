@@ -251,9 +251,9 @@ class TestCreateVsIndexSpec:
 
 
 class TestCreateUcFunctionsSql:
-    def test_returns_four_functions(self):
+    def test_returns_three_functions(self):
         stmts = create_uc_functions_sql("warehouse-id-123")
-        assert len(stmts) == 4
+        assert len(stmts) == 3
 
     def test_fn_wiki_search(self):
         stmts = create_uc_functions_sql("wh-123")
@@ -271,20 +271,9 @@ class TestCreateUcFunctionsSql:
         assert "page_path STRING" in read_fn
         assert PAGES_TABLE in read_fn
 
-    def test_fn_wiki_write(self):
-        stmts = create_uc_functions_sql("wh-123")
-        write_fn = stmts[2]
-        assert "fn_wiki_write" in write_fn
-        assert "PROCEDURE" in write_fn
-        assert "SQL SECURITY INVOKER" in write_fn
-        assert "page_path STRING" in write_fn
-        assert "new_title STRING" in write_fn
-        assert "content_json STRING" in write_fn
-        assert PAGES_TABLE in write_fn
-
     def test_fn_wiki_history(self):
         stmts = create_uc_functions_sql("wh-123")
-        history_fn = stmts[3]
+        history_fn = stmts[2]
         assert "fn_wiki_history" in history_fn
         assert "page_path STRING" in history_fn
         assert HISTORY_TABLE in history_fn
@@ -296,15 +285,11 @@ class TestCreateUcFunctionsSql:
         for stmt in stmts:
             assert f"{CATALOG}.{SCHEMA}" in stmt
 
-    def test_write_fn_uses_merge_pattern(self):
+    def test_no_write_function(self):
+        """Write is a custom agent tool, not a UC function (can't do DML)."""
         stmts = create_uc_functions_sql("wh-123")
-        write_fn = stmts[2]
-        assert "MERGE" in write_fn.upper()
-
-    def test_write_fn_archives_to_history(self):
-        stmts = create_uc_functions_sql("wh-123")
-        write_fn = stmts[2]
-        assert HISTORY_TABLE in write_fn
+        combined = " ".join(stmts)
+        assert "fn_wiki_write" not in combined
 
     def test_search_fn_has_comment_about_modes(self):
         stmts = create_uc_functions_sql("wh-123")
