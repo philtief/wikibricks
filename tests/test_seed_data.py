@@ -41,10 +41,10 @@ class TestSeedPages:
         for page in seed_pages():
             assert isinstance(page["tags"], list)
 
-    def test_includes_insurance_domain_pages(self):
+    def test_includes_example_pages(self):
         paths = [p["path"] for p in seed_pages()]
-        has_claims = any("claims" in p for p in paths)
-        assert has_claims, "Seed data should include claims-related pages for the demo"
+        has_topics = any("topics/" in p for p in paths)
+        assert has_topics, "Seed data should include example topic pages"
 
     def test_content_json_serializable(self):
         for page in seed_pages():

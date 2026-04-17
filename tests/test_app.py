@@ -76,11 +76,14 @@ class TestBuildContext:
 
     def test_single_page(self, app_module):
         pages = [
-            {"title": "Fraud Patterns", "path": "claims/fraud", "content_text": "Some content", "page_type": "concept"},
+            {
+                "title": "Example Topic", "path": "topics/example",
+                "content_text": "Some content", "page_type": "concept",
+            },
         ]
         result = app_module.build_context(pages)
-        assert "Fraud Patterns" in result
-        assert "claims/fraud" in result
+        assert "Example Topic" in result
+        assert "topics/example" in result
         assert "Some content" in result
         assert "concept" in result
 
@@ -137,7 +140,7 @@ class TestConstants:
 
 class TestValidateWriteForm:
     def test_valid_form(self, app_module):
-        errors = app_module.validate_write_form("claims/fraud", "Title", "Summary", "Body text")
+        errors = app_module.validate_write_form("topics/example", "Title", "Summary", "Body text")
         assert errors == []
 
     def test_empty_path(self, app_module):

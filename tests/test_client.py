@@ -87,12 +87,12 @@ class TestWritePage:
         ws = MagicMock()
         ws.statement_execution.execute_statement.return_value = _mock_response([])
         wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
-        wiki.write_page("test/page", "Test", '{"summary":"s","body":"b"}', tags=["fraud", "claims"])
+        wiki.write_page("test/page", "Test", '{"summary":"s","body":"b"}', tags=["alpha", "beta"])
 
         merge_call = ws.statement_execution.execute_statement.call_args_list[1]
         sql = merge_call.kwargs["statement"]
-        assert "fraud" in sql
-        assert "claims" in sql
+        assert "alpha" in sql
+        assert "beta" in sql
 
     def test_raises_on_sql_failure(self):
         ws = MagicMock()

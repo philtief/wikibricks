@@ -238,7 +238,7 @@ def create_uc_functions_sql(warehouse_id):
 
     fn_read = f"""
     CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_read(
-        page_path STRING COMMENT 'The wiki page path, e.g. claims/fraud/patterns'
+        page_path STRING COMMENT 'The wiki page path, e.g. topics/my-topic'
     )
     RETURNS STRING
     COMMENT 'Read a wiki page by path. Returns JSON with full page content.'
@@ -276,122 +276,87 @@ def create_uc_functions_sql(warehouse_id):
 
 
 def seed_pages():
-    """Return a list of sample wiki pages for testing the wiki store."""
+    """Return a list of generic sample wiki pages for testing the wiki store."""
     return [
         {
-            "path": "claims/fraud/patterns",
-            "title": "Fraud Patterns in Collision Claims",
+            "path": "topics/getting-started",
+            "title": "Getting Started with WikiBricks",
             "page_type": "concept",
             "content": {
-                "summary": "Fraud patterns observed in collision claims Q1 2026.",
+                "summary": "Introduction to the WikiBricks wiki memory system.",
                 "body": (
-                    "Customers filing 3+ claims within 12 months show elevated fraud risk. "
-                    "Key indicators: same repair shop across claims, inconsistent damage photos, "
-                    "claims filed within 48 hours of policy changes. Three customers flagged by "
-                    "automated scoring in March 2026."
+                    "WikiBricks provides a structured knowledge store backed by Delta tables "
+                    "and Vector Search. Pages are organized in a path hierarchy and support "
+                    "full-text, semantic, and hybrid search. Each page has a summary, body, "
+                    "tags, and automatic version history."
                 ),
             },
-            "created_by": "promotion_pipeline",
-            "tags": ["fraud", "claims", "collision", "patterns"],
+            "created_by": "setup",
+            "tags": ["getting-started", "overview", "onboarding"],
         },
         {
-            "path": "claims/fraud/repeat-claimants",
-            "title": "Repeat Claimant Analysis",
-            "page_type": "synthesis",
+            "path": "topics/architecture/overview",
+            "title": "Architecture Overview",
+            "page_type": "concept",
             "content": {
-                "summary": "Analysis of customers with multiple claims in short timeframes.",
+                "summary": "High-level architecture of the WikiBricks storage layer.",
                 "body": (
-                    "Repeat claimants represent 2.3% of the portfolio but account for 14% of "
-                    "claim payouts. The top decile by claim frequency has an average loss ratio "
-                    "of 340%. Recommended action: mandatory adjuster review for any customer "
-                    "with 2+ claims in 6 months."
+                    "WikiBricks uses three Delta tables: pages (current state), pages_history "
+                    "(archived versions), and links (page-to-page relationships). A Vector "
+                    "Search index on the pages table enables semantic retrieval. Writes use "
+                    "MERGE for upsert semantics and archive the previous version automatically."
                 ),
             },
-            "created_by": "promotion_pipeline",
-            "tags": ["fraud", "claims", "repeat-claimants", "analysis"],
+            "created_by": "setup",
+            "tags": ["architecture", "delta", "vector-search"],
         },
         {
-            "path": "customers/preferences/language",
-            "title": "Customer Language Preferences",
+            "path": "guides/setup",
+            "title": "Setup Guide",
             "page_type": "entity",
             "content": {
-                "summary": "Recorded language preferences for customers in the portfolio.",
+                "summary": "Step-by-step guide for deploying WikiBricks to a workspace.",
                 "body": (
-                    "Customer C-1005 prefers German for all communications. "
-                    "Customer C-2091 prefers Italian. Customer C-3344 requested English-only "
-                    "documentation despite being in the French market. These preferences were "
-                    "confirmed during claim handling conversations."
+                    "Prerequisites: a Databricks workspace with Unity Catalog enabled and a "
+                    "SQL warehouse. Steps: 1) Create the catalog and schema. 2) Run the table "
+                    "creation DDL. 3) Create the Vector Search endpoint and index. 4) Seed "
+                    "initial pages. 5) Verify with a search query."
                 ),
             },
-            "created_by": "agent",
-            "tags": ["customers", "preferences", "language"],
+            "created_by": "setup",
+            "tags": ["guide", "setup", "deployment"],
         },
         {
-            "path": "sops/motor/total-loss",
-            "title": "Total Loss Assessment SOP",
-            "page_type": "concept",
+            "path": "guides/troubleshooting",
+            "title": "Troubleshooting Common Issues",
+            "page_type": "synthesis",
             "content": {
-                "summary": "Standard operating procedure for motor total loss assessments.",
+                "summary": "Solutions for frequently encountered problems.",
                 "body": (
-                    "When repair cost exceeds 70% of vehicle market value, initiate total loss "
-                    "assessment. Steps: 1) Obtain independent valuation. 2) Compare against "
-                    "repair estimate. 3) If total loss confirmed, offer settlement at market "
-                    "value minus salvage. 4) Allow 14-day dispute window. Average processing "
-                    "time: 8 business days."
+                    "Issue: search returns no results. Check that the Vector Search index has "
+                    "synced after writing pages. Issue: PARSE_JSON fails. Ensure content JSON "
+                    "does not contain unescaped backslashes or newlines. Issue: permission "
+                    "denied. Grant USE CATALOG, USE SCHEMA, and SELECT to the service principal."
                 ),
             },
-            "created_by": "promotion_pipeline",
-            "tags": ["sop", "motor", "total-loss", "assessment"],
+            "created_by": "setup",
+            "tags": ["guide", "troubleshooting", "faq"],
         },
         {
-            "path": "claims/liability/comparative-negligence",
-            "title": "Comparative Negligence in Liability Claims",
-            "page_type": "concept",
-            "content": {
-                "summary": "How comparative negligence affects liability claim settlements.",
-                "body": (
-                    "In comparative negligence jurisdictions, each party bears liability "
-                    "proportional to their fault. A 70/30 split means the insured pays 30% "
-                    "of damages. Key precedent: if the insured is over 50% at fault in a "
-                    "modified comparative negligence state, they recover nothing. Always verify "
-                    "the jurisdiction's threshold before settling."
-                ),
-            },
-            "created_by": "promotion_pipeline",
-            "tags": ["claims", "liability", "negligence", "legal"],
-        },
-        {
-            "path": "products/motor/coverage-tiers",
-            "title": "Motor Insurance Coverage Tiers",
+            "path": "comparisons/search-modes",
+            "title": "Search Modes Comparison",
             "page_type": "comparison",
             "content": {
-                "summary": "Comparison of Basic, Standard, and Premium motor coverage tiers.",
+                "summary": "Comparison of ANN, full-text, and hybrid search modes.",
                 "body": (
-                    "Basic: third-party liability only. Standard: adds own-damage, theft, "
-                    "windscreen. Premium: adds breakdown assistance, courtesy car, legal "
-                    "expenses, new-for-old replacement under 12 months. Premium tier has "
-                    "12% higher retention rate but 8% higher loss ratio than Standard."
+                    "ANN (approximate nearest neighbor): best for semantic similarity, uses "
+                    "embedding vectors. Full-text: best for exact keyword matching and known "
+                    "identifiers. Hybrid: combines both approaches and generally provides the "
+                    "best results for natural-language queries. Default mode is HYBRID."
                 ),
             },
-            "created_by": "promotion_pipeline",
-            "tags": ["products", "motor", "coverage", "comparison"],
-        },
-        {
-            "path": "claims/weather/hail-surge",
-            "title": "Hail Surge Event Playbook",
-            "page_type": "concept",
-            "content": {
-                "summary": "Operational playbook for handling hail surge claim events.",
-                "body": (
-                    "When hail events generate 50+ claims in 48 hours: 1) Activate surge "
-                    "team. 2) Deploy mobile assessment units to affected region. 3) Pre-approve "
-                    "PDR (paintless dent repair) for damage under threshold. 4) Extend "
-                    "reporting deadline by 7 days. 5) Communicate proactively via SMS. "
-                    "Last surge (March 2026, Munich): 340 claims, 92% resolved within 3 weeks."
-                ),
-            },
-            "created_by": "promotion_pipeline",
-            "tags": ["claims", "weather", "hail", "surge", "playbook"],
+            "created_by": "setup",
+            "tags": ["comparison", "search", "vector-search"],
         },
     ]
 

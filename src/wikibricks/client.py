@@ -20,9 +20,9 @@ class WikiClient:
         from wikibricks import WikiClient
 
         wiki = WikiClient(warehouse_id="abc123")
-        wiki.write_page("claims/fraud/patterns", "Fraud Patterns", content_json)
-        page = wiki.read_page("claims/fraud/patterns")
-        results = wiki.search("fraud detection")
+        wiki.write_page("topics/my-topic", "My Topic", content_json)
+        page = wiki.read_page("topics/my-topic")
+        results = wiki.search("search query")
     """
 
     def __init__(self, warehouse_id: str, workspace_client: WorkspaceClient | None = None):
@@ -57,7 +57,7 @@ class WikiClient:
         """Create or update a wiki page. Archives previous version to history.
 
         Args:
-            path: Wiki page path, e.g. 'claims/fraud/patterns'.
+            path: Wiki page path, e.g. 'topics/my-topic'.
             title: Page title.
             content_json: Content as JSON string or dict with 'summary' and 'body' fields.
             page_type: One of: entity, concept, synthesis, comparison.

@@ -119,16 +119,16 @@ class TestWritePageSql:
 
     def test_tags_included_when_provided(self):
         stmts = write_page_sql(
-            "test/page", "Test", "concept", '{"summary":"s","body":"b"}', "agent", tags=["fraud", "claims"]
+            "test/page", "Test", "concept", '{"summary":"s","body":"b"}', "agent", tags=["alpha", "beta"]
         )
         merge_sql = stmts[1]
-        assert "fraud" in merge_sql
-        assert "claims" in merge_sql
+        assert "alpha" in merge_sql
+        assert "beta" in merge_sql
 
     def test_path_in_both_statements(self):
-        stmts = write_page_sql("claims/fraud/patterns", "Fraud", "concept", "{}", "agent")
+        stmts = write_page_sql("topics/example", "Example", "concept", "{}", "agent")
         for stmt in stmts:
-            assert "claims/fraud/patterns" in stmt
+            assert "topics/example" in stmt
 
     def test_content_dict_serialized(self):
         content = {"summary": "test summary", "body": "test body"}
@@ -144,9 +144,9 @@ class TestWritePageSql:
 
 class TestSearchQuery:
     def test_hybrid_mode(self):
-        kwargs = search_query("fraud patterns", mode="HYBRID")
+        kwargs = search_query("example query", mode="HYBRID")
         assert kwargs["index_name"] == VS_INDEX
-        assert kwargs["query_text"] == "fraud patterns"
+        assert kwargs["query_text"] == "example query"
         assert kwargs["query_type"] == "HYBRID"
 
     def test_full_text_mode(self):
@@ -154,7 +154,7 @@ class TestSearchQuery:
         assert kwargs["query_type"] == "FULL_TEXT"
 
     def test_ann_mode_has_no_query_type(self):
-        kwargs = search_query("fraud patterns", mode="ANN")
+        kwargs = search_query("example query", mode="ANN")
         assert "query_type" not in kwargs
 
     def test_default_num_results(self):
@@ -186,33 +186,33 @@ class TestSearchQuery:
 
 class TestReadPageSql:
     def test_joins_links_and_targets(self):
-        sql = read_page_sql("claims/fraud/patterns")
+        sql = read_page_sql("topics/example")
         assert "LEFT JOIN" in sql
         assert LINKS_TABLE in sql
         assert "target_path" in sql
 
     def test_filters_by_path(self):
-        sql = read_page_sql("claims/fraud/patterns")
-        assert "claims/fraud/patterns" in sql
+        sql = read_page_sql("topics/example")
+        assert "topics/example" in sql
 
 
 class TestReadSubtreeSql:
     def test_uses_like_for_prefix(self):
-        sql = read_subtree_sql("claims/fraud")
-        assert "LIKE 'claims/fraud/%'" in sql
+        sql = read_subtree_sql("topics/example")
+        assert "LIKE 'topics/example/%'" in sql
 
     def test_includes_exact_path(self):
-        sql = read_subtree_sql("claims/fraud")
-        assert "path = 'claims/fraud'" in sql
+        sql = read_subtree_sql("topics/example")
+        assert "path = 'topics/example'" in sql
 
     def test_orders_by_depth(self):
-        sql = read_subtree_sql("claims")
+        sql = read_subtree_sql("topics")
         assert "path_depth" in sql
 
 
 class TestVersionHistorySql:
     def test_queries_history_table(self):
-        sql = version_history_sql("claims/fraud/patterns")
+        sql = version_history_sql("topics/example")
         assert HISTORY_TABLE in sql
 
     def test_orders_by_version_desc(self):
