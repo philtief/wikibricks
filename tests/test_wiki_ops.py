@@ -1,6 +1,6 @@
 """Tests for WikiBricks wiki_ops module."""
 
-from wiki_ops import (
+from wikibricks.ops import (
     CATALOG,
     HISTORY_TABLE,
     LINKS_TABLE,

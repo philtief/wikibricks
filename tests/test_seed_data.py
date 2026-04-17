@@ -2,7 +2,7 @@
 
 import json
 
-from wiki_ops import VS_INDEX, autoeval_config, seed_pages
+from wikibricks.ops import VS_INDEX, autoeval_config, seed_pages
 
 
 class TestSeedPages:

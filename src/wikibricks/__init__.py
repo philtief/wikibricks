@@ -1,0 +1,25 @@
+"""WikiBricks: Delta + Vector Search wiki store for AI agents on Databricks."""
+
+from wikibricks.client import WikiClient
+from wikibricks.ops import (
+    CATALOG,
+    EMBEDDING_MODEL,
+    HISTORY_TABLE,
+    LINKS_TABLE,
+    PAGES_TABLE,
+    SCHEMA,
+    VS_ENDPOINT,
+    VS_INDEX,
+)
+
+__all__ = [
+    "WikiClient",
+    "CATALOG",
+    "SCHEMA",
+    "PAGES_TABLE",
+    "HISTORY_TABLE",
+    "LINKS_TABLE",
+    "VS_INDEX",
+    "VS_ENDPOINT",
+    "EMBEDDING_MODEL",
+]
