@@ -42,8 +42,8 @@ class WikiClient:
         return resp
 
     def _escape(self, value: str) -> str:
-        """Escape single quotes for Databricks SQL string literals."""
-        return value.replace("'", "\\'")
+        """Escape backslashes and single quotes for Databricks SQL string literals."""
+        return value.replace("\\", "\\\\").replace("'", "\\'")
 
     def write_page(
         self,
