@@ -1,4 +1,4 @@
-"""Tests for WikiBricks Chat app logic."""
+"""Tests for WikiBricks app logic."""
 
 import ast
 import importlib
@@ -8,7 +8,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-# Add app/ to path so we can import helpers without triggering Streamlit
 APP_DIR = Path(__file__).parent.parent / "app"
 
 
@@ -31,12 +30,16 @@ def app_module():
     mock_st = MagicMock()
     mock_st.session_state = _SessionState()
     mock_st.chat_input = MagicMock(return_value=None)
+    mock_st.sidebar = MagicMock()
+    mock_st.sidebar.radio = MagicMock(return_value="Chat")
 
     mock_openai = MagicMock()
+    mock_wikibricks = MagicMock()
 
     mocks = {
         "streamlit": mock_st,
         "openai": mock_openai,
+        "wikibricks": mock_wikibricks,
     }
 
     with patch.dict(sys.modules, mocks):
@@ -121,3 +124,67 @@ class TestConstants:
 
     def test_system_prompt_instructs_citation(self, app_module):
         assert "cite" in app_module.SYSTEM_PROMPT.lower() or "path" in app_module.SYSTEM_PROMPT.lower()
+
+    def test_page_types(self, app_module):
+        assert "concept" in app_module.PAGE_TYPES
+        assert "entity" in app_module.PAGE_TYPES
+        assert "synthesis" in app_module.PAGE_TYPES
+        assert "comparison" in app_module.PAGE_TYPES
+
+    def test_warehouse_id(self, app_module):
+        assert app_module.WAREHOUSE_ID == "41754a8563a43a49"
+
+
+class TestValidateWriteForm:
+    def test_valid_form(self, app_module):
+        errors = app_module.validate_write_form("claims/fraud", "Title", "Summary", "Body text")
+        assert errors == []
+
+    def test_empty_path(self, app_module):
+        errors = app_module.validate_write_form("", "Title", "Summary", "Body")
+        assert any("Path" in e for e in errors)
+
+    def test_path_without_slash(self, app_module):
+        errors = app_module.validate_write_form("noslash", "Title", "Summary", "Body")
+        assert any("slash" in e.lower() for e in errors)
+
+    def test_empty_title(self, app_module):
+        errors = app_module.validate_write_form("a/b", "", "Summary", "Body")
+        assert any("Title" in e for e in errors)
+
+    def test_empty_summary(self, app_module):
+        errors = app_module.validate_write_form("a/b", "Title", "", "Body")
+        assert any("Summary" in e for e in errors)
+
+    def test_empty_body(self, app_module):
+        errors = app_module.validate_write_form("a/b", "Title", "Summary", "")
+        assert any("Body" in e for e in errors)
+
+    def test_whitespace_only_path(self, app_module):
+        errors = app_module.validate_write_form("   ", "Title", "Summary", "Body")
+        assert len(errors) > 0
+
+    def test_multiple_errors(self, app_module):
+        errors = app_module.validate_write_form("", "", "", "")
+        assert len(errors) == 4
+
+
+class TestSearchWiki:
+    def test_delegates_to_wiki_client(self, app_module):
+        wiki = MagicMock()
+        wiki.search.return_value = [{"path": "a/b", "title": "Test"}]
+        result = app_module.search_wiki(wiki, "test query")
+        assert len(result) == 1
+        wiki.search.assert_called_once_with("test query", num_results=5)
+
+    def test_custom_num_results(self, app_module):
+        wiki = MagicMock()
+        wiki.search.return_value = []
+        app_module.search_wiki(wiki, "test", num_results=10)
+        wiki.search.assert_called_once_with("test", num_results=10)
+
+    def test_returns_empty_on_error(self, app_module):
+        wiki = MagicMock()
+        wiki.search.side_effect = Exception("connection failed")
+        result = app_module.search_wiki(wiki, "test")
+        assert result == []

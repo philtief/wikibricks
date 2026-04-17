@@ -1,3 +1,4 @@
 streamlit>=1.38.0
 databricks-sdk>=0.44.0
 openai>=1.0.0
+wikibricks
