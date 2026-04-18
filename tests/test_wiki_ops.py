@@ -4,15 +4,25 @@ from wikibricks.ops import (
     CATALOG,
     HISTORY_TABLE,
     LINKS_TABLE,
+    LOG_TABLE,
     PAGES_TABLE,
     SCHEMA,
+    SCHEMA_VOLUME_PATH,
+    SOURCES_TABLE,
+    SOURCES_VOLUME,
     VS_ENDPOINT,
     VS_INDEX,
     add_link_sql,
+    cdf_since_sql,
+    create_index_view_sql,
     create_schema_sql,
     create_tables_sql,
     create_uc_functions_sql,
     create_vs_index_spec,
+    get_schema,
+    ingest_source_sql,
+    log_operation_sql,
+    orphan_pages_sql,
     read_page_sql,
     read_subtree_sql,
     search_query,
@@ -30,15 +40,20 @@ class TestConstants:
         assert PAGES_TABLE == f"{CATALOG}.{SCHEMA}.pages"
         assert HISTORY_TABLE == f"{CATALOG}.{SCHEMA}.pages_history"
         assert LINKS_TABLE == f"{CATALOG}.{SCHEMA}.links"
+        assert SOURCES_TABLE == f"{CATALOG}.{SCHEMA}.sources"
+        assert LOG_TABLE == f"{CATALOG}.{SCHEMA}.wiki_log"
+
+    def test_sources_volume_path(self):
+        assert SOURCES_VOLUME == f"/Volumes/{CATALOG}/{SCHEMA}/sources"
 
     def test_vs_index_name(self):
         assert VS_INDEX == f"{CATALOG}.{SCHEMA}.pages_index"
 
 
 class TestCreateTablesSql:
-    def test_returns_three_statements(self):
+    def test_returns_five_statements(self):
         stmts = create_tables_sql()
-        assert len(stmts) == 3
+        assert len(stmts) == 5
 
     def test_pages_table_has_required_columns(self):
         stmts = create_tables_sql()
@@ -61,6 +76,11 @@ class TestCreateTablesSql:
         assert "path_depth" in pages_sql
         assert "content_text" in pages_sql
 
+    def test_pages_table_has_source_ids(self):
+        stmts = create_tables_sql()
+        assert "source_ids" in stmts[0]
+        assert "ARRAY<STRING>" in stmts[0]
+
     def test_pages_table_has_no_is_current_flag(self):
         """Current table should not have is_current — every row IS current."""
         stmts = create_tables_sql()
@@ -76,6 +96,26 @@ class TestCreateTablesSql:
         links_sql = stmts[2]
         assert "link_type" in links_sql
 
+    def test_sources_table_has_required_columns(self):
+        stmts = create_tables_sql()
+        sources_sql = stmts[3].upper()
+        for col in ["SOURCE_ID", "URI", "TITLE", "CONTENT_TEXT", "SOURCE_TYPE", "METADATA"]:
+            assert col in sources_sql, f"Missing column {col} in sources table"
+
+    def test_sources_table_has_variant_metadata(self):
+        stmts = create_tables_sql()
+        assert "VARIANT" in stmts[3]
+
+    def test_log_table_has_required_columns(self):
+        stmts = create_tables_sql()
+        log_sql = stmts[4].upper()
+        for col in ["LOG_ID", "OP_TYPE", "PATH", "QUERY", "DETAILS", "CREATED_BY"]:
+            assert col in log_sql, f"Missing column {col} in log table"
+
+    def test_log_table_has_op_type_comment(self):
+        stmts = create_tables_sql()
+        assert "promote" in stmts[4]
+
     def test_all_tables_use_delta(self):
         for stmt in create_tables_sql():
             assert "USING DELTA" in stmt
@@ -86,6 +126,37 @@ class TestCreateSchemaSql:
         sql = create_schema_sql()
         assert f"{CATALOG}.{SCHEMA}" in sql
         assert "CREATE SCHEMA" in sql
+
+
+class TestGetSchema:
+    def test_returns_string(self):
+        schema = get_schema()
+        assert isinstance(schema, str)
+        assert len(schema) > 100
+
+    def test_contains_page_types(self):
+        schema = get_schema()
+        for pt in ("entity", "concept", "synthesis", "comparison"):
+            assert pt in schema
+
+    def test_contains_path_conventions(self):
+        schema = get_schema()
+        assert "topics/" in schema
+        assert "guides/" in schema
+        assert "_meta/" in schema
+
+    def test_contains_link_types(self):
+        schema = get_schema()
+        for lt in ("related", "extends", "contradicts", "supersedes", "cites"):
+            assert lt in schema
+
+    def test_contains_content_structure(self):
+        schema = get_schema()
+        assert "summary" in schema
+        assert "body" in schema
+
+    def test_schema_volume_path(self):
+        assert "WIKIBRICKS.MD" in SCHEMA_VOLUME_PATH
 
 
 class TestWritePageSql:
@@ -251,9 +322,9 @@ class TestCreateVsIndexSpec:
 
 
 class TestCreateUcFunctionsSql:
-    def test_returns_three_functions(self):
+    def test_returns_seven_functions(self):
         stmts = create_uc_functions_sql("warehouse-id-123")
-        assert len(stmts) == 3
+        assert len(stmts) == 7
 
     def test_fn_wiki_search(self):
         stmts = create_uc_functions_sql("wh-123")
@@ -277,24 +348,56 @@ class TestCreateUcFunctionsSql:
         assert "fn_wiki_history" in history_fn
         assert "page_path STRING" in history_fn
         assert HISTORY_TABLE in history_fn
-        # Uses subquery for ORDER BY before aggregation
         assert history_fn.count("SELECT") >= 2
+
+    def test_fn_wiki_log(self):
+        stmts = create_uc_functions_sql("wh-123")
+        log_fn = stmts[3]
+        assert "fn_wiki_log" in log_fn
+        assert "CREATE OR REPLACE FUNCTION" in log_fn
+        assert "num_entries INT" in log_fn
+        assert LOG_TABLE in log_fn
+        assert log_fn.count("SELECT") >= 2
+
+    def test_fn_wiki_index(self):
+        stmts = create_uc_functions_sql("wh-123")
+        index_fn = stmts[4]
+        assert "fn_wiki_index" in index_fn
+        assert "CREATE OR REPLACE FUNCTION" in index_fn
+        assert PAGES_TABLE in index_fn
+        assert "summary" in index_fn
 
     def test_all_functions_use_catalog_schema(self):
         stmts = create_uc_functions_sql("wh-123")
         for stmt in stmts:
             assert f"{CATALOG}.{SCHEMA}" in stmt
 
-    def test_no_write_function(self):
-        """Write is a custom agent tool, not a UC function (can't do DML)."""
+    def test_no_dml_write_function(self):
+        """No UC function does DML writes — write_help only returns docs."""
         stmts = create_uc_functions_sql("wh-123")
-        combined = " ".join(stmts)
-        assert "fn_wiki_write" not in combined
+        write_help_fn = stmts[6]
+        assert "fn_wiki_write_help" in write_help_fn
+        assert "INSERT" not in write_help_fn
+        assert "MERGE" not in write_help_fn
 
     def test_search_fn_has_comment_about_modes(self):
         stmts = create_uc_functions_sql("wh-123")
         search_fn = stmts[0]
         assert "FULL_TEXT" in search_fn or "full_text" in search_fn
+
+    def test_fn_wiki_schema(self):
+        stmts = create_uc_functions_sql("wh-123")
+        schema_fn = stmts[5]
+        assert "fn_wiki_schema" in schema_fn
+        assert "CREATE OR REPLACE FUNCTION" in schema_fn
+        assert "Page Types" in schema_fn or "page_type" in schema_fn.lower()
+
+    def test_fn_wiki_write_help(self):
+        stmts = create_uc_functions_sql("wh-123")
+        help_fn = stmts[6]
+        assert "fn_wiki_write_help" in help_fn
+        assert "WikiClient" in help_fn
+        assert "write_page" in help_fn
 
 
 class TestAddLinkSql:
@@ -317,3 +420,106 @@ class TestAddLinkSql:
         for lt in ("related", "contradicts", "extends", "supersedes", "cites"):
             sql = add_link_sql("a", "b", lt)
             assert lt in sql
+
+
+class TestIngestSourceSql:
+    def test_inserts_into_sources_table(self):
+        sql = ingest_source_sql("https://example.com/doc", "Example Doc", "Some content", "url")
+        assert "INSERT INTO" in sql
+        assert SOURCES_TABLE in sql
+
+    def test_includes_all_fields(self):
+        sql = ingest_source_sql("https://example.com", "Title", "Content", "url")
+        assert "https://example.com" in sql
+        assert "Title" in sql
+        assert "Content" in sql
+        assert "url" in sql
+
+    def test_null_optional_fields(self):
+        sql = ingest_source_sql("https://example.com")
+        assert "NULL" in sql
+        assert "https://example.com" in sql
+
+    def test_default_source_type(self):
+        sql = ingest_source_sql("https://example.com")
+        assert "manual" in sql
+
+
+class TestLogOperationSql:
+    def test_inserts_into_log_table(self):
+        sql = log_operation_sql("write", path="topics/test")
+        assert "INSERT INTO" in sql
+        assert LOG_TABLE in sql
+
+    def test_includes_op_type(self):
+        sql = log_operation_sql("search", query="test query")
+        assert "search" in sql
+        assert "test query" in sql
+
+    def test_null_optional_fields(self):
+        sql = log_operation_sql("read")
+        assert sql.count("NULL") >= 2
+
+    def test_default_created_by(self):
+        sql = log_operation_sql("write")
+        assert "agent" in sql
+
+    def test_custom_created_by(self):
+        sql = log_operation_sql("promote", created_by="chat")
+        assert "chat" in sql
+
+    def test_all_op_types_accepted(self):
+        for op in ("write", "search", "read", "ingest", "lint", "promote"):
+            sql = log_operation_sql(op)
+            assert op in sql
+
+
+class TestCreateIndexViewSql:
+    def test_creates_view(self):
+        sql = create_index_view_sql()
+        assert "CREATE OR REPLACE VIEW" in sql
+        assert f"{CATALOG}.{SCHEMA}.wiki_index" in sql
+
+    def test_selects_from_pages(self):
+        sql = create_index_view_sql()
+        assert PAGES_TABLE in sql
+
+    def test_includes_summary_extraction(self):
+        sql = create_index_view_sql()
+        assert "summary" in sql.lower()
+
+    def test_orders_by_path(self):
+        sql = create_index_view_sql()
+        assert "ORDER BY path" in sql
+
+
+class TestCdfSinceSql:
+    def test_queries_table_changes(self):
+        sql = cdf_since_sql(PAGES_TABLE, "2026-01-01T00:00:00")
+        assert "table_changes" in sql
+        assert PAGES_TABLE in sql
+
+    def test_includes_timestamp(self):
+        sql = cdf_since_sql(PAGES_TABLE, "2026-04-01T00:00:00")
+        assert "2026-04-01T00:00:00" in sql
+
+    def test_filters_change_types(self):
+        sql = cdf_since_sql(PAGES_TABLE, "2026-01-01")
+        assert "insert" in sql
+        assert "update_postimage" in sql
+
+
+class TestOrphanPagesSql:
+    def test_joins_pages_and_links(self):
+        sql = orphan_pages_sql()
+        assert PAGES_TABLE in sql
+        assert LINKS_TABLE in sql
+        assert "LEFT JOIN" in sql
+
+    def test_excludes_meta_pages(self):
+        sql = orphan_pages_sql()
+        assert "_meta/%" in sql
+
+    def test_filters_null_targets(self):
+        sql = orphan_pages_sql()
+        assert "IS NULL" in sql

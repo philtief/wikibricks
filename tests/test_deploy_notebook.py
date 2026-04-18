@@ -62,3 +62,40 @@ class TestAutoEvalNotebookSyntax:
         with open("notebooks/run_autoeval.py") as f:
             source = f.read()
         assert "pages_index" in source or "VS_INDEX" in source or "autoeval" in source.lower()
+
+
+class TestMaintenanceNotebook:
+    def test_notebook_is_valid_python(self):
+        with open("notebooks/maintenance.py") as f:
+            source = f.read()
+        ast.parse(source)
+
+    def test_imports_wikibricks(self):
+        with open("notebooks/maintenance.py") as f:
+            source = f.read()
+        assert "from wikibricks" in source
+
+    def test_uses_cdf(self):
+        with open("notebooks/maintenance.py") as f:
+            source = f.read()
+        assert "cdf_since_sql" in source
+
+    def test_detects_orphans(self):
+        with open("notebooks/maintenance.py") as f:
+            source = f.read()
+        assert "orphan_pages_sql" in source
+
+    def test_materializes_index(self):
+        with open("notebooks/maintenance.py") as f:
+            source = f.read()
+        assert "materialize_index" in source
+
+    def test_writes_maintenance_report(self):
+        with open("notebooks/maintenance.py") as f:
+            source = f.read()
+        assert "_meta/maintenance-log" in source
+
+    def test_uses_wiki_client(self):
+        with open("notebooks/maintenance.py") as f:
+            source = f.read()
+        assert "WikiClient" in source

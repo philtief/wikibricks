@@ -6,7 +6,7 @@ import pytest
 from databricks.sdk.service.sql import StatementState, StatementStatus
 
 from wikibricks.client import WikiClient
-from wikibricks.ops import HISTORY_TABLE, PAGES_TABLE
+from wikibricks.ops import HISTORY_TABLE, LOG_TABLE, PAGES_TABLE, SOURCES_TABLE
 
 
 def _col(name):
@@ -38,7 +38,8 @@ class TestWritePage:
         result = wiki.write_page("test/page", "Test", '{"summary":"s","body":"b"}')
 
         assert result == "Wrote wiki page: test/page"
-        assert ws.statement_execution.execute_statement.call_count == 2
+        # archive + merge + _log
+        assert ws.statement_execution.execute_statement.call_count == 3
 
     def test_archive_sql_targets_history(self):
         ws = MagicMock()
@@ -176,3 +177,155 @@ class TestHistory:
         wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
 
         assert wiki.history("new/page") == []
+
+
+class TestWritePageSourceIds:
+    def test_source_ids_in_merge_sql(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.write_page(
+            "test/page", "Test", '{"summary":"s","body":"b"}',
+            source_ids=["src-1", "src-2"],
+        )
+        merge_call = ws.statement_execution.execute_statement.call_args_list[1]
+        sql = merge_call.kwargs["statement"]
+        assert "src-1" in sql
+        assert "src-2" in sql
+        assert "source_ids" in sql
+
+    def test_null_source_ids_when_omitted(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.write_page("test/page", "Test", '{"summary":"s","body":"b"}')
+        merge_call = ws.statement_execution.execute_statement.call_args_list[1]
+        sql = merge_call.kwargs["statement"]
+        assert "NULL" in sql
+
+
+class TestLog:
+    def test_write_logs_operation(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.write_page("test/page", "Test", '{"summary":"s","body":"b"}')
+        log_call = ws.statement_execution.execute_statement.call_args_list[2]
+        sql = log_call.kwargs["statement"]
+        assert LOG_TABLE in sql
+        assert "write" in sql
+
+    def test_read_logs_operation(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response(
+            rows=[["id-1", "test/page", "Test", "concept", "c", "[]",
+                   "agent", "2026-01-01", "2026-01-01", "1"]],
+            columns=["page_id", "path", "title", "page_type", "content_text",
+                      "tags", "created_by", "created_at", "updated_at", "version"],
+        )
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.read_page("test/page")
+        # read SQL + _log SQL
+        assert ws.statement_execution.execute_statement.call_count == 2
+        log_call = ws.statement_execution.execute_statement.call_args_list[1]
+        sql = log_call.kwargs["statement"]
+        assert "read" in sql
+
+    def test_log_failure_does_not_raise(self):
+        ws = MagicMock()
+        call_count = [0]
+        def side_effect(**kwargs):
+            call_count[0] += 1
+            if call_count[0] <= 2:
+                return _mock_response([])
+            raise RuntimeError("log table missing")
+        ws.statement_execution.execute_statement.side_effect = side_effect
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        result = wiki.write_page("test/page", "Test", '{"summary":"s","body":"b"}')
+        assert result == "Wrote wiki page: test/page"
+
+
+class TestIngestSource:
+    def test_inserts_into_sources(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        result = wiki.ingest_source("https://example.com", "Example", "content", "url")
+        assert "Ingested source" in result
+        insert_call = ws.statement_execution.execute_statement.call_args_list[0]
+        sql = insert_call.kwargs["statement"]
+        assert SOURCES_TABLE in sql
+        assert "https://example.com" in sql
+
+    def test_optional_fields_null(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.ingest_source("https://example.com")
+        insert_call = ws.statement_execution.execute_statement.call_args_list[0]
+        sql = insert_call.kwargs["statement"]
+        assert "NULL" in sql
+
+    def test_logs_ingest_operation(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.ingest_source("https://example.com", "Title", "Content", "url")
+        log_call = ws.statement_execution.execute_statement.call_args_list[1]
+        sql = log_call.kwargs["statement"]
+        assert "ingest" in sql
+
+
+class TestPromoteAnswer:
+    def test_creates_promoted_page(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        path = wiki.promote_answer(
+            "What is Delta Lake?", "Delta Lake is...", [],
+        )
+        assert path.startswith("promoted/")
+        assert "delta" in path
+
+    def test_slugifies_query(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        path = wiki.promote_answer("How do I use Unity Catalog?", "Answer", [])
+        assert "how-do-i-use-unity-catalog" in path
+
+    def test_logs_promote_operation(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.promote_answer("Test question", "Answer", [])
+        calls = ws.statement_execution.execute_statement.call_args_list
+        log_sqls = [c.kwargs["statement"] for c in calls if "promote" in c.kwargs.get("statement", "")]
+        assert len(log_sqls) >= 1
+
+
+class TestMaterializeIndex:
+    def test_writes_meta_index_page(self):
+        ws = MagicMock()
+        resp_query = _mock_response(
+            rows=[["topics/a", "Page A", "concept", "Summary A"]],
+            columns=["path", "title", "page_type", "summary"],
+        )
+        resp_write = _mock_response([])
+        ws.statement_execution.execute_statement.side_effect = [
+            resp_query, resp_write, resp_write, resp_write,
+        ]
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        result = wiki.materialize_index()
+        assert "1 pages" in result
+
+    def test_handles_empty_wiki(self):
+        ws = MagicMock()
+        resp_empty = _mock_response(rows=[])
+        resp_write = _mock_response([])
+        ws.statement_execution.execute_statement.side_effect = [
+            resp_empty, resp_write, resp_write, resp_write,
+        ]
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        result = wiki.materialize_index()
+        assert "0 pages" in result

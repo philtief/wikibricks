@@ -1,13 +1,17 @@
 """WikiClient: high-level API for reading and writing wiki pages on Databricks."""
 
 import json
+import re
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
 
 from wikibricks.ops import (
     HISTORY_TABLE,
+    LINKS_TABLE,
+    LOG_TABLE,
     PAGES_TABLE,
+    SOURCES_TABLE,
     VS_INDEX,
 )
 
@@ -45,6 +49,19 @@ class WikiClient:
         """Escape backslashes and single quotes for Databricks SQL string literals."""
         return value.replace("\\", "\\\\").replace("'", "\\'")
 
+    def _log(self, op_type, path=None, query=None, details=None):
+        """Log an operation to the wiki_log table. Failures are silently ignored."""
+        path_sql = f"'{path}'" if path else "NULL"
+        query_sql = f"'{query}'" if query else "NULL"
+        details_sql = f"'{details}'" if details else "NULL"
+        try:
+            self._exec(
+                f"INSERT INTO {LOG_TABLE} (op_type, path, query, details) "
+                f"VALUES ('{op_type}', {path_sql}, {query_sql}, {details_sql})"
+            )
+        except Exception:
+            pass
+
     def write_page(
         self,
         path: str,
@@ -53,6 +70,7 @@ class WikiClient:
         page_type: str = "concept",
         created_by: str = "agent",
         tags: list[str] | None = None,
+        source_ids: list[str] | None = None,
     ) -> str:
         """Create or update a wiki page. Archives previous version to history.
 
@@ -63,6 +81,7 @@ class WikiClient:
             page_type: One of: entity, concept, synthesis, comparison.
             created_by: Who created this version.
             tags: Optional list of tags.
+            source_ids: Optional list of source IDs to link provenance.
 
         Returns:
             Confirmation message.
@@ -73,6 +92,7 @@ class WikiClient:
         title_esc = self._escape(title)
         content_esc = self._escape(content_json)
         tags_sql = f"ARRAY({','.join(repr(t) for t in tags)})" if tags else "ARRAY()"
+        src_sql = f"ARRAY({','.join(repr(s) for s in source_ids)})" if source_ids else "NULL"
 
         archive_sql = f"""
         INSERT INTO {HISTORY_TABLE}
@@ -95,22 +115,24 @@ class WikiClient:
                 PARSE_JSON('{content_esc}'):summary::STRING, ' ',
                 PARSE_JSON('{content_esc}'):body::STRING),
             tags = {tags_sql},
+            source_ids = {src_sql},
             created_by = '{created_by}',
             updated_at = current_timestamp(),
             version = target.version + 1
         WHEN NOT MATCHED THEN INSERT
             (page_id, path, title, page_type, content, content_text, tags,
-             created_by, version)
+             source_ids, created_by, version)
         VALUES (uuid(), '{path}', '{title_esc}', '{page_type}',
                 PARSE_JSON('{content_esc}'),
                 concat(
                     PARSE_JSON('{content_esc}'):summary::STRING, ' ',
                     PARSE_JSON('{content_esc}'):body::STRING),
-                {tags_sql}, '{created_by}', 1)
+                {tags_sql}, {src_sql}, '{created_by}', 1)
         """
 
         self._exec(archive_sql)
         self._exec(merge_sql)
+        self._log("write", path=path)
         return f"Wrote wiki page: {path}"
 
     def read_page(self, path: str) -> dict | None:
@@ -124,6 +146,7 @@ class WikiClient:
         if not rows:
             return None
         cols = [c.name for c in resp.manifest.columns]
+        self._log("read", path=path)
         return dict(zip(cols, rows[0]))
 
     def search(self, query: str, mode: str = "HYBRID", num_results: int = 5) -> list[dict]:
@@ -147,6 +170,7 @@ class WikiClient:
         if not resp.result or not resp.result.data_array:
             return []
         cols = [c.name for c in resp.manifest.columns]
+        self._log("search", query=query)
         return [dict(zip(cols, row)) for row in resp.result.data_array]
 
     def history(self, path: str) -> list[dict]:
@@ -160,3 +184,101 @@ class WikiClient:
             return []
         cols = [c.name for c in resp.manifest.columns]
         return [dict(zip(cols, row)) for row in rows]
+
+    def ingest_source(
+        self, uri: str, title: str | None = None,
+        content_text: str | None = None, source_type: str = "manual",
+    ) -> str:
+        """Ingest a source document into the sources table.
+
+        Returns:
+            Confirmation message with the URI.
+        """
+        title_sql = f"'{self._escape(title)}'" if title else "NULL"
+        content_sql = f"'{self._escape(content_text)}'" if content_text else "NULL"
+        self._exec(
+            f"INSERT INTO {SOURCES_TABLE} (uri, title, content_text, source_type) "
+            f"VALUES ('{self._escape(uri)}', {title_sql}, {content_sql}, '{source_type}')"
+        )
+        self._log("ingest", details=uri)
+        return f"Ingested source: {uri}"
+
+    def promote_answer(
+        self, query: str, answer: str, source_pages: list[dict],
+        created_by: str = "chat",
+    ) -> str:
+        """Promote a chat answer to a wiki page.
+
+        Creates a synthesis page from the answer, links to source pages.
+
+        Args:
+            query: The original user question.
+            answer: The generated answer text.
+            source_pages: List of page dicts (must have 'page_id') used as sources.
+            created_by: Attribution for the page.
+
+        Returns:
+            The path of the created wiki page.
+        """
+        slug = re.sub(r"[^a-z0-9]+", "-", query.lower()).strip("-")[:60]
+        path = f"promoted/{slug}"
+        content = {"summary": query, "body": answer}
+        tags = ["promoted", "auto-generated"]
+
+        self.write_page(path, query[:120], content, page_type="synthesis",
+                        created_by=created_by, tags=tags)
+
+        for page in source_pages:
+            page_id = page.get("page_id")
+            if not page_id:
+                continue
+            promoted = self.read_page(path)
+            if promoted and promoted.get("page_id"):
+                try:
+                    self._exec(
+                        f"MERGE INTO {LINKS_TABLE} AS t "
+                        f"USING (SELECT '{promoted['page_id']}' AS src, "
+                        f"'{page_id}' AS tgt, 'cites' AS lt) AS s "
+                        f"ON t.source_page_id = s.src AND t.target_page_id = s.tgt "
+                        f"AND t.link_type = s.lt "
+                        f"WHEN NOT MATCHED THEN INSERT "
+                        f"(source_page_id, target_page_id, link_type) "
+                        f"VALUES (s.src, s.tgt, s.lt)"
+                    )
+                except Exception:
+                    pass
+
+        self._log("promote", path=path, query=query)
+        return path
+
+    def materialize_index(self) -> str:
+        """Materialize the wiki index as a page at _meta/index.
+
+        Queries all pages and writes a summary page listing them.
+
+        Returns:
+            Confirmation message.
+        """
+        resp = self._exec(
+            f"SELECT path, title, page_type, content:summary::STRING AS summary "
+            f"FROM {PAGES_TABLE} WHERE path NOT LIKE '_meta/%' ORDER BY path"
+        )
+        rows = resp.result.data_array if resp.result else []
+        cols = [c.name for c in resp.manifest.columns] if rows else []
+
+        entries = [dict(zip(cols, row)) for row in rows]
+        body_lines = [
+            f"- [{e.get('title', '?')}]({e.get('path', '?')}) "
+            f"({e.get('page_type', '?')}): {e.get('summary', '')}"
+            for e in entries
+        ]
+        body = "\n".join(body_lines) if body_lines else "No pages yet."
+
+        content = {
+            "summary": f"Wiki index: {len(entries)} pages",
+            "body": body,
+        }
+        self.write_page("_meta/index", "Wiki Index", content,
+                        page_type="synthesis", created_by="maintenance",
+                        tags=["meta", "index", "auto-generated"])
+        return f"Materialized index with {len(entries)} pages"

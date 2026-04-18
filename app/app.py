@@ -1,5 +1,7 @@
 """WikiBricks -- browse, search, edit, and chat with your wiki knowledge base."""
 
+import json
+
 import streamlit as st
 from databricks.sdk import WorkspaceClient
 from openai import OpenAI
@@ -96,7 +98,7 @@ def validate_write_form(path, title, summary, body):
 st.set_page_config(page_title="WikiBricks", page_icon="📚", layout="centered")
 
 # Sidebar navigation
-mode = st.sidebar.radio("Mode", ["Chat", "Browse", "Write"], index=0)
+mode = st.sidebar.radio("Mode", ["Chat", "Browse", "Write", "Ingest"], index=0)
 st.sidebar.markdown("---")
 st.sidebar.caption("WikiBricks -- Databricks-native wiki for AI agents")
 
@@ -155,6 +157,28 @@ if mode == "Chat":
                 "sources": sources,
             })
 
+            # Auto-promote: score the answer and save to wiki if quality is high
+            if pages and response:
+                try:
+                    score_resp = openai_client.chat.completions.create(
+                        model=LLM_MODEL,
+                        messages=[{
+                            "role": "user",
+                            "content": (
+                                f"Rate this answer on a scale of 1-5 for quality, "
+                                f"accuracy, and usefulness. Reply with ONLY a single "
+                                f"digit (1-5).\n\nQuestion: {prompt}\n\nAnswer: {response}"
+                            ),
+                        }],
+                    )
+                    score_text = score_resp.choices[0].message.content.strip()
+                    score = int(score_text[0]) if score_text and score_text[0].isdigit() else 0
+                    if score >= 4:
+                        promoted_path = wiki.promote_answer(prompt, response, pages)
+                        st.toast(f"Answer saved to wiki: {promoted_path}", icon="📝")
+                except Exception:
+                    pass
+
 
 # ── Browse Mode ───────────────────────────────────────────────────────────────
 elif mode == "Browse":
@@ -183,6 +207,11 @@ elif mode == "Browse":
             tags = page.get("tags", "")
             if tags and tags != "[]":
                 st.markdown(f"**Tags:** {tags}")
+
+            source_ids = page.get("source_ids", "")
+            if source_ids and source_ids != "[]" and source_ids != "null":
+                with st.expander("Source provenance"):
+                    st.markdown(f"Linked source IDs: `{source_ids}`")
 
             # Show version history
             with st.spinner("Loading history..."):
@@ -271,3 +300,56 @@ elif mode == "Write":
                 st.json(page)
             else:
                 st.warning(f"No page at `{load_path}`")
+
+
+# ── Ingest Mode ──────────────────────────────────────────────────────────────
+elif mode == "Ingest":
+    st.title("Ingest Source")
+    st.caption("Add a source document to the wiki's bronze layer")
+
+    with st.form("ingest_form"):
+        uri = st.text_input("Source URI", placeholder="https://docs.databricks.com/...")
+        src_title = st.text_input("Title", placeholder="Databricks Delta Lake Overview")
+        source_type = st.selectbox("Source type", ["url", "document", "api", "manual"])
+        content = st.text_area(
+            "Content", placeholder="Paste or type the source content here", height=300,
+        )
+        create_page = st.checkbox("Also create a wiki page from this source", value=True)
+        ingest_submitted = st.form_submit_button("Ingest", use_container_width=True)
+
+    if ingest_submitted:
+        if not uri or not uri.strip():
+            st.error("URI is required.")
+        elif not content or not content.strip():
+            st.error("Content is required.")
+        else:
+            ws, _, wiki = get_clients()
+            with st.spinner("Ingesting source..."):
+                try:
+                    result = wiki.ingest_source(
+                        uri=uri.strip(),
+                        title=src_title.strip() or None,
+                        content_text=content.strip(),
+                        source_type=source_type,
+                    )
+                    st.success(result)
+
+                    if create_page and src_title.strip():
+                        import re
+                        slug = re.sub(r"[^a-z0-9]+", "-", src_title.lower()).strip("-")[:60]
+                        page_path = f"topics/{slug}"
+                        page_content = {
+                            "summary": src_title.strip(),
+                            "body": content.strip(),
+                        }
+                        page_result = wiki.write_page(
+                            path=page_path,
+                            title=src_title.strip(),
+                            content_json=page_content,
+                            page_type="entity",
+                            created_by="ingest",
+                            tags=["ingested", source_type],
+                        )
+                        st.success(f"{page_result} (from ingested source)")
+                except Exception as e:
+                    st.error(f"Ingestion failed: {e}")

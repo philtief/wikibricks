@@ -1,6 +1,7 @@
 """WikiBricks: Delta + Vector Search wiki store operations for AI agents."""
 
 import json
+from pathlib import Path
 
 from databricks.sdk.service.vectorsearch import (
     DeltaSyncVectorIndexSpecRequest,
@@ -14,9 +15,13 @@ SCHEMA = "wiki"
 PAGES_TABLE = f"{CATALOG}.{SCHEMA}.pages"
 HISTORY_TABLE = f"{CATALOG}.{SCHEMA}.pages_history"
 LINKS_TABLE = f"{CATALOG}.{SCHEMA}.links"
+SOURCES_TABLE = f"{CATALOG}.{SCHEMA}.sources"
+LOG_TABLE = f"{CATALOG}.{SCHEMA}.wiki_log"
 VS_INDEX = f"{CATALOG}.{SCHEMA}.pages_index"
 VS_ENDPOINT = "wiki-vs-endpoint"
 EMBEDDING_MODEL = "databricks-bge-large-en"
+SOURCES_VOLUME = f"/Volumes/{CATALOG}/{SCHEMA}/sources"
+SCHEMA_VOLUME_PATH = f"/Volumes/{CATALOG}/{SCHEMA}/sources/WIKIBRICKS.MD"
 
 
 def create_tables_sql():
@@ -32,6 +37,7 @@ def create_tables_sql():
             content      VARIANT       NOT NULL,
             content_text STRING,
             tags         ARRAY<STRING>,
+            source_ids   ARRAY<STRING>,
             created_by   STRING        NOT NULL,
             created_at   TIMESTAMP     DEFAULT current_timestamp(),
             updated_at   TIMESTAMP     DEFAULT current_timestamp(),
@@ -70,12 +76,44 @@ def create_tables_sql():
         USING DELTA
         TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
         """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {SOURCES_TABLE} (
+            source_id    STRING     DEFAULT uuid(),
+            uri          STRING     NOT NULL,
+            title        STRING,
+            content_text STRING,
+            source_type  STRING     COMMENT 'url, document, api, manual',
+            ingested_at  TIMESTAMP  DEFAULT current_timestamp(),
+            metadata     VARIANT
+        )
+        USING DELTA
+        TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {LOG_TABLE} (
+            log_id      STRING     DEFAULT uuid(),
+            op_type     STRING     NOT NULL COMMENT 'write, search, read, ingest, lint, promote',
+            path        STRING,
+            query       STRING,
+            details     STRING,
+            created_by  STRING     DEFAULT 'agent',
+            created_at  TIMESTAMP  DEFAULT current_timestamp()
+        )
+        USING DELTA
+        TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
+        """,
     ]
 
 
 def create_schema_sql():
     """Return SQL to create the wiki schema."""
     return f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}"
+
+
+def get_schema() -> str:
+    """Read and return the wiki schema definition (WIKIBRICKS.MD)."""
+    schema_path = Path(__file__).parent / "WIKIBRICKS.MD"
+    return schema_path.read_text()
 
 
 def write_page_sql(path, title, page_type, content_json, created_by, tags=None):
@@ -272,7 +310,71 @@ def create_uc_functions_sql(warehouse_id):
     )
     """
 
-    return [fn_search, fn_read, fn_history]
+    fn_log = f"""
+    CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_log(
+        num_entries INT DEFAULT 20 COMMENT 'Number of recent log entries to return'
+    )
+    RETURNS STRING
+    COMMENT 'Get recent wiki operation log entries. Returns JSON array of log records.'
+    RETURN (
+        SELECT to_json(collect_list(struct(
+            log_id, op_type, path, query, details, created_by, created_at
+        )))
+        FROM (
+            SELECT log_id, op_type, path, query, details, created_by, created_at
+            FROM {LOG_TABLE}
+            ORDER BY created_at DESC
+            LIMIT num_entries
+        )
+    )
+    """
+
+    fn_index = f"""
+    CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_index()
+    RETURNS STRING
+    COMMENT 'Get the full wiki page index. Returns JSON array of all pages with path, title, type, summary.'
+    RETURN (
+        SELECT to_json(collect_list(struct(
+            path, title, page_type, summary, tags, version, updated_at
+        )))
+        FROM (
+            SELECT path, title, page_type,
+                   content:summary::STRING AS summary,
+                   tags, version, updated_at
+            FROM {PAGES_TABLE}
+            ORDER BY path
+        )
+    )
+    """
+
+    schema_content = get_schema().replace("'", "\\'")
+    fn_schema = f"""
+    CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_schema()
+    RETURNS STRING
+    COMMENT 'Get the wiki schema definition: page types, path conventions, tag taxonomy, link types.'
+    RETURN ('{schema_content}')
+    """
+
+    write_help = (
+        "WikiBricks write operations require DML and cannot be called via UC functions. "
+        "Use the WikiClient Python API instead:\\n\\n"
+        "from wikibricks import WikiClient\\n"
+        "wiki = WikiClient(warehouse_id=\\'<warehouse-id>\\')\\n"
+        "wiki.write_page(\\'topics/my-topic\\', \\'Title\\', "
+        "{\\'summary\\': \\'...\\', \\'body\\': \\'...\\'})\\n\\n"
+        "Available write methods: write_page, ingest_source, promote_answer, materialize_index.\\n"
+        "Required content fields: summary (one sentence), body (full text).\\n"
+        "Page types: entity, concept, synthesis, comparison.\\n"
+        "Path format: category/slug (must contain a slash)."
+    )
+    fn_write_help = f"""
+    CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_write_help()
+    RETURNS STRING
+    COMMENT 'How to write wiki pages. Write ops use WikiClient Python API (UC functions cannot do DML).'
+    RETURN ('{write_help}')
+    """
+
+    return [fn_search, fn_read, fn_history, fn_log, fn_index, fn_schema, fn_write_help]
 
 
 def seed_pages():
@@ -386,4 +488,56 @@ def add_link_sql(source_page_id, target_page_id, link_type="related"):
     ON t.source_page_id = s.src AND t.target_page_id = s.tgt AND t.link_type = s.lt
     WHEN NOT MATCHED THEN INSERT (source_page_id, target_page_id, link_type)
     VALUES (s.src, s.tgt, s.lt)
+    """
+
+
+def ingest_source_sql(uri, title=None, content_text=None, source_type="manual"):
+    """Return SQL to insert a source into the sources table."""
+    title_sql = f"'{title}'" if title else "NULL"
+    content_sql = f"'{content_text}'" if content_text else "NULL"
+    return f"""
+    INSERT INTO {SOURCES_TABLE} (uri, title, content_text, source_type)
+    VALUES ('{uri}', {title_sql}, {content_sql}, '{source_type}')
+    """
+
+
+def log_operation_sql(op_type, path=None, query=None, details=None, created_by="agent"):
+    """Return SQL to log a wiki operation."""
+    path_sql = f"'{path}'" if path else "NULL"
+    query_sql = f"'{query}'" if query else "NULL"
+    details_sql = f"'{details}'" if details else "NULL"
+    return f"""
+    INSERT INTO {LOG_TABLE} (op_type, path, query, details, created_by)
+    VALUES ('{op_type}', {path_sql}, {query_sql}, {details_sql}, '{created_by}')
+    """
+
+
+def create_index_view_sql():
+    """Return SQL to create the wiki index view."""
+    return f"""
+    CREATE OR REPLACE VIEW {CATALOG}.{SCHEMA}.wiki_index AS
+    SELECT path, title, page_type, content:summary::STRING AS summary,
+           tags, version, updated_at
+    FROM {PAGES_TABLE}
+    ORDER BY path
+    """
+
+
+def cdf_since_sql(table, since_timestamp):
+    """Return SQL to query Change Data Feed changes since a timestamp."""
+    return f"""
+    SELECT * FROM table_changes('{table}', '{since_timestamp}')
+    WHERE _change_type IN ('insert', 'update_postimage')
+    """
+
+
+def orphan_pages_sql():
+    """Return SQL to find pages with no incoming links (excluding _meta/ pages)."""
+    return f"""
+    SELECT p.page_id, p.path, p.title, p.page_type, p.updated_at
+    FROM {PAGES_TABLE} p
+    LEFT JOIN {LINKS_TABLE} l ON p.page_id = l.target_page_id
+    WHERE l.target_page_id IS NULL
+      AND p.path NOT LIKE '_meta/%'
+    ORDER BY p.updated_at DESC
     """
