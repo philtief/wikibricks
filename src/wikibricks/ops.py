@@ -78,7 +78,7 @@ def create_tables_sql():
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {SOURCES_TABLE} (
-            source_id    STRING     DEFAULT uuid(),
+            source_id    STRING     NOT NULL,
             uri          STRING     NOT NULL,
             title        STRING,
             content_text STRING,
@@ -91,7 +91,7 @@ def create_tables_sql():
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {LOG_TABLE} (
-            log_id      STRING     DEFAULT uuid(),
+            log_id      STRING     NOT NULL,
             op_type     STRING     NOT NULL COMMENT 'write, search, read, ingest, lint, promote',
             path        STRING,
             query       STRING,
@@ -321,11 +321,11 @@ def create_uc_functions_sql(warehouse_id):
             log_id, op_type, path, query, details, created_by, created_at
         )))
         FROM (
-            SELECT log_id, op_type, path, query, details, created_by, created_at
+            SELECT log_id, op_type, path, query, details, created_by, created_at,
+                   row_number() OVER (ORDER BY created_at DESC) AS rn
             FROM {LOG_TABLE}
-            ORDER BY created_at DESC
-            LIMIT num_entries
         )
+        WHERE rn <= num_entries
     )
     """
 
@@ -377,90 +377,12 @@ def create_uc_functions_sql(warehouse_id):
     return [fn_search, fn_read, fn_history, fn_log, fn_index, fn_schema, fn_write_help]
 
 
-def seed_pages():
-    """Return a list of generic sample wiki pages for testing the wiki store."""
-    return [
-        {
-            "path": "topics/getting-started",
-            "title": "Getting Started with WikiBricks",
-            "page_type": "concept",
-            "content": {
-                "summary": "Introduction to the WikiBricks wiki memory system.",
-                "body": (
-                    "WikiBricks provides a structured knowledge store backed by Delta tables "
-                    "and Vector Search. Pages are organized in a path hierarchy and support "
-                    "full-text, semantic, and hybrid search. Each page has a summary, body, "
-                    "tags, and automatic version history."
-                ),
-            },
-            "created_by": "setup",
-            "tags": ["getting-started", "overview", "onboarding"],
-        },
-        {
-            "path": "topics/architecture/overview",
-            "title": "Architecture Overview",
-            "page_type": "concept",
-            "content": {
-                "summary": "High-level architecture of the WikiBricks storage layer.",
-                "body": (
-                    "WikiBricks uses three Delta tables: pages (current state), pages_history "
-                    "(archived versions), and links (page-to-page relationships). A Vector "
-                    "Search index on the pages table enables semantic retrieval. Writes use "
-                    "MERGE for upsert semantics and archive the previous version automatically."
-                ),
-            },
-            "created_by": "setup",
-            "tags": ["architecture", "delta", "vector-search"],
-        },
-        {
-            "path": "guides/setup",
-            "title": "Setup Guide",
-            "page_type": "entity",
-            "content": {
-                "summary": "Step-by-step guide for deploying WikiBricks to a workspace.",
-                "body": (
-                    "Prerequisites: a Databricks workspace with Unity Catalog enabled and a "
-                    "SQL warehouse. Steps: 1) Create the catalog and schema. 2) Run the table "
-                    "creation DDL. 3) Create the Vector Search endpoint and index. 4) Seed "
-                    "initial pages. 5) Verify with a search query."
-                ),
-            },
-            "created_by": "setup",
-            "tags": ["guide", "setup", "deployment"],
-        },
-        {
-            "path": "guides/troubleshooting",
-            "title": "Troubleshooting Common Issues",
-            "page_type": "synthesis",
-            "content": {
-                "summary": "Solutions for frequently encountered problems.",
-                "body": (
-                    "Issue: search returns no results. Check that the Vector Search index has "
-                    "synced after writing pages. Issue: PARSE_JSON fails. Ensure content JSON "
-                    "does not contain unescaped backslashes or newlines. Issue: permission "
-                    "denied. Grant USE CATALOG, USE SCHEMA, and SELECT to the service principal."
-                ),
-            },
-            "created_by": "setup",
-            "tags": ["guide", "troubleshooting", "faq"],
-        },
-        {
-            "path": "comparisons/search-modes",
-            "title": "Search Modes Comparison",
-            "page_type": "comparison",
-            "content": {
-                "summary": "Comparison of ANN, full-text, and hybrid search modes.",
-                "body": (
-                    "ANN (approximate nearest neighbor): best for semantic similarity, uses "
-                    "embedding vectors. Full-text: best for exact keyword matching and known "
-                    "identifiers. Hybrid: combines both approaches and generally provides the "
-                    "best results for natural-language queries. Default mode is HYBRID."
-                ),
-            },
-            "created_by": "setup",
-            "tags": ["comparison", "search", "vector-search"],
-        },
-    ]
+def seed_pages(domain: str = "insurance"):
+    """Return seed wiki pages for the given domain (insurance | hotpot | custom | none)."""
+    from wikibricks import seeds
+    return seeds.load(domain)
+
+
 
 
 def autoeval_config():
@@ -475,6 +397,79 @@ def autoeval_config():
             "mrr": {"k": [5, 10]},
         },
     }
+
+
+def eval_queries():
+    """Return labeled evaluation queries for a motor-insurance seed wiki.
+
+    Each entry maps a natural-language query to the path(s) of the relevant
+    seed page(s). Used to compute recall@k / precision@k / MRR baselines.
+    """
+    return [
+        {
+            "query": "how to assess a total loss on a vehicle",
+            "relevant_paths": ["sops/motor/total-loss"],
+        },
+        {
+            "query": "handling multi-party liability claims",
+            "relevant_paths": ["claims/liability/comparative-negligence"],
+        },
+        {
+            "query": "common collision fraud indicators",
+            "relevant_paths": ["claims/fraud/patterns"],
+        },
+        {
+            "query": "what coverage tiers do we sell for auto",
+            "relevant_paths": ["products/motor/coverage-tiers"],
+        },
+        {
+            "query": "claimants with multiple recent claims",
+            "relevant_paths": ["claims/fraud/repeat-claimants"],
+        },
+        {
+            "query": "language preferences per customer",
+            "relevant_paths": ["customers/preferences/language"],
+        },
+        {
+            "query": "hail storm claim surge playbook",
+            "relevant_paths": ["claims/weather/hail-surge"],
+        },
+        {
+            "query": "salvage value in total loss calculation",
+            "relevant_paths": ["sops/motor/total-loss"],
+        },
+        {
+            "query": "comparative negligence percentages",
+            "relevant_paths": ["claims/liability/comparative-negligence"],
+        },
+        {
+            "query": "repeat claimant analysis",
+            "relevant_paths": ["claims/fraud/repeat-claimants"],
+        },
+    ]
+
+
+def eval_recall_at_k(retrieved_paths, relevant_paths, k):
+    """Return 1.0 if any relevant path is in top-k retrieved, else 0.0."""
+    top_k = retrieved_paths[:k]
+    return 1.0 if any(p in top_k for p in relevant_paths) else 0.0
+
+
+def eval_precision_at_k(retrieved_paths, relevant_paths, k):
+    """Return fraction of top-k retrieved that are relevant."""
+    top_k = retrieved_paths[:k]
+    if not top_k:
+        return 0.0
+    hits = sum(1 for p in top_k if p in relevant_paths)
+    return hits / len(top_k)
+
+
+def eval_mrr(retrieved_paths, relevant_paths):
+    """Return reciprocal rank of first relevant result, or 0.0 if none."""
+    for i, p in enumerate(retrieved_paths, 1):
+        if p in relevant_paths:
+            return 1.0 / i
+    return 0.0
 
 
 def add_link_sql(source_page_id, target_page_id, link_type="related"):
@@ -496,8 +491,8 @@ def ingest_source_sql(uri, title=None, content_text=None, source_type="manual"):
     title_sql = f"'{title}'" if title else "NULL"
     content_sql = f"'{content_text}'" if content_text else "NULL"
     return f"""
-    INSERT INTO {SOURCES_TABLE} (uri, title, content_text, source_type)
-    VALUES ('{uri}', {title_sql}, {content_sql}, '{source_type}')
+    INSERT INTO {SOURCES_TABLE} (source_id, uri, title, content_text, source_type)
+    VALUES (uuid(), '{uri}', {title_sql}, {content_sql}, '{source_type}')
     """
 
 
@@ -507,8 +502,8 @@ def log_operation_sql(op_type, path=None, query=None, details=None, created_by="
     query_sql = f"'{query}'" if query else "NULL"
     details_sql = f"'{details}'" if details else "NULL"
     return f"""
-    INSERT INTO {LOG_TABLE} (op_type, path, query, details, created_by)
-    VALUES ('{op_type}', {path_sql}, {query_sql}, {details_sql}, '{created_by}')
+    INSERT INTO {LOG_TABLE} (log_id, op_type, path, query, details, created_by)
+    VALUES (uuid(), '{op_type}', {path_sql}, {query_sql}, {details_sql}, '{created_by}')
     """
 
 

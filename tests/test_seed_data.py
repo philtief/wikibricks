@@ -2,7 +2,10 @@
 
 import json
 
-from wikibricks.ops import VS_INDEX, autoeval_config, seed_pages
+import pytest
+
+from wikibricks import seeds
+from wikibricks.ops import VS_INDEX, autoeval_config, eval_queries, seed_pages
 
 
 class TestSeedPages:
@@ -41,15 +44,42 @@ class TestSeedPages:
         for page in seed_pages():
             assert isinstance(page["tags"], list)
 
-    def test_includes_example_pages(self):
-        paths = [p["path"] for p in seed_pages()]
-        has_topics = any("topics/" in p for p in paths)
-        assert has_topics, "Seed data should include example topic pages"
+    def test_paths_have_hierarchy_depth(self):
+        for page in seed_pages():
+            segments = page["path"].split("/")
+            assert len(segments) >= 2, f"Path '{page['path']}' should have at least 2 segments"
 
     def test_content_json_serializable(self):
         for page in seed_pages():
             serialized = json.dumps(page["content"])
             assert isinstance(serialized, str)
+
+
+class TestSeedDomains:
+    def test_insurance_is_default(self):
+        assert seed_pages() == seeds.load("insurance")
+
+    def test_insurance_paths_cover_eval_queries(self):
+        seed_paths = {p["path"] for p in seeds.load("insurance")}
+        eval_paths = {path for q in eval_queries() for path in q["relevant_paths"]}
+        missing = eval_paths - seed_paths
+        assert not missing, f"insurance seed missing paths referenced by eval_queries: {missing}"
+
+    def test_hotpot_empty_when_no_corpus(self, monkeypatch):
+        monkeypatch.setenv("WIKIBRICKS_HOTPOT_PAGES", "/nonexistent/hotpot/pages.jsonl")
+        assert seeds.load("hotpot") == []
+
+    def test_custom_empty_by_default(self, monkeypatch):
+        monkeypatch.delenv("WIKIBRICKS_CUSTOM_PAGES", raising=False)
+        assert seeds.load("custom") == []
+
+    def test_none_returns_empty(self):
+        assert seeds.load("none") == []
+        assert seeds.load("") == []
+
+    def test_unknown_domain_raises(self):
+        with pytest.raises(ValueError, match="Unknown seed domain"):
+            seeds.load("does-not-exist")
 
 
 class TestAutoEvalConfig:
