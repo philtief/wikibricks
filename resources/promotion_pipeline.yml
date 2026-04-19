@@ -1,0 +1,27 @@
+resources:
+  jobs:
+    wikibricks_promotion:
+      name: wikibricks_promotion
+      schedule:
+        quartz_cron_expression: "0 0 3 ? * *"
+        timezone_id: UTC
+        pause_status: UNPAUSED
+      tasks:
+        - task_key: promote_from_traces
+          notebook_task:
+            notebook_path: ../notebooks/promote_from_traces.py
+            base_parameters:
+              warehouse_id: ${var.warehouse_id}
+              judge_endpoint: ${var.llm_model}
+              min_cluster_members: "5"
+              min_distinct_sessions: "3"
+              judge_threshold: "4.5"
+              max_clusters_per_run: "50"
+          environment_key: serverless
+          timeout_seconds: 900
+      environments:
+        - environment_key: serverless
+          spec:
+            client: "2"
+      queue:
+        enabled: true
