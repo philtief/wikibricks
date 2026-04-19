@@ -566,3 +566,44 @@ def orphan_pages_sql():
       AND p.path NOT LIKE '_meta/%'
     ORDER BY p.updated_at DESC
     """
+
+
+def stale_pages_sql(days: int = 90):
+    """Return SQL for pages older than `days` with no recent retrieval hits."""
+    return f"""
+    SELECT p.page_id, p.path, p.title, p.updated_at
+    FROM {PAGES_TABLE} p
+    LEFT JOIN (
+        SELECT DISTINCT get_json_object(details, '$.path') AS path
+        FROM {LOG_TABLE}
+        WHERE op_type = 'search'
+          AND ts >= current_timestamp() - INTERVAL {days} DAYS
+    ) hits ON hits.path = p.path
+    WHERE p.updated_at < current_timestamp() - INTERVAL {days} DAYS
+      AND hits.path IS NULL
+      AND p.path NOT LIKE '_meta/%'
+    ORDER BY p.updated_at ASC
+    """
+
+
+def duplicate_paths_sql():
+    """Return SQL for paths that collide after lowercasing (casing dupes)."""
+    return f"""
+    SELECT LOWER(path) AS path_lower,
+           COUNT(*)   AS n,
+           collect_set(path) AS variants
+    FROM {PAGES_TABLE}
+    GROUP BY LOWER(path)
+    HAVING COUNT(*) > 1
+    ORDER BY n DESC
+    """
+
+
+def broken_links_sql():
+    """Return SQL for link rows whose target_page_id no longer exists in pages."""
+    return f"""
+    SELECT l.link_id, l.source_page_id, l.target_page_id, l.link_type
+    FROM {LINKS_TABLE} l
+    LEFT JOIN {PAGES_TABLE} p ON p.page_id = l.target_page_id
+    WHERE p.page_id IS NULL
+    """

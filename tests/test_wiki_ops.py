@@ -13,12 +13,14 @@ from wikibricks.ops import (
     VS_ENDPOINT,
     VS_INDEX,
     add_link_sql,
+    broken_links_sql,
     cdf_since_sql,
     create_index_view_sql,
     create_schema_sql,
     create_tables_sql,
     create_uc_functions_sql,
     create_vs_index_spec,
+    duplicate_paths_sql,
     get_schema,
     ingest_source_sql,
     log_operation_sql,
@@ -26,6 +28,7 @@ from wikibricks.ops import (
     read_page_sql,
     read_subtree_sql,
     search_query,
+    stale_pages_sql,
     version_history_sql,
     write_page_sql,
 )
@@ -522,4 +525,55 @@ class TestOrphanPagesSql:
 
     def test_filters_null_targets(self):
         sql = orphan_pages_sql()
+        assert "IS NULL" in sql
+
+
+class TestStalePagesSql:
+    def test_default_is_90_days(self):
+        sql = stale_pages_sql()
+        assert "90" in sql
+        assert "INTERVAL" in sql
+
+    def test_custom_window(self):
+        sql = stale_pages_sql(days=30)
+        assert "30" in sql
+
+    def test_queries_pages_table(self):
+        sql = stale_pages_sql()
+        assert PAGES_TABLE in sql
+
+    def test_excludes_pages_with_recent_hits(self):
+        sql = stale_pages_sql()
+        assert LOG_TABLE in sql
+        assert "search" in sql
+
+    def test_excludes_meta_pages(self):
+        sql = stale_pages_sql()
+        assert "_meta/%" in sql
+
+
+class TestDuplicatePathsSql:
+    def test_groups_by_lowercase_path(self):
+        sql = duplicate_paths_sql()
+        assert "LOWER" in sql
+        assert "GROUP BY" in sql
+
+    def test_filters_count_greater_than_one(self):
+        sql = duplicate_paths_sql()
+        assert "COUNT(*)" in sql
+        assert "> 1" in sql
+
+    def test_queries_pages_table(self):
+        sql = duplicate_paths_sql()
+        assert PAGES_TABLE in sql
+
+
+class TestBrokenLinksSql:
+    def test_joins_links_and_pages(self):
+        sql = broken_links_sql()
+        assert LINKS_TABLE in sql
+        assert PAGES_TABLE in sql
+
+    def test_filters_missing_targets(self):
+        sql = broken_links_sql()
         assert "IS NULL" in sql
