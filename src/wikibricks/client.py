@@ -251,6 +251,47 @@ class WikiClient:
         self._log("promote", path=path, query=query)
         return path
 
+    def bulk_write_pages(
+        self,
+        jsonl_path: str,
+        source_tag: str | None = None,
+        dry_run: bool = False,
+    ) -> dict:
+        """Bulk-import pages from a JSONL file. Each line is a page dict matching seed_pages format.
+
+        Args:
+            jsonl_path: Path to a JSONL file with one page per line.
+            source_tag: Optional label recorded in the wiki_log summary row.
+            dry_run: If True, parse the file but skip writes.
+
+        Returns:
+            Summary dict with keys: written (int), would_write (int), source_tag (str|None).
+        """
+        with open(jsonl_path) as f:
+            pages = [json.loads(line) for line in f if line.strip()]
+
+        if dry_run:
+            return {"written": 0, "would_write": len(pages), "source_tag": source_tag}
+
+        written = 0
+        for page in pages:
+            content = page["content"]
+            if isinstance(content, dict):
+                content = json.dumps(content)
+            self.write_page(
+                path=page["path"],
+                title=page["title"],
+                content_json=content,
+                page_type=page.get("page_type", "concept"),
+                created_by=page.get("created_by", "bulk-import"),
+                tags=page.get("tags") or [],
+            )
+            written += 1
+
+        details = f"bulk_import count={written} source={source_tag or 'unset'}"
+        self._log("bulk_import", details=details)
+        return {"written": written, "would_write": len(pages), "source_tag": source_tag}
+
     def materialize_index(self) -> str:
         """Materialize the wiki index as a page at _meta/index.
 

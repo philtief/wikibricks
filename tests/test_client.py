@@ -329,3 +329,52 @@ class TestMaterializeIndex:
         wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
         result = wiki.materialize_index()
         assert "0 pages" in result
+
+
+class TestBulkWritePages:
+    def _jsonl(self, tmp_path, pages):
+        import json
+        p = tmp_path / "pages.jsonl"
+        p.write_text("\n".join(json.dumps(page) for page in pages))
+        return str(p)
+
+    def test_writes_each_page(self, tmp_path):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        jsonl = self._jsonl(tmp_path, [
+            {"path": "a/one", "title": "One", "page_type": "concept",
+             "content": {"summary": "s", "body": "b"}, "created_by": "test", "tags": []},
+            {"path": "a/two", "title": "Two", "page_type": "concept",
+             "content": {"summary": "s", "body": "b"}, "created_by": "test", "tags": []},
+        ])
+        result = wiki.bulk_write_pages(jsonl)
+        assert result["written"] == 2
+
+    def test_dry_run_does_not_execute(self, tmp_path):
+        ws = MagicMock()
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        jsonl = self._jsonl(tmp_path, [
+            {"path": "a/one", "title": "One", "page_type": "concept",
+             "content": {"summary": "s", "body": "b"}, "created_by": "test", "tags": []},
+        ])
+        result = wiki.bulk_write_pages(jsonl, dry_run=True)
+        assert result["written"] == 0
+        assert result["would_write"] == 1
+        ws.statement_execution.execute_statement.assert_not_called()
+
+    def test_logs_bulk_import_summary(self, tmp_path):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        jsonl = self._jsonl(tmp_path, [
+            {"path": "a/one", "title": "One", "page_type": "concept",
+             "content": {"summary": "s", "body": "b"}, "created_by": "test", "tags": []},
+        ])
+        wiki.bulk_write_pages(jsonl, source_tag="hotpot-dev")
+        calls = ws.statement_execution.execute_statement.call_args_list
+        logs = [c.kwargs["statement"] for c in calls
+                if "bulk_import" in c.kwargs.get("statement", "")]
+        assert len(logs) >= 1
+        assert any("hotpot-dev" in s for s in logs)

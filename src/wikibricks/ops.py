@@ -472,6 +472,36 @@ def eval_mrr(retrieved_paths, relevant_paths):
     return 0.0
 
 
+def eval_recall_at_k_multi(retrieved_paths, relevant_paths, k):
+    """Fraction of relevant paths present in top-k (multi-truth recall). 1.0 if no truth set."""
+    if not relevant_paths:
+        return 1.0
+    top_k = set(retrieved_paths[:k])
+    hits = sum(1 for p in relevant_paths if p in top_k)
+    return hits / len(relevant_paths)
+
+
+def eval_mrr_multi(retrieved_paths, relevant_paths):
+    """Reciprocal rank of the FIRST relevant path. Alias for eval_mrr — explicit for multi-truth reporting."""
+    return eval_mrr(retrieved_paths, relevant_paths)
+
+
+def eval_supporting_fact_f1(retrieved_paths, relevant_paths):
+    """F1 over retrieved vs relevant — the HotpotQA supporting-fact metric. 1.0 when both sets are empty."""
+    retrieved = set(retrieved_paths)
+    relevant = set(relevant_paths)
+    if not retrieved and not relevant:
+        return 1.0
+    if not retrieved or not relevant:
+        return 0.0
+    tp = len(retrieved & relevant)
+    if tp == 0:
+        return 0.0
+    precision = tp / len(retrieved)
+    recall = tp / len(relevant)
+    return 2 * precision * recall / (precision + recall)
+
+
 def add_link_sql(source_page_id, target_page_id, link_type="related"):
     """Return SQL to add a cross-reference link (idempotent via MERGE)."""
     if link_type not in ("related", "contradicts", "extends", "supersedes", "cites"):
