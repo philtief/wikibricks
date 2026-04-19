@@ -1,0 +1,24 @@
+resources:
+  jobs:
+    wikibricks_autoeval:
+      name: wikibricks_autoeval
+      schedule:
+        quartz_cron_expression: "0 0 6 ? * MON"
+        timezone_id: UTC
+        pause_status: UNPAUSED
+      tasks:
+        - task_key: autoeval
+          notebook_task:
+            notebook_path: ../notebooks/run_autoeval.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              warehouse_id: ${var.warehouse_id}
+              vs_endpoint: ${var.vs_endpoint}
+          environment_key: serverless
+      environments:
+        - environment_key: serverless
+          spec:
+            client: "2"
+      queue:
+        enabled: true

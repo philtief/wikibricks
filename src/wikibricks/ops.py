@@ -377,8 +377,8 @@ def create_uc_functions_sql(warehouse_id):
     return [fn_search, fn_read, fn_history, fn_log, fn_index, fn_schema, fn_write_help]
 
 
-def seed_pages(domain: str = "insurance"):
-    """Return seed wiki pages for the given domain (insurance | hotpot | custom | none)."""
+def seed_pages(domain: str = "sample"):
+    """Return seed wiki pages for the given domain (sample | hotpot | custom | none)."""
     from wikibricks import seeds
     return seeds.load(domain)
 
@@ -400,51 +400,51 @@ def autoeval_config():
 
 
 def eval_queries():
-    """Return labeled evaluation queries for a motor-insurance seed wiki.
+    """Labeled queries over the `sample` seed. Each maps to the relevant page paths.
 
-    Each entry maps a natural-language query to the path(s) of the relevant
-    seed page(s). Used to compute recall@k / precision@k / MRR baselines.
+    Used by `run_autoeval` to compute recall@k / precision@k / MRR baselines on
+    the default sample corpus. Custom deployments should supply their own.
     """
     return [
         {
-            "query": "how to assess a total loss on a vehicle",
-            "relevant_paths": ["sops/motor/total-loss"],
+            "query": "how do I get started with WikiBricks",
+            "relevant_paths": ["topics/getting-started"],
         },
         {
-            "query": "handling multi-party liability claims",
-            "relevant_paths": ["claims/liability/comparative-negligence"],
+            "query": "what is the architecture of WikiBricks",
+            "relevant_paths": ["topics/architecture/overview"],
         },
         {
-            "query": "common collision fraud indicators",
-            "relevant_paths": ["claims/fraud/patterns"],
+            "query": "which Delta tables does the wiki use",
+            "relevant_paths": ["topics/architecture/overview"],
         },
         {
-            "query": "what coverage tiers do we sell for auto",
-            "relevant_paths": ["products/motor/coverage-tiers"],
+            "query": "how to deploy the wiki to a workspace",
+            "relevant_paths": ["guides/setup"],
         },
         {
-            "query": "claimants with multiple recent claims",
-            "relevant_paths": ["claims/fraud/repeat-claimants"],
+            "query": "steps for creating the catalog and schema",
+            "relevant_paths": ["guides/setup"],
         },
         {
-            "query": "language preferences per customer",
-            "relevant_paths": ["customers/preferences/language"],
+            "query": "search returns no results what should I check",
+            "relevant_paths": ["guides/troubleshooting"],
         },
         {
-            "query": "hail storm claim surge playbook",
-            "relevant_paths": ["claims/weather/hail-surge"],
+            "query": "PARSE_JSON failure in content",
+            "relevant_paths": ["guides/troubleshooting"],
         },
         {
-            "query": "salvage value in total loss calculation",
-            "relevant_paths": ["sops/motor/total-loss"],
+            "query": "difference between ANN full-text and hybrid search",
+            "relevant_paths": ["comparisons/search-modes"],
         },
         {
-            "query": "comparative negligence percentages",
-            "relevant_paths": ["claims/liability/comparative-negligence"],
+            "query": "which search mode is best for keyword matching",
+            "relevant_paths": ["comparisons/search-modes"],
         },
         {
-            "query": "repeat claimant analysis",
-            "relevant_paths": ["claims/fraud/repeat-claimants"],
+            "query": "automatic version history and archiving",
+            "relevant_paths": ["topics/architecture/overview"],
         },
     ]
 

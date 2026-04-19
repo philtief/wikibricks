@@ -1,0 +1,54 @@
+bundle:
+  name: wikibricks
+
+variables:
+  catalog:
+    description: Unity Catalog catalog to deploy the wiki store into.
+    default: agent_marketplace_catalog
+  schema:
+    description: Schema under the catalog.
+    default: wiki
+  warehouse_id:
+    description: SQL warehouse used by UC functions and the deploy notebook.
+    default: 41754a8563a43a49
+  vs_endpoint:
+    description: Vector Search endpoint name.
+    default: wiki_endpoint
+  seed_domain:
+    description: Seed-domain loader (sample | hotpot | custom | none).
+    default: sample
+  llm_model:
+    description: Foundation-Model-API endpoint used by the Streamlit app chat + judge.
+    default: databricks-claude-sonnet-4-5
+
+include:
+  - resources/*.yml
+
+targets:
+  dev:
+    mode: development
+    default: true
+    workspace:
+      host: https://fevm-agent-marketplace.cloud.databricks.com
+      profile: fe-vm-agent-marketplace
+    variables:
+      schema: wiki
+
+  staging:
+    workspace:
+      host: https://fevm-agent-marketplace.cloud.databricks.com
+      profile: fe-vm-agent-marketplace
+    variables:
+      schema: wiki_staging
+
+  prod:
+    mode: production
+    workspace:
+      host: https://fevm-agent-marketplace.cloud.databricks.com
+      profile: fe-vm-agent-marketplace
+    variables:
+      schema: wiki_prod
+
+sync:
+  include:
+    - app/wikibricks-*.whl

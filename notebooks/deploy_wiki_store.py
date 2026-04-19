@@ -7,18 +7,20 @@
 
 # COMMAND ----------
 
-import json
-import sys
-import time
+# MAGIC %pip install /Volumes/agent_marketplace_catalog/ai_agent/raw_data/wikibricks-0.1.0-py3-none-any.whl
+# MAGIC %restart_python
 
-sys.path.insert(0, "/Workspace/Shared/wikibricks/src")
+# COMMAND ----------
+
+import json
+import time
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.vectorsearch import EndpointType
 
-from wiki_ops import (
+from wikibricks.ops import (
     VS_ENDPOINT,
-    autoeval_config,
+    create_index_view_sql,
     create_schema_sql,
     create_tables_sql,
     create_uc_functions_sql,
@@ -27,8 +29,20 @@ from wiki_ops import (
     write_page_sql,
 )
 
+
+def _param(name: str, default: str) -> str:
+    try:
+        val = dbutils.widgets.get(name)  # noqa: F821 — provided by Databricks runtime
+    except Exception:
+        dbutils.widgets.text(name, default)  # noqa: F821
+        val = default
+    return val or default
+
+
+WAREHOUSE_ID = _param("warehouse_id", "41754a8563a43a49")
+SEED_DOMAIN = _param("seed_domain", "sample")
+
 w = WorkspaceClient()
-WAREHOUSE_ID = "41754a8563a43a49"
 
 # COMMAND ----------
 
@@ -46,17 +60,30 @@ print(f"Schema: {result.status.state}")
 # COMMAND ----------
 
 # MAGIC %md
-# MAGIC ## Step 2: Create Tables (pages, pages_history, links)
+# MAGIC ## Step 2: Create Tables (pages, pages_history, links, sources, wiki_log)
 
 # COMMAND ----------
 
+table_names = ["pages", "pages_history", "links", "sources", "wiki_log"]
 for i, stmt in enumerate(create_tables_sql()):
     result = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,
         statement=stmt,
     )
-    table_names = ["pages", "pages_history", "links"]
     print(f"Table {table_names[i]}: {result.status.state}")
+
+# COMMAND ----------
+
+# MAGIC %md
+# MAGIC ## Step 2b: Create wiki_index materialized view
+
+# COMMAND ----------
+
+result = w.statement_execution.execute_statement(
+    warehouse_id=WAREHOUSE_ID,
+    statement=create_index_view_sql(),
+)
+print(f"View wiki_index: {result.status.state}")
 
 # COMMAND ----------
 
@@ -108,7 +135,7 @@ for stmt in create_uc_functions_sql(WAREHOUSE_ID):
 
 # COMMAND ----------
 
-for page in seed_pages():
+for page in seed_pages(domain=SEED_DOMAIN):
     content_json = json.dumps(page["content"])
     stmts = write_page_sql(
         path=page["path"],
@@ -146,10 +173,12 @@ print("Waiting for index to be ready...")
 for i in range(90):
     index = w.vector_search_indexes.get_index(spec["name"])
     if index.status.ready:
-        print(f"Index ready. Row count: {index.status.index_row_count}")
+        row_count = getattr(index.status, "index_row_count", None)
+        print(f"Index ready. Row count: {row_count}")
         break
     if i % 6 == 0:
-        print(f"  [{i * 10}s] status: {index.status.detailed_state or index.status.message}")
+        detail = getattr(index.status, "detailed_state", None) or getattr(index.status, "message", "")
+        print(f"  [{i * 10}s] status: {detail}")
     time.sleep(10)
 else:
     print("Warning: index not ready after 15 minutes")

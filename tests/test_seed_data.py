@@ -56,14 +56,14 @@ class TestSeedPages:
 
 
 class TestSeedDomains:
-    def test_insurance_is_default(self):
-        assert seed_pages() == seeds.load("insurance")
+    def test_sample_is_default(self):
+        assert seed_pages() == seeds.load("sample")
 
-    def test_insurance_paths_cover_eval_queries(self):
-        seed_paths = {p["path"] for p in seeds.load("insurance")}
+    def test_sample_paths_cover_eval_queries(self):
+        seed_paths = {p["path"] for p in seeds.load("sample")}
         eval_paths = {path for q in eval_queries() for path in q["relevant_paths"]}
         missing = eval_paths - seed_paths
-        assert not missing, f"insurance seed missing paths referenced by eval_queries: {missing}"
+        assert not missing, f"sample seed missing paths referenced by eval_queries: {missing}"
 
     def test_hotpot_empty_when_no_corpus(self, monkeypatch):
         monkeypatch.setenv("WIKIBRICKS_HOTPOT_PAGES", "/nonexistent/hotpot/pages.jsonl")
