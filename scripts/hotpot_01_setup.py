@@ -1,10 +1,10 @@
-"""HotpotQA benchmark — step 1: schema + tables + bulk ingest pages & links.
+"""HotpotQA benchmark - step 1: schema + tables + bulk ingest pages & links.
 
 Reads pages.jsonl + links.jsonl from /Volumes/agent_marketplace_catalog/ai_agent/raw_data/hotpot/,
 creates agent_marketplace_catalog.wiki_hotpot.*, bulk-MERGEs 66k pages in a single statement,
 then resolves path→page_id and inserts 14k links.
 
-Idempotent — re-run safe.
+Idempotent - re-run safe.
 """
 
 import os

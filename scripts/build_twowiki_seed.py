@@ -167,7 +167,7 @@ def main() -> None:
     args = ap.parse_args()
 
     if not DEV_PATH.exists():
-        print(f"missing {DEV_PATH} — run scripts/fetch_twowiki.py first",
+        print(f"missing {DEV_PATH} - run scripts/fetch_twowiki.py first",
               file=sys.stderr)
         sys.exit(1)
 

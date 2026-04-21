@@ -10,9 +10,9 @@ python scripts/build_hotpot_seed.py
 ```
 
 Produces:
-- `src/wikibricks/seeds/hotpot/pages.jsonl` — one page per Wikipedia article referenced by the dev set (~25 k pages)
-- `src/wikibricks/seeds/hotpot/links.jsonl` — `supports` links between co-referenced pages
-- `src/wikibricks/seeds/hotpot/queries.jsonl` — 7,405 dev questions with relevant-page labels
+- `src/wikibricks/seeds/hotpot/pages.jsonl` - one page per Wikipedia article referenced by the dev set (~25 k pages)
+- `src/wikibricks/seeds/hotpot/links.jsonl` - `supports` links between co-referenced pages
+- `src/wikibricks/seeds/hotpot/queries.jsonl` - 7,405 dev questions with relevant-page labels
 
 ## 2. Deploy a HotpotQA WikiBricks instance
 
@@ -35,11 +35,11 @@ wiki.bulk_write_pages(
 )
 ```
 
-Trigger VS sync; wait for READY (~20–40 min for 25 k pages).
+Trigger VS sync; wait for READY (~20-40 min for 25 k pages).
 
 ## 3. Run the benchmark
 
-`notebooks/benchmark_hotpot.py` — computes recall@2, recall@10, MRR, and supporting-fact F1 across HYBRID, ANN, and FULL_TEXT. The link-graph ablation follows `supports` edges from the first retrieved page to measure the cross-reference uplift.
+`notebooks/benchmark_hotpot.py` - computes recall@2, recall@10, MRR, and supporting-fact F1 across HYBRID, ANN, and FULL_TEXT. The link-graph ablation follows `supports` edges from the first retrieved page to measure the cross-reference uplift.
 
 Acceptance: HYBRID `recall@10 ≥ 0.70`, `MRR ≥ 0.35`. Any competent dense retriever should clear this; HotpotQA's BM25 baseline sits near this line.
 
@@ -49,10 +49,10 @@ Acceptance: HYBRID `recall@10 ≥ 0.70`, `MRR ≥ 0.35`. Any competent dense ret
 - Republished in the README's benchmark table.
 - Deep-dive analysis: [`docs/hotpotqa_evaluation.md`](../docs/hotpotqa_evaluation.md).
 
-> **Note on the embedding.** Results use `databricks-bge-large-en` — the best off-the-shelf
+> **Note on the embedding.** Results use `databricks-bge-large-en` - the best off-the-shelf
 > embedding on Databricks Foundation Model Serving. It is trained for general semantic
 > similarity, not for multi-hop reasoning. Published multi-hop-trained retrievers (MDR,
-> Baleen) hit 90–96% P-R@20 on HotpotQA fullwiki by fine-tuning on the HotpotQA train
+> Baleen) hit 90-96% P-R@20 on HotpotQA fullwiki by fine-tuning on the HotpotQA train
 > split. Our numbers reflect what a Databricks user gets without training or hosting a
 > custom model; a task-tuned retriever would push recall higher, but that is orthogonal
 > to what WikiBricks contributes (the Delta + VS + link-graph wiki store).

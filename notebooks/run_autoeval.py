@@ -87,7 +87,7 @@ def aggregate(results):
 # COMMAND ----------
 
 print("=" * 72)
-print(f"WikiBricks retrieval baseline — index: {VS_INDEX}")
+print(f"WikiBricks retrieval baseline - index: {VS_INDEX}")
 print(f"Eval set: {len(eval_queries())} labeled queries")
 print("=" * 72)
 

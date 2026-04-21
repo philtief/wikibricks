@@ -1,4 +1,4 @@
-"""HotpotQA benchmark — step 4: render benchmark_results.json → hotpotqa_results.html."""
+"""HotpotQA benchmark - step 4: render benchmark_results.json → hotpotqa_results.html."""
 
 import json
 import os
@@ -72,7 +72,7 @@ def render(data: dict) -> str:
 
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
-<title>WikiBricks — HotpotQA Benchmark</title>
+<title>WikiBricks - HotpotQA Benchmark</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
          max-width: 880px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }}
@@ -88,13 +88,13 @@ def render(data: dict) -> str:
   code {{ background: #f6f8fa; padding: 0.1rem 0.3rem; border-radius: 3px; }}
 </style></head><body>
 
-<h1>WikiBricks — HotpotQA Retrieval Benchmark</h1>
+<h1>WikiBricks - HotpotQA Retrieval Benchmark</h1>
 <p class="meta">Run at {ts} · {n:,} dev queries · corpus: {corpus.get('pages', '?'):,} pages,
    {corpus.get('links', '?'):,} links ({corpus.get('supports', '?'):,} <code>supports</code>)</p>
 
 <p>HotpotQA is a multi-hop QA benchmark: every question requires evidence from <b>two</b>
 Wikipedia pages. We use this to measure how well WikiBricks retrieves both supporting
-pages — a task where cross-reference structure matters. Ground truth per query is the
+pages - a task where cross-reference structure matters. Ground truth per query is the
 set of relevant page paths; metrics follow the HotpotQA retrieval setup.</p>
 
 <h2>Retrieval by query mode</h2>
@@ -117,7 +117,7 @@ set of relevant page paths; metrics follow the HotpotQA retrieval setup.</p>
 <ul>
   <li><b>LOO-masked</b> (honest): for query <i>q</i>, drop the single supports edge
       connecting <i>q</i>'s two own gold pages. Simulates a graph built without
-      seeing <i>q</i> — measures what the graph contributes from <i>other</i> queries.</li>
+      seeing <i>q</i> - measures what the graph contributes from <i>other</i> queries.</li>
   <li><b>Oracle</b> (upper bound): use the full dev-derived supports graph without
       masking. Overestimates uplift because the graph was built from the same labels
       we evaluate against.</li>

@@ -2,31 +2,31 @@
 
 A **domain-agnostic memory pattern for AI agents on Databricks.** Delta-backed wiki
 with Vector Search, versioned writes, typed links, and a Unity-Catalog-function
-MCP surface. No bespoke serving layer, no extra infrastructure — deploy the bundle
+MCP surface. No bespoke serving layer, no extra infrastructure - deploy the bundle
 and agents can read and write structured knowledge in under 20 minutes.
 
 ## What it is
 
 WikiBricks gives agents a persistent, queryable, versioned knowledge store:
 
-- **Delta + Vector Search** — five Delta tables (`pages`, `pages_history`, `links`,
+- **Delta + Vector Search** - five Delta tables (`pages`, `pages_history`, `links`,
   `sources`, `log`) plus a DELTA_SYNC Vector Search index over `pages` for semantic
   retrieval. All infrastructure lives in Unity Catalog.
-- **Managed MCP via UC functions** — seven Unity Catalog functions
+- **Managed MCP via UC functions** - seven Unity Catalog functions
   (`fn_wiki_search`, `fn_wiki_read`, `fn_wiki_history`, `fn_wiki_log`,
   `fn_wiki_index`, `fn_wiki_schema`, `fn_wiki_write_help`) are automatically exposed
   as MCP tools at `/api/2.0/mcp/functions/<catalog>/<schema>`. No FastMCP, no extra
   server code.
-- **Versioned writes** — every write archives the previous version; `fn_wiki_history`
+- **Versioned writes** - every write archives the previous version; `fn_wiki_history`
   returns the full lineage. `pages` has CDF enabled for downstream consumers.
-- **Typed links** — cross-references between pages carry a `link_type`
+- **Typed links** - cross-references between pages carry a `link_type`
   (`cites`, `related`, `supports`, `depends_on`, …). Graph traversal is plain SQL.
-- **Three search modes** — HYBRID (default), ANN, FULL_TEXT — one kwarg switch per
+- **Three search modes** - HYBRID (default), ANN, FULL_TEXT - one kwarg switch per
   query against the same index.
-- **Auto-promote** — the reference Streamlit chat judges every answer on a 1–5 scale;
+- **Auto-promote** - the reference Streamlit chat judges every answer on a 1-5 scale;
   score ≥ 4 writes a synthesis page to `promoted/<slug>` with `cites` links to source
   pages.
-- **Nightly lint** — a Databricks Workflow scans for orphan pages, stale content,
+- **Nightly lint** - a Databricks Workflow scans for orphan pages, stale content,
   duplicates, and broken links, writing issues to the `log` table.
 
 ## Architecture
@@ -38,7 +38,7 @@ an MCP client) calls the Databricks managed MCP server over HTTPS + OAuth. The M
 server surfaces seven UC functions. `fn_wiki_search` queries the Vector Search
 index (DELTA_SYNC-triggered from `pages`); the others read and write the Delta
 tables via the SQL warehouse. The packaged `WikiClient` offers a direct SDK path
-for notebooks and scripts — useful for bulk ingest and the evaluation harness.
+for notebooks and scripts - useful for bulk ingest and the evaluation harness.
 
 ## Quick start
 
@@ -75,9 +75,9 @@ Point any MCP client at it.
 
 | Domain | Contents |
 |--------|----------|
-| `sample` (default) | Five meta-pages describing WikiBricks itself — for smoke tests and the baseline AutoEval |
+| `sample` (default) | Five meta-pages describing WikiBricks itself - for smoke tests and the baseline AutoEval |
 | `hotpot` | HotpotQA benchmark corpus (~66k pages, ~15k typed links). See [`examples/hotpotqa.md`](examples/hotpotqa.md) |
-| `custom` | Empty — point `WIKIBRICKS_CUSTOM_PAGES` at your own JSONL |
+| `custom` | Empty - point `WIKIBRICKS_CUSTOM_PAGES` at your own JSONL |
 | `none` | No seed |
 
 The 2WikiMultiHopQA corpus is ingested by the evaluation harness
@@ -126,8 +126,7 @@ Each UC function is an MCP tool; agents discover them automatically on connect.
 | `fn_wiki_write_help()` | Get documentation on how to write wiki pages |
 
 Authentication is OAuth with the `unity-catalog` scope; UC permissions are
-enforced. See [`MANAGED_MCP.md`](MANAGED_MCP.md) for Claude Code / MCP client
-configuration snippets.
+enforced.
 
 ## Evaluation
 
@@ -136,13 +135,13 @@ is infrastructure, not a multi-hop QA system, and the numbers reflect that.
 
 - **HotpotQA (retrieval-only)**: 500-query pilot on a 66,569-page corpus. HYBRID
   recall@10 ≈ 89% against the published dev set. Not a HotpotQA leaderboard
-  submission — retrieval-only recall@k is not a recognized HotpotQA metric. See
+  submission - retrieval-only recall@k is not a recognized HotpotQA metric. See
   [`docs/hotpotqa_evaluation.md`](docs/hotpotqa_evaluation.md).
 - **2WikiMultiHopQA (open-retrieval, official v1.1 eval)**: 350-query preliminary
-  ablation. Best variant (Sonnet 4.6 + HYBRID + K=10) lands at **Joint F1 21.2** —
+  ablation. Best variant (Sonnet 4.6 + HYBRID + K=10) lands at **Joint F1 21.2** -
   within noise of the 2020 paper's own open-retrieval baseline (~20). Modern
-  2024–2025 open-retrieval SOTA is 50–65 (task-tuned retrievers, iterative
-  multi-hop, cross-encoder rerankers, fine-tuned heads — none in WikiBricks' scope).
+  2024-2025 open-retrieval SOTA is 50-65 (task-tuned retrievers, iterative
+  multi-hop, cross-encoder rerankers, fine-tuned heads - none in WikiBricks' scope).
   Full 8-variant ablation and positioning in
   [`docs/twowiki_evaluation.md`](docs/twowiki_evaluation.md).
 
@@ -153,7 +152,7 @@ everything is reproducible end-to-end.
 
 ```bash
 uv sync
-uv run pytest -q                     # 269 tests
+uv run pytest -q                     # 220 tests
 uv run ruff check src/ app/ tests/
 ```
 
@@ -166,13 +165,13 @@ uv build
 
 Repository layout:
 
-- `src/wikibricks/` — published package (`WikiClient`, `ops`, seed loaders)
-- `app/` — reference Streamlit chat (auto-promote live)
-- `notebooks/` — deploy, run-autoeval, maintenance, benchmark
-- `resources/` — Databricks Asset Bundle resources (jobs, apps, dashboard)
-- `scripts/` — evaluation harness (HotpotQA + 2WikiMultiHopQA)
-- `tests/` — 269 unit tests, no Databricks connectivity required
-- `databricks.yml` — bundle entrypoint
+- `src/wikibricks/` - published package (`WikiClient`, `ops`, seed loaders)
+- `app/` - reference Streamlit chat (auto-promote live)
+- `notebooks/` - deploy, run-autoeval, maintenance, benchmark
+- `resources/` - Databricks Asset Bundle resources (jobs, apps, dashboard)
+- `scripts/` - evaluation harness (HotpotQA + 2WikiMultiHopQA)
+- `tests/` - 220 unit tests, no Databricks connectivity required
+- `databricks.yml` - bundle entrypoint
 
 ## What WikiBricks is not
 
@@ -184,9 +183,9 @@ Repository layout:
 - **Not a managed SaaS.** WikiBricks ships as a Databricks Asset Bundle that
   deploys into your own workspace. You own the data and the runtime.
 - **Not a replacement for agent-specific state.** It is a shared, versioned
-  knowledge store — not short-term scratch memory or per-session conversation
+  knowledge store - not short-term scratch memory or per-session conversation
   state.
 
 ## License
 
-Apache 2.0 — see [`LICENSE`](LICENSE).
+Apache 2.0 - see [`LICENSE`](LICENSE).

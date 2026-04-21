@@ -1,4 +1,4 @@
-"""Custom seed domain — user-supplied pages via env or file. Empty by default."""
+"""Custom seed domain - user-supplied pages via env or file. Empty by default."""
 
 import json
 import os

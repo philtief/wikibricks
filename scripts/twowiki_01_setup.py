@@ -1,9 +1,9 @@
-"""2WikiMultiHopQA — step 1: schema + tables + ingest pages/links.
+"""2WikiMultiHopQA - step 1: schema + tables + ingest pages/links.
 
 Uploads src/wikibricks/seeds/twowiki/*.jsonl to the volume, creates
 agent_marketplace_catalog.wiki_2wiki.*, then MERGEs pages and links.
 
-Idempotent — re-run safe.
+Idempotent - re-run safe.
 """
 
 import os

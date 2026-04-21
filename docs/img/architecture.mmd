@@ -41,7 +41,7 @@ flowchart TD
       UC["fn_wiki_search · fn_wiki_read · fn_wiki_history\nfn_wiki_log · fn_wiki_index · fn_wiki_schema · fn_wiki_write_help"]
     end
 
-    WIKI["WikiClient (Python)\nDirect SDK path — installed from wheel in app/\nRuns SQL via SQL Warehouse"]
+    WIKI["WikiClient (Python)\nDirect SDK path - installed from wheel in app/\nRuns SQL via SQL Warehouse"]
 
     VS["Vector Search  (DELTA_SYNC index)\npages_index\nEmbedding: databricks-bge-large-en"]
 
@@ -49,7 +49,7 @@ flowchart TD
 
     LINT["Nightly Lint Job\nDatabricks Workflow\nWrites issues to log table"]
 
-    subgraph STORAGE["Storage — Delta Tables"]
+    subgraph STORAGE["Storage - Delta Tables"]
       direction LR
       PAGES["pages\n(CDF enabled)"]
       HISTORY["pages_history"]

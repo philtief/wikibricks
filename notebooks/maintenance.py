@@ -137,7 +137,7 @@ try:
     orphans = [dict(zip(cols, row)) for row in orphan_rows]
     print(f"Found {len(orphans)} orphan pages (no incoming links)")
     for o in orphans:
-        print(f"  {o.get('path')} — {o.get('title')}")
+        print(f"  {o.get('path')} - {o.get('title')}")
 except Exception as e:
     print(f"Orphan detection failed: {e}")
     orphans = []

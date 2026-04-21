@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# twowiki_batch_loop.sh — run 2Wiki generation in 250-query batches with quick eval between batches.
+# twowiki_batch_loop.sh - run 2Wiki generation in 250-query batches with quick eval between batches.
 #
 # Usage:
 #   scripts/twowiki_batch_loop.sh [MODE] [BATCH_SIZE] [MAX_BATCHES]
@@ -7,7 +7,7 @@
 # Example:
 #   scripts/twowiki_batch_loop.sh HYBRID 250 50     # run up to 50 batches of 250 on HYBRID
 #
-# Resumes from the Delta checkpoint table on each batch — safe to Ctrl-C at any time.
+# Resumes from the Delta checkpoint table on each batch - safe to Ctrl-C at any time.
 # DO NOT launch this until the current IP is allowlisted on fe-vm-agent-marketplace.
 
 set -euo pipefail

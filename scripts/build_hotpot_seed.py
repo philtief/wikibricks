@@ -89,7 +89,7 @@ def convert(raw: list[dict]) -> tuple[list[dict], list[dict], list[dict]]:
 
 def main(cache_path: Path = CACHE, out_dir: Path = OUT_DIR) -> None:
     if not cache_path.exists():
-        print(f"missing {cache_path} — run scripts/fetch_hotpot.py first", file=sys.stderr)
+        print(f"missing {cache_path} - run scripts/fetch_hotpot.py first", file=sys.stderr)
         sys.exit(1)
 
     with open(cache_path) as f:

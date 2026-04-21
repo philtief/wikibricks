@@ -1,4 +1,4 @@
-"""Tests for scripts/build_hotpot_seed.py — HotpotQA → WikiBricks conversion."""
+"""Tests for scripts/build_hotpot_seed.py - HotpotQA → WikiBricks conversion."""
 
 import sys
 from pathlib import Path

@@ -482,12 +482,12 @@ def eval_recall_at_k_multi(retrieved_paths, relevant_paths, k):
 
 
 def eval_mrr_multi(retrieved_paths, relevant_paths):
-    """Reciprocal rank of the FIRST relevant path. Alias for eval_mrr — explicit for multi-truth reporting."""
+    """Reciprocal rank of the FIRST relevant path. Alias for eval_mrr - explicit for multi-truth reporting."""
     return eval_mrr(retrieved_paths, relevant_paths)
 
 
 def eval_supporting_fact_f1(retrieved_paths, relevant_paths):
-    """F1 over retrieved vs relevant — the HotpotQA supporting-fact metric. 1.0 when both sets are empty."""
+    """F1 over retrieved vs relevant - the HotpotQA supporting-fact metric. 1.0 when both sets are empty."""
     retrieved = set(retrieved_paths)
     relevant = set(relevant_paths)
     if not retrieved and not relevant:

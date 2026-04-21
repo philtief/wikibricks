@@ -1,4 +1,4 @@
-"""2WikiMultiHopQA — run cheap-lever ablations over the same 250+ qids.
+"""2WikiMultiHopQA - run cheap-lever ablations over the same 250+ qids.
 
 Uses the qids already predicted in data/twowiki/predictions_HYBRID.json as the fixed
 evaluation set (same qids across variants → apples-to-apples). Variants:
@@ -78,9 +78,9 @@ Return STRICT JSON with exactly these keys, no prose:
 Rules:
 - answer must be the minimal entity or span, or literally "yes" / "no" for yes/no questions.
 - sp lists only the sentences you actually used, by (exact title, sentence index).
-- **evidence subject must be EXACTLY one of the paragraph titles listed below** — do not
+- **evidence subject must be EXACTLY one of the paragraph titles listed below** - do not
   paraphrase, do not add "the", do not reorder. Copy it verbatim.
-- evidence object must be the entity name as it appears in the paragraph text — a short
+- evidence object must be the entity name as it appears in the paragraph text - a short
   noun phrase, year, or proper name. No sentences, no descriptions.
 - relation is a concise snake_case predicate: "director", "mother", "father", "spouse",
   "country_of_citizenship", "place_of_birth", "place_of_death", "date_of_birth",
@@ -285,7 +285,7 @@ def eval_variant(name: str, pred_path: Path, gold: list[dict]) -> dict:
 def main() -> None:
     baseline_path = OUT_DIR / "predictions_HYBRID.json"
     if not baseline_path.exists():
-        print(f"missing {baseline_path} — run twowiki_04_generate first", file=sys.stderr)
+        print(f"missing {baseline_path} - run twowiki_04_generate first", file=sys.stderr)
         sys.exit(1)
     with open(baseline_path) as f:
         baseline = json.load(f)

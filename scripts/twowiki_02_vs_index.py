@@ -1,4 +1,4 @@
-"""2WikiMultiHopQA — step 2: create VS index on wiki_2wiki.pages and wait for READY."""
+"""2WikiMultiHopQA - step 2: create VS index on wiki_2wiki.pages and wait for READY."""
 
 import os
 import sys

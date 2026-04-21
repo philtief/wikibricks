@@ -32,7 +32,7 @@ from wikibricks.ops import (
 
 def _param(name: str, default: str) -> str:
     try:
-        val = dbutils.widgets.get(name)  # noqa: F821 — provided by Databricks runtime
+        val = dbutils.widgets.get(name)  # noqa: F821 - provided by Databricks runtime
     except Exception:
         dbutils.widgets.text(name, default)  # noqa: F821
         val = default
@@ -166,7 +166,7 @@ try:
     w.vector_search_indexes.sync_index(index_name=spec["name"])
     print("Triggered VS index sync.")
 except Exception as e:
-    print(f"sync_index returned: {e} — polling for readiness.")
+    print(f"sync_index returned: {e} - polling for readiness.")
 
 # Poll until index is ready (up to 15 minutes for initial provisioning + sync)
 print("Waiting for index to be ready...")

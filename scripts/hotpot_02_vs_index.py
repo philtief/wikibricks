@@ -1,4 +1,4 @@
-"""HotpotQA benchmark — step 2: create VS index on wiki_hotpot.pages and wait for READY.
+"""HotpotQA benchmark - step 2: create VS index on wiki_hotpot.pages and wait for READY.
 
 Uses PipelineType.TRIGGERED so we can fire a sync explicitly and poll.
 """

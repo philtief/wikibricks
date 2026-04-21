@@ -85,7 +85,7 @@ for mode in MODES:
 # MAGIC %md ## Link-graph ablation (HYBRID only)
 # MAGIC
 # MAGIC Follow `links.link_type='supports'` from the first retrieved page to measure
-# MAGIC recall uplift from the cross-reference structure — the core WikiBricks story.
+# MAGIC recall uplift from the cross-reference structure - the core WikiBricks story.
 
 # COMMAND ----------
 

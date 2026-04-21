@@ -1,4 +1,4 @@
-"""2WikiMultiHopQA — step 5: run official evaluator per mode, aggregate metrics.
+"""2WikiMultiHopQA - step 5: run official evaluator per mode, aggregate metrics.
 
 Invokes vendor/2wikimultihop_evaluate_v1.1.py on each predictions_{mode}.json
 with data/twowiki/raw/dev.json + id_aliases.json. Parses the JSON metrics the
@@ -54,17 +54,17 @@ def run_one(mode: str) -> tuple[dict, int]:
         raise RuntimeError(f"eval failed for {mode}")
     missing = r.stdout.count("missing")
     metrics = parse_metrics(r.stdout)
-    print(f"  ok ({dt:.0f}s) — missing={missing}")
+    print(f"  ok ({dt:.0f}s) - missing={missing}")
     print(f"  {json.dumps(metrics)}")
     return metrics, missing
 
 
 def main() -> None:
     if not EVAL_SCRIPT.exists():
-        print(f"missing {EVAL_SCRIPT} — run fetch_twowiki.py first", file=sys.stderr)
+        print(f"missing {EVAL_SCRIPT} - run fetch_twowiki.py first", file=sys.stderr)
         sys.exit(1)
     if not GOLD_FILE.exists() or not ALIAS_FILE.exists():
-        print("missing dev.json or id_aliases.json — run fetch_twowiki.py", file=sys.stderr)
+        print("missing dev.json or id_aliases.json - run fetch_twowiki.py", file=sys.stderr)
         sys.exit(1)
 
     results: dict[str, dict] = {}

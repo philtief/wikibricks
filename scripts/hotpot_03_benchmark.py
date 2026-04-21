@@ -1,4 +1,4 @@
-"""HotpotQA benchmark — step 3: run 7,405 queries × 3 modes + link-graph ablation.
+"""HotpotQA benchmark - step 3: run 7,405 queries × 3 modes + link-graph ablation.
 
 Parallelized with ThreadPoolExecutor (20 workers). Writes benchmark_results.json
 to repo root.

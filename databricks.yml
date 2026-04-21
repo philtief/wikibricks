@@ -55,6 +55,3 @@ targets:
     variables:
       schema: wiki_prod
 
-sync:
-  include:
-    - app/wikibricks-*.whl

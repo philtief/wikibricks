@@ -1,4 +1,4 @@
-"""2WikiMultiHopQA — quick per-batch eval.
+"""2WikiMultiHopQA - quick per-batch eval.
 
 For a given mode:
   1. Read data/twowiki/predictions_{mode}.json

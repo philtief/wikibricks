@@ -1,4 +1,4 @@
-"""Generic sample seed — pages describing WikiBricks itself. Domain-agnostic by design."""
+"""Generic sample seed - pages describing WikiBricks itself. Domain-agnostic by design."""
 
 
 def pages() -> list[dict]:

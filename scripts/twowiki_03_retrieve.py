@@ -1,4 +1,4 @@
-"""2WikiMultiHopQA — step 3: retrieve top-K passages per dev query.
+"""2WikiMultiHopQA - step 3: retrieve top-K passages per dev query.
 
 For each dev question × each mode in {HYBRID, ANN, FULL_TEXT}, queries the
 wiki_2wiki VS index and writes data/twowiki/retrieved_{mode}.jsonl. Each line:

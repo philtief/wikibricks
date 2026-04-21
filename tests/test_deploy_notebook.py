@@ -1,4 +1,4 @@
-"""Tests for the deployment notebook — validates it's valid Python and uses wiki_ops correctly."""
+"""Tests for the deployment notebook - validates it's valid Python and uses wiki_ops correctly."""
 
 import ast
 

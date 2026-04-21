@@ -2,7 +2,7 @@
 
 Downloads from the Dropbox links published at
 https://github.com/Alab-NII/2wikimultihop and vendors the official evaluator
-from the GitHub repo. Idempotent — caches under .cache/twowiki/.
+from the GitHub repo. Idempotent - caches under .cache/twowiki/.
 
 Assets:
   - data_ids_april7.zip  (dev/train with IDs + id_aliases.json, latest sent-seg)

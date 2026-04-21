@@ -1,4 +1,4 @@
-"""Fetch the HotpotQA dev-distractor file. Idempotent — caches under .cache/hotpot/."""
+"""Fetch the HotpotQA dev-distractor file. Idempotent - caches under .cache/hotpot/."""
 
 import sys
 import urllib.request

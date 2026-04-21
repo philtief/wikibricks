@@ -1,4 +1,4 @@
-"""2WikiMultiHopQA — step 4: LLM answer/sp/evidence generation per query.
+"""2WikiMultiHopQA - step 4: LLM answer/sp/evidence generation per query.
 
 Reads retrieved_{mode}.jsonl + queries.jsonl. For each query:
   - Take top-K retrieved pages, pull original sentence lists from seed pages.jsonl
@@ -188,7 +188,7 @@ def render_paragraphs(passages: list[dict], sent_lookup) -> str:
         path = p.get("path")
         title, sents = sent_lookup.get(path, (p.get("title", "?"), []))
         if not sents:
-            # Fallback: split content_text on sentences (rare — when path missing from lookup).
+            # Fallback: split content_text on sentences (rare - when path missing from lookup).
             ct = p.get("content_text") or ""
             sents = [s.strip() for s in re.split(r"(?<=[.!?])\s+", ct) if s.strip()]
         lines.append(f"[{idx}] Title: {title}")

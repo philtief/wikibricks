@@ -85,7 +85,7 @@ class TestCreateTablesSql:
         assert "ARRAY<STRING>" in stmts[0]
 
     def test_pages_table_has_no_is_current_flag(self):
-        """Current table should not have is_current — every row IS current."""
+        """Current table should not have is_current - every row IS current."""
         stmts = create_tables_sql()
         assert "is_current" not in stmts[0].lower()
 
@@ -253,7 +253,7 @@ class TestSearchQuery:
             assert "INVALID" in str(e)
 
     def test_no_is_current_filter(self):
-        """Current table only has current pages — no filter needed."""
+        """Current table only has current pages - no filter needed."""
         kwargs = search_query("test")
         assert "filters" not in kwargs
 
@@ -315,7 +315,7 @@ class TestCreateVsIndexSpec:
         assert "bge" in emb.embedding_model_endpoint_name
 
     def test_columns_to_sync_no_is_current(self):
-        """No is_current column — source table only has current pages."""
+        """No is_current column - source table only has current pages."""
         spec = create_vs_index_spec()
         cols = spec["delta_sync_index_spec"].columns_to_sync
         assert "is_current" not in cols
@@ -376,7 +376,7 @@ class TestCreateUcFunctionsSql:
             assert f"{CATALOG}.{SCHEMA}" in stmt
 
     def test_no_dml_write_function(self):
-        """No UC function does DML writes — write_help only returns docs."""
+        """No UC function does DML writes - write_help only returns docs."""
         stmts = create_uc_functions_sql("wh-123")
         write_help_fn = stmts[6]
         assert "fn_wiki_write_help" in write_help_fn

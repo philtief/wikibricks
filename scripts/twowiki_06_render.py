@@ -1,4 +1,4 @@
-"""2WikiMultiHopQA — step 6: render metrics.json → twowiki_results.html."""
+"""2WikiMultiHopQA - step 6: render metrics.json → twowiki_results.html."""
 
 import json
 import os
@@ -61,7 +61,7 @@ def render(data: dict, corpus: dict) -> str:
 
     return f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8"/>
-<title>WikiBricks — 2WikiMultiHopQA Benchmark</title>
+<title>WikiBricks - 2WikiMultiHopQA Benchmark</title>
 <style>
   body {{ font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
          max-width: 980px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; }}
@@ -75,7 +75,7 @@ def render(data: dict, corpus: dict) -> str:
   code {{ background: #f6f8fa; padding: 0.1rem 0.3rem; border-radius: 3px; }}
 </style></head><body>
 
-<h1>WikiBricks — 2WikiMultiHopQA Benchmark</h1>
+<h1>WikiBricks - 2WikiMultiHopQA Benchmark</h1>
 <p class="meta">Run at {ts} · dev corpus: {corpus.get('pages', '?'):,} pages,
    {corpus.get('links', '?'):,} links across {corpus.get('link_types', '?'):,} relation types
    · retrieve K={cfg.get('retrieve_k', '?')}, context K={cfg.get('context_k', '?')}

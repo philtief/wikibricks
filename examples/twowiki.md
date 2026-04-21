@@ -17,10 +17,10 @@ eval v1.1 script against the full 12,576-question dev set.
 ```
 
 Downloads:
-- `data/twowiki/raw/dev.json` — 12,576 dev questions (with gold answer, supporting_facts, evidences, answer_id, evidences_id).
-- `data/twowiki/raw/train.json` — 167,454 train questions (kept for potential future fine-tuning, not used by eval).
-- `data/twowiki/raw/id_aliases.json` — Qid→alias map required by the eval's answer/evidence scoring.
-- `vendor/2wikimultihop_evaluate_v1.1.py` — official evaluator, used verbatim.
+- `data/twowiki/raw/dev.json` - 12,576 dev questions (with gold answer, supporting_facts, evidences, answer_id, evidences_id).
+- `data/twowiki/raw/train.json` - 167,454 train questions (kept for potential future fine-tuning, not used by eval).
+- `data/twowiki/raw/id_aliases.json` - Qid→alias map required by the eval's answer/evidence scoring.
+- `vendor/2wikimultihop_evaluate_v1.1.py` - official evaluator, used verbatim.
 
 ## 2. Build WikiBricks seeds
 
@@ -31,9 +31,9 @@ Downloads:
 ```
 
 Produces:
-- `src/wikibricks/seeds/twowiki/pages.jsonl` — one page per unique Wikipedia title seen in dev contexts (~55k pages).
-- `src/wikibricks/seeds/twowiki/links.jsonl` — typed edges from Wikidata `evidences_id` triples (director, mother, spouse, country_of_citizenship, …).
-- `src/wikibricks/seeds/twowiki/queries.jsonl` — one row per dev question with `_id`, `question`, `answer`, `answer_id`, `supporting_facts`, `evidences`, `evidences_id`, `type`.
+- `src/wikibricks/seeds/twowiki/pages.jsonl` - one page per unique Wikipedia title seen in dev contexts (~55k pages).
+- `src/wikibricks/seeds/twowiki/links.jsonl` - typed edges from Wikidata `evidences_id` triples (director, mother, spouse, country_of_citizenship, …).
+- `src/wikibricks/seeds/twowiki/queries.jsonl` - one row per dev question with `_id`, `question`, `answer`, `answer_id`, `supporting_facts`, `evidences`, `evidences_id`, `type`.
 
 ## 3. Ingest + index
 
@@ -43,7 +43,7 @@ Produces:
 ```
 
 Creates `agent_marketplace_catalog.wiki_2wiki.{pages,links,pages_index}`. Initial sync
-for 55k paragraphs on `wiki-vs-endpoint` with `databricks-bge-large-en` takes ~20–30 min.
+for 55k paragraphs on `wiki-vs-endpoint` with `databricks-bge-large-en` takes ~20-30 min.
 
 ## 4. Retrieve + generate + evaluate
 
@@ -61,21 +61,21 @@ TWOWIKI_SAMPLE=100 .venv/bin/python scripts/twowiki_04_generate.py
 ```
 
 Env vars:
-- `TWOWIKI_MODES=ANN` — restrict to a single mode (default: HYBRID,ANN,FULL_TEXT).
-- `TWOWIKI_CONTEXT_K=5` — passages shown to the LLM (default 5).
-- `TWOWIKI_MODEL=databricks-claude-sonnet-4-6` — swap to opus / gpt-5 for comparison.
-- `TWOWIKI_WORKERS=10` — generation parallelism (FMAPI rate-limited).
+- `TWOWIKI_MODES=ANN` - restrict to a single mode (default: HYBRID,ANN,FULL_TEXT).
+- `TWOWIKI_CONTEXT_K=5` - passages shown to the LLM (default 5).
+- `TWOWIKI_MODEL=databricks-claude-sonnet-4-6` - swap to opus / gpt-5 for comparison.
+- `TWOWIKI_WORKERS=10` - generation parallelism (FMAPI rate-limited).
 
 ## 5. Where results land
 
-- `data/twowiki/metrics.json` — six official metrics per mode.
-- `twowiki_results.html` — rendered view.
-- `docs/twowiki_evaluation.md` — deep-dive analysis.
+- `data/twowiki/metrics.json` - six official metrics per mode.
+- `twowiki_results.html` - rendered view.
+- `docs/twowiki_evaluation.md` - deep-dive analysis.
 
 ## Notes on methodology
 
 - **Open-retrieval setting.** We index the union of all dev paragraphs (~55k unique
-  titles) in one VS index. Each query retrieves from the full index — we do NOT use
+  titles) in one VS index. Each query retrieves from the full index - we do NOT use
   the distractor-setting's 10 candidate paragraphs per question. This is the harder
   and more realistic setting for WikiBricks' role as a wiki-store retriever.
 - **Official eval v1.1.** Predictions are written in the exact schema the script

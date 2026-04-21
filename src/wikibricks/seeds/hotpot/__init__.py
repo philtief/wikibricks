@@ -11,7 +11,7 @@ def pages() -> list[dict]:
     """Return HotpotQA seed pages, loaded from pages.jsonl if present.
 
     Set env `WIKIBRICKS_HOTPOT_PAGES` to override the path. Returns [] if the file is absent
-    — run `python scripts/fetch_hotpot.py && python scripts/build_hotpot_seed.py` first.
+    - run `python scripts/fetch_hotpot.py && python scripts/build_hotpot_seed.py` first.
     """
     path = Path(os.environ.get("WIKIBRICKS_HOTPOT_PAGES", _PAGES_JSONL))
     if not path.exists():

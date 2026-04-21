@@ -1,4 +1,4 @@
-"""Tests for WikiClient — the high-level wiki API."""
+"""Tests for WikiClient - the high-level wiki API."""
 
 from unittest.mock import MagicMock
 
