@@ -1,0 +1,106 @@
+%%{
+  init: {
+    "theme": "neutral",
+    "themeVariables": {
+      "primaryColor": "#F0F4F7",
+      "primaryTextColor": "#1B3139",
+      "primaryBorderColor": "#FF3621",
+      "lineColor": "#1B3139",
+      "secondaryColor": "#E8EDF0",
+      "tertiaryColor": "#F0F4F7",
+      "clusterBkg": "#F8FAFB",
+      "clusterBorder": "#FF3621",
+      "titleColor": "#1B3139",
+      "edgeLabelBackground": "#FFFFFF",
+      "fontFamily": "Helvetica, Arial, sans-serif",
+      "fontSize": "14px"
+    },
+    "flowchart": {
+      "curve": "linear",
+      "padding": 24,
+      "nodeSpacing": 50,
+      "rankSpacing": 60
+    }
+  }
+}%%
+flowchart TD
+
+  subgraph CONSUMER["Consumer Layer"]
+    direction TB
+    AGENT["AI Agent\n(Claude Code · Databricks Agents · Genie)"]
+  end
+
+  subgraph PLATFORM["Databricks Platform"]
+    direction TB
+
+    subgraph MCP_BLOCK["Managed MCP Server"]
+      MCP["MCP Server\n/api/2.0/mcp/functions/{catalog}/{schema}\nSurfaces UC functions as MCP tools"]
+    end
+
+    subgraph UC_BLOCK["UC Functions  ×7"]
+      UC["fn_wiki_search · fn_wiki_read · fn_wiki_history\nfn_wiki_log · fn_wiki_index · fn_wiki_schema · fn_wiki_write_help"]
+    end
+
+    WIKI["WikiClient (Python)\nDirect SDK path — installed from wheel in app/\nRuns SQL via SQL Warehouse"]
+
+    VS["Vector Search  (DELTA_SYNC index)\npages_index\nEmbedding: databricks-bge-large-en"]
+
+    SEEDS["Seed Loaders + Scripts\nsrc/wikibricks/seeds/*  ·  scripts/\nsetup · VS index creation\nHotpotQA + 2Wiki eval harness"]
+
+    LINT["Nightly Lint Job\nDatabricks Workflow\nWrites issues to log table"]
+
+    subgraph STORAGE["Storage — Delta Tables"]
+      direction LR
+      PAGES["pages\n(CDF enabled)"]
+      HISTORY["pages_history"]
+      LINKS["links"]
+      SOURCES["sources"]
+      LOG["log"]
+    end
+
+  end
+
+  %% ── Agent → MCP (HTTPS + OAuth)
+  AGENT -->|"HTTPS + OAuth"| MCP
+
+  %% ── Agent → WikiClient (dashed alternative)
+  AGENT -. "direct SDK call" .-> WIKI
+
+  %% ── MCP → UC Functions
+  MCP --> UC
+
+  %% ── UC fn_wiki_search → Vector Search
+  UC -->|"fn_wiki_search"| VS
+
+  %% ── UC everything else → Delta Tables (via warehouse)
+  UC -->|"read / write via warehouse"| PAGES
+  UC --> HISTORY
+  UC --> LINKS
+  UC --> SOURCES
+  UC --> LOG
+
+  %% ── WikiClient → Delta Tables
+  WIKI -->|"SQL Warehouse"| PAGES
+  WIKI --> HISTORY
+  WIKI --> LINKS
+  WIKI --> SOURCES
+
+  %% ── pages CDF auto-syncs Vector Search
+  PAGES -. "DELTA_SYNC triggered" .-> VS
+
+  %% ── Seed Loaders → WikiClient
+  SEEDS -->|"bulk_write_pages / MERGE"| WIKI
+
+  %% ── Nightly Lint → log
+  LINT -->|"writes issues"| LOG
+
+  %% ── Styling
+  classDef agentNode fill:#FFF3F0,stroke:#FF3621,stroke-width:2px,color:#1B3139,font-weight:bold
+  classDef platformNode fill:#F0F4F7,stroke:#8FA3AD,stroke-width:1px,color:#1B3139
+  classDef storageNode fill:#E8EDF0,stroke:#8FA3AD,stroke-width:1px,color:#1B3139
+  classDef accentNode fill:#FFF3F0,stroke:#FF3621,stroke-width:1.5px,color:#1B3139
+
+  class AGENT agentNode
+  class MCP,UC,WIKI,VS accentNode
+  class SEEDS,LINT platformNode
+  class PAGES,HISTORY,LINKS,SOURCES,LOG storageNode
