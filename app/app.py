@@ -1,7 +1,5 @@
 """WikiBricks -- browse, search, edit, and chat with your wiki knowledge base."""
 
-import json
-
 import streamlit as st
 from databricks.sdk import WorkspaceClient
 from openai import OpenAI
