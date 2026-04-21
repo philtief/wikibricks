@@ -30,6 +30,11 @@ variables:
 include:
   - resources/*.yml
 
+sync:
+  include:
+    - app/**
+    - app/wikibricks-*.whl
+
 targets:
   dev:
     mode: development
