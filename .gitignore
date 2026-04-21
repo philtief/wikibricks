@@ -8,3 +8,8 @@ dist/
 .DS_Store
 .cache/
 src/wikibricks/seeds/hotpot/*.jsonl
+src/wikibricks/seeds/twowiki/*.jsonl
+data/twowiki/
+vendor/
+benchmark_results.json
+

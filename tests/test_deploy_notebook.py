@@ -9,10 +9,10 @@ class TestDeployNotebookSyntax:
             source = f.read()
         ast.parse(source)
 
-    def test_notebook_imports_wiki_ops(self):
+    def test_notebook_imports_wikibricks_ops(self):
         with open("notebooks/deploy_wiki_store.py") as f:
             source = f.read()
-        assert "wiki_ops" in source or "from wiki_ops" in source or "import wiki_ops" in source
+        assert "from wikibricks.ops import" in source
 
     def test_notebook_creates_schema(self):
         with open("notebooks/deploy_wiki_store.py") as f:
@@ -53,10 +53,10 @@ class TestAutoEvalNotebookSyntax:
             source = f.read()
         ast.parse(source)
 
-    def test_notebook_uses_autoeval_config(self):
+    def test_notebook_uses_eval_queries(self):
         with open("notebooks/run_autoeval.py") as f:
             source = f.read()
-        assert "autoeval_config" in source
+        assert "eval_queries" in source
 
     def test_notebook_uses_vs_index(self):
         with open("notebooks/run_autoeval.py") as f:

@@ -47,3 +47,12 @@ Acceptance: HYBRID `recall@10 ≥ 0.70`, `MRR ≥ 0.35`. Any competent dense ret
 
 - `/Workspace/Shared/wikibricks/hotpot/benchmark_results.json`
 - Republished in the README's benchmark table.
+- Deep-dive analysis: [`docs/hotpotqa_evaluation.md`](../docs/hotpotqa_evaluation.md).
+
+> **Note on the embedding.** Results use `databricks-bge-large-en` — the best off-the-shelf
+> embedding on Databricks Foundation Model Serving. It is trained for general semantic
+> similarity, not for multi-hop reasoning. Published multi-hop-trained retrievers (MDR,
+> Baleen) hit 90–96% P-R@20 on HotpotQA fullwiki by fine-tuning on the HotpotQA train
+> split. Our numbers reflect what a Databricks user gets without training or hosting a
+> custom model; a task-tuned retriever would push recall higher, but that is orthogonal
+> to what WikiBricks contributes (the Delta + VS + link-graph wiki store).
