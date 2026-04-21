@@ -5,6 +5,7 @@ __pycache__/
 .ruff_cache/
 *.egg-info/
 dist/
+app/wikibricks-*.whl
 .DS_Store
 .cache/
 src/wikibricks/seeds/hotpot/*.jsonl

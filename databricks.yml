@@ -1,6 +1,12 @@
 bundle:
   name: wikibricks
 
+artifacts:
+  wikibricks_wheel:
+    type: whl
+    build: uv build --wheel --out-dir app
+    path: .
+
 variables:
   catalog:
     description: Unity Catalog catalog to deploy the wiki store into.
