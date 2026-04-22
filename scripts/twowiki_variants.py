@@ -313,7 +313,7 @@ def main() -> None:
             data = json.load(f)
         with open(a_path, "w") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        print(f"  A_baseline: copied from predictions_HYBRID.json")
+        print("  A_baseline: copied from predictions_HYBRID.json")
 
     paths = {}
     for v in variants:

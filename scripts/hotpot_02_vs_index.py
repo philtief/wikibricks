@@ -51,7 +51,7 @@ except Exception:
             ],
         ),
     )
-    print(f"  create request sent")
+    print("  create request sent")
 
 print("=== triggering sync ===")
 try:
