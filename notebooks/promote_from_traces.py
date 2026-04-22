@@ -4,7 +4,8 @@
 # MAGIC
 # MAGIC Daily job. Mines agent session traces for recurring questions, clusters them,
 # MAGIC has an LLM synthesise a canonical answer per cluster, judges it, and promotes
-# MAGIC clusters that score ≥ 4.5 via `WikiClient.promote_answer`.
+# MAGIC clusters that score ≥ JUDGE_THRESHOLD (default 4.0 on the 1-5 integer
+# MAGIC judge scale) via `WikiClient.promote_answer`.
 
 # COMMAND ----------
 
@@ -43,7 +44,7 @@ JUDGE_ENDPOINT = _param("judge_endpoint", "databricks-claude-sonnet-4-5")
 EMBED_ENDPOINT = _param("embed_endpoint", "databricks-bge-large-en")
 MIN_CLUSTER_MEMBERS = int(_param("min_cluster_members", "5"))
 MIN_DISTINCT_SESSIONS = int(_param("min_distinct_sessions", "3"))
-JUDGE_THRESHOLD = float(_param("judge_threshold", "4.5"))
+JUDGE_THRESHOLD = float(_param("judge_threshold", "4.0"))
 MAX_CLUSTERS_PER_RUN = int(_param("max_clusters_per_run", "50"))
 CLUSTER_THRESHOLD = float(_param("cluster_threshold", "0.80"))
 

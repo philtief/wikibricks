@@ -39,7 +39,7 @@ resources:
               embed_endpoint: ${var.embed_model}
               min_cluster_members: "5"
               min_distinct_sessions: "3"
-              judge_threshold: "4.5"
+              judge_threshold: ${var.judge_threshold}
               max_clusters_per_run: "50"
               cluster_threshold: ${var.cluster_threshold}
           environment_key: serverless

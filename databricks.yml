@@ -37,6 +37,15 @@ variables:
       Cosine-similarity floor for joining an existing query cluster in promote.
       Lower = coarser grouping (more promotion candidates); higher = stricter.
     default: "0.80"
+  judge_threshold:
+    description: >
+      Minimum LLM-judge score for a synthesised answer to be promoted. The
+      judge prompt asks for a single digit 1-5, so `4.0` admits scores of
+      4 or 5 (strictly-greater-than-equal semantics via `score >= threshold`
+      i.e. `not score < threshold`). Default sits right on the integer grid;
+      raise to 5.0 for strict-only-top-rated, or lower to 3.0 to promote
+      anything that isn't actively bad.
+    default: "4.0"
 
 include:
   - resources/*.yml
