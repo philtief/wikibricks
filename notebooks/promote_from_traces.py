@@ -13,11 +13,15 @@
 
 # COMMAND ----------
 
-from collections import defaultdict
-
 from databricks.sdk import WorkspaceClient
 
 from wikibricks import WikiClient
+from wikibricks.promote_logic import (
+    cluster_by_cosine,
+    filter_eligible_clusters,
+    is_duplicate_hit,
+    parse_judge_score,
+)
 
 
 def _param(name: str, default: str) -> str:
@@ -46,17 +50,28 @@ ws = WorkspaceClient()
 
 # COMMAND ----------
 
-silver = spark.sql(f"""
-    SELECT session_id,
-           first(user_query) AS query,
-           first(model_response) AS answer,
-           collect_set(retrieved_paths) AS sources
-    FROM {TRACES_TABLE}
-    WHERE DATE(timestamp) = current_date() - INTERVAL 1 DAY
-    GROUP BY session_id
-""").collect()
+try:
+    silver = spark.sql(  # noqa: F821
+        f"""
+        SELECT session_id,
+               first(user_query) AS query,
+               first(model_response) AS answer,
+               collect_set(retrieved_paths) AS sources
+        FROM {TRACES_TABLE}
+        WHERE DATE(timestamp) = current_date() - INTERVAL 1 DAY
+        GROUP BY session_id
+        """
+    ).collect()
+except Exception as e:
+    # Promote is opt-in: if the workspace hasn't created a traces table yet, the
+    # job should stay green rather than fail the whole curate pipeline.
+    print(f"silver: no traces table ({type(e).__name__}: {e}); skipping promote")
+    silver = []
 
 print(f"silver rows: {len(silver)}")
+
+if not silver:
+    dbutils.notebook.exit("no traces to promote")  # noqa: F821
 
 # COMMAND ----------
 
@@ -77,36 +92,18 @@ def embed(text: str) -> list[float]:
     return resp.data[0]["embedding"]
 
 
-def cosine(a, b):
-    dot = sum(x * y for x, y in zip(a, b))
-    na = sum(x * x for x in a) ** 0.5
-    nb = sum(x * x for x in b) ** 0.5
-    return dot / (na * nb) if na and nb else 0.0
-
-
 rows = [dict(r.asDict()) for r in silver]
 for r in rows:
     r["embedding"] = embed(r["query"])
 
-clusters: list[list[dict]] = []
 THRESHOLD = 0.88
-
-for r in rows:
-    placed = False
-    for cluster in clusters:
-        medoid = cluster[0]
-        if cosine(r["embedding"], medoid["embedding"]) >= THRESHOLD:
-            cluster.append(r)
-            placed = True
-            break
-    if not placed:
-        clusters.append([r])
-
-eligible = [
-    c for c in clusters
-    if len(c) >= MIN_CLUSTER_MEMBERS
-    and len({m["session_id"] for m in c}) >= MIN_DISTINCT_SESSIONS
-][:MAX_CLUSTERS_PER_RUN]
+clusters = cluster_by_cosine(rows, THRESHOLD)
+eligible = filter_eligible_clusters(
+    clusters,
+    min_members=MIN_CLUSTER_MEMBERS,
+    min_distinct_sessions=MIN_DISTINCT_SESSIONS,
+    max_clusters=MAX_CLUSTERS_PER_RUN,
+)
 print(f"eligible clusters: {len(eligible)}")
 
 # COMMAND ----------
@@ -146,10 +143,7 @@ for cluster in eligible:
             ChatMessage(role=ChatMessageRole.USER, content=f"Q: {query}\n\nA: {canonical}"),
         ],
     )
-    try:
-        score = float(judge_resp.choices[0].message.content.strip()[0])
-    except Exception:
-        score = 0.0
+    score = parse_judge_score(judge_resp.choices[0].message.content)
 
     if score < JUDGE_THRESHOLD:
         wiki._log("promote_reject", query=query,  # noqa: SLF001
@@ -159,9 +153,7 @@ for cluster in eligible:
 
     # Dedup: search existing promoted pages.
     existing = wiki.search(query, mode="HYBRID", num_results=1)
-    is_dup = existing and existing[0].get("path", "").startswith("promoted/") \
-        and existing[0].get("score", 0) > 0.9
-    if is_dup:
+    if is_duplicate_hit(existing[0] if existing else None):
         # MERGE refreshes the page via the same path.
         wiki.write_page(
             path=existing[0]["path"],

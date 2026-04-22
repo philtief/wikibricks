@@ -28,6 +28,7 @@ from datetime import datetime, timedelta, timezone
 from databricks.sdk import WorkspaceClient
 
 from wikibricks import WikiClient
+from wikibricks.curate_logic import build_curate_summary, partition_by_confidence
 from wikibricks.ops import (
     LOG_TABLE,
     PAGES_TABLE,
@@ -100,8 +101,7 @@ for path in paths:
         print(f"propose_edges failed for {path}: {e}")
         continue
     proposed_total += len(edges)
-    high = [e for e in edges if e["confidence"] >= AUTO_COMMIT_THRESHOLD]
-    low = [e for e in edges if e["confidence"] < AUTO_COMMIT_THRESHOLD]
+    high, low = partition_by_confidence(edges, AUTO_COMMIT_THRESHOLD)
     if high:
         committed_total += wiki.commit_edges(high)
     deferred_low_confidence.extend(
@@ -176,22 +176,14 @@ else:
 
 # COMMAND ----------
 
-summary = {
-    "timestamp": datetime.now(timezone.utc).isoformat(),
-    "connect": {
-        "pages_scanned": len(paths),
-        "edges_proposed": proposed_total,
-        "edges_committed": committed_total,
-        "deferred_low_confidence": len(deferred_low_confidence),
-        "auto_commit_threshold": AUTO_COMMIT_THRESHOLD,
-    },
-    "lint": {
-        "issues": len(issues),
-        "by_check": {
-            c: sum(1 for i in issues if i["check"] == c)
-            for c in ("orphan", "stale", "duplicate_path", "broken_link")
-        },
-    },
-    "repair": {"broken_links_deleted": deleted if REPAIR_BROKEN_LINKS else None},
-}
+summary = build_curate_summary(
+    paths_scanned=len(paths),
+    edges_proposed=proposed_total,
+    edges_committed=committed_total,
+    deferred_low_confidence=len(deferred_low_confidence),
+    auto_commit_threshold=AUTO_COMMIT_THRESHOLD,
+    lint_issues=issues,
+    broken_links_deleted=deleted if REPAIR_BROKEN_LINKS else None,
+)
+summary["timestamp"] = datetime.now(timezone.utc).isoformat()
 print(json.dumps(summary, indent=2))
