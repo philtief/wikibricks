@@ -5,6 +5,13 @@ Catalog, exposed as native MCP tools. One `databricks bundle deploy` and your
 agent has a persistent, versioned, typed-link knowledge store that **grows
 from its own answer traces** via a nightly maintenance job.
 
+> **Grounding idea.** WikiBricks is a Databricks-native implementation of
+> Andrej Karpathy's
+> [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) —
+> instead of re-retrieving raw documents at every query, the agent
+> incrementally compiles a structured, interlinked wiki it maintains itself.
+> Knowledge **compounds** instead of getting re-derived.
+
 ## Why
 
 Agents forget. Context windows are not memory, pasted docs are not memory,
