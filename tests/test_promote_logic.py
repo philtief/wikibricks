@@ -14,6 +14,7 @@ from wikibricks.promote_logic import (
     filter_eligible_clusters,
     get_promote_window,
     is_duplicate_hit,
+    judge_response_is_numeric,
     parse_judge_score,
 )
 
@@ -131,6 +132,22 @@ class TestParseJudgeScore:
     ])
     def test_parses_expected_value(self, text, expected):
         assert parse_judge_score(text) == expected
+
+
+class TestJudgeResponseIsNumeric:
+    @pytest.mark.parametrize("text,expected", [
+        ("5", True),
+        ("  3 ", True),
+        ("5/5", True),
+        ("", False),
+        (None, False),
+        ("   ", False),
+        ("excellent!", False),
+        ("five", False),
+        ("I think 5", False),
+    ])
+    def test_discriminates_numeric_vs_prose(self, text, expected):
+        assert judge_response_is_numeric(text) is expected
 
 
 class TestGetPromoteWindow:

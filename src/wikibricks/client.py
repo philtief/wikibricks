@@ -60,14 +60,19 @@ class WikiClient:
         return manifest.schema.columns
 
     def _log(self, op_type, path=None, query=None, details=None):
-        """Log an operation to the wiki_log table. Failures are silently ignored."""
-        path_sql = f"'{path}'" if path else "NULL"
-        query_sql = f"'{query}'" if query else "NULL"
-        details_sql = f"'{details}'" if details else "NULL"
+        """Log an operation to the wiki_log table. Failures are silently ignored.
+
+        Uses `INSERT ... SELECT` rather than `VALUES` because `uuid()` is
+        rejected in VALUES clauses on SQL warehouses with
+        INVALID_INLINE_TABLE.CANNOT_EVALUATE_EXPRESSION_IN_INLINE_TABLE.
+        """
+        path_sql = f"'{self._escape(path)}'" if path else "NULL"
+        query_sql = f"'{self._escape(query)}'" if query else "NULL"
+        details_sql = f"'{self._escape(details)}'" if details else "NULL"
         try:
             self._exec(
                 f"INSERT INTO {LOG_TABLE} (log_id, op_type, path, query, details) "
-                f"VALUES (uuid(), '{op_type}', {path_sql}, {query_sql}, {details_sql})"
+                f"SELECT uuid(), '{op_type}', {path_sql}, {query_sql}, {details_sql}"
             )
         except Exception:
             pass
@@ -162,6 +167,20 @@ class WikiClient:
             f"WHEN MATCHED THEN UPDATE SET * "
             f"WHEN NOT MATCHED THEN INSERT *"
         )
+
+    def sync_index(self) -> None:
+        """Trigger the DELTA_SYNC VS index so recent writes become searchable.
+
+        The index is TRIGGERED (not CONTINUOUS), so `write_page` alone leaves
+        new pages invisible to `search()` until the next explicit sync. Call
+        this after a batch of writes (promote pipeline, ingest job).
+        Swallows errors so callers don't have to wrap — sync is best-effort.
+        """
+        try:
+            self.ws.vector_search_indexes.sync_index(index_name=VS_INDEX)
+            self._log("vs_sync", details=VS_INDEX)
+        except Exception as e:
+            self._log("vs_sync_fail", details=f"{type(e).__name__}: {e}")
 
     def list_pages(self, path_prefix: str | None = None) -> list[dict]:
         """List wiki pages for navigation. Returns path, title, page_type, version."""

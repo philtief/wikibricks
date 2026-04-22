@@ -86,6 +86,19 @@ def parse_judge_score(text: str) -> float:
         return 0.0
 
 
+def judge_response_is_numeric(text: str) -> bool:
+    """True iff the judge's response starts with a digit (after stripping).
+
+    Companion to `parse_judge_score` so the promote notebook can distinguish
+    'legitimate low score' (reject) from 'judge returned gibberish' (prompt
+    drift; surfaces as a separate log event for operators).
+    """
+    if not text:
+        return False
+    stripped = text.strip()
+    return bool(stripped) and stripped[0].isdigit()
+
+
 def get_promote_window(
     last_watermark: datetime | None,
     now: datetime,

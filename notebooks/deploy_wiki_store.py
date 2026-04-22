@@ -7,7 +7,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/agent_marketplace_catalog/ai_agent/raw_data/wikibricks-0.1.3-py3-none-any.whl
+# MAGIC %pip install /Volumes/agent_marketplace_catalog/ai_agent/raw_data/wikibricks-0.1.4-py3-none-any.whl
 # MAGIC %restart_python
 
 # COMMAND ----------
