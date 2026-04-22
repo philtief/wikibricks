@@ -56,6 +56,22 @@ Two tasks, both optional-to-edit:
 Agent traces flow in. Canonical wiki pages come out. The knowledge store
 compounds.
 
+**Operational telemetry.** Every write, promote decision, and index sync
+appends a row to `wiki_log` with an `op_type`. The useful ones to watch:
+
+| `op_type` | What it means |
+|---|---|
+| `promote` | A cluster passed the judge and was written to `promoted/<slug>` |
+| `promote_reject` | Judge score below `judge_threshold` (default 4.0) — legitimate low quality |
+| `promote_parse_fail` | Judge returned non-numeric text — prompt drift, investigate |
+| `vs_sync` / `vs_sync_fail` | `sync_index()` triggered a DELTA_SYNC refresh |
+| `verify_fix` | Deterministic link repair healed a broken edge |
+
+Before trusting a scheduled promote run, `scripts/diagnose_traces.py
+--window-days 7` reports trace volume, query-length percentiles, exact-match
+cluster eligibility, and `wiki_log` event counts — the minimum operators
+need to know the pipeline has real traffic to work with.
+
 ## Quick start
 
 Prerequisites: a Databricks workspace with Unity Catalog, a SQL warehouse, and
@@ -79,6 +95,18 @@ databricks bundle deploy --target dev \
   --var="catalog=my_catalog" --var="schema=wiki" \
   --var="warehouse_id=abc123" --var="vs_endpoint=my-vs-endpoint"
 ```
+
+The Streamlit app reads the same config from env vars so one image ships to
+any workspace:
+
+| Variable | Default |
+|---|---|
+| `WIKIBRICKS_WAREHOUSE_ID` | `41754a8563a43a49` |
+| `WIKIBRICKS_VS_INDEX` | `agent_marketplace_catalog.wiki.pages_index` |
+| `WIKIBRICKS_LLM_MODEL` | `databricks-claude-sonnet-4-5` |
+
+`resources/app.yml` wires these from the bundle's `catalog` / `schema` /
+`warehouse_id` vars automatically.
 
 ## Core API
 
@@ -139,9 +167,9 @@ Two external benchmarks, both honest:
 
 ```bash
 uv sync
-uv run pytest                       # 223 tests, no workspace needed
+uv run pytest                       # 305 tests, no workspace needed
 uv run ruff check src tests scripts
-uv build                            # → dist/wikibricks-0.1.3-py3-none-any.whl
+uv build                            # → dist/wikibricks-0.1.4-py3-none-any.whl
 ```
 
 ## What this is not
