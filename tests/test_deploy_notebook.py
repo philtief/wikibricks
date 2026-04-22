@@ -64,38 +64,36 @@ class TestAutoEvalNotebookSyntax:
         assert "pages_index" in source or "VS_INDEX" in source or "autoeval" in source.lower()
 
 
-class TestMaintenanceNotebook:
+class TestWikiCurateNotebook:
     def test_notebook_is_valid_python(self):
-        with open("notebooks/maintenance.py") as f:
+        with open("notebooks/wiki_curate.py") as f:
             source = f.read()
         ast.parse(source)
 
     def test_imports_wikibricks(self):
-        with open("notebooks/maintenance.py") as f:
+        with open("notebooks/wiki_curate.py") as f:
             source = f.read()
         assert "from wikibricks" in source
 
-    def test_uses_cdf(self):
-        with open("notebooks/maintenance.py") as f:
+    def test_runs_connect_phase(self):
+        with open("notebooks/wiki_curate.py") as f:
             source = f.read()
-        assert "cdf_since_sql" in source
+        assert "propose_edges" in source
+        assert "commit_edges" in source
 
-    def test_detects_orphans(self):
-        with open("notebooks/maintenance.py") as f:
+    def test_runs_lint_phase(self):
+        with open("notebooks/wiki_curate.py") as f:
             source = f.read()
-        assert "orphan_pages_sql" in source
+        for check in ("orphan_pages_sql", "stale_pages_sql",
+                      "duplicate_paths_sql", "broken_links_sql"):
+            assert check in source, f"missing {check}"
 
-    def test_materializes_index(self):
-        with open("notebooks/maintenance.py") as f:
+    def test_optional_repair(self):
+        with open("notebooks/wiki_curate.py") as f:
             source = f.read()
-        assert "materialize_index" in source
-
-    def test_writes_maintenance_report(self):
-        with open("notebooks/maintenance.py") as f:
-            source = f.read()
-        assert "_meta/maintenance-log" in source
+        assert "fix_broken_links" in source
 
     def test_uses_wiki_client(self):
-        with open("notebooks/maintenance.py") as f:
+        with open("notebooks/wiki_curate.py") as f:
             source = f.read()
         assert "WikiClient" in source

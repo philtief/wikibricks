@@ -4,7 +4,7 @@ bundle:
 artifacts:
   wikibricks_wheel:
     type: whl
-    build: uv build --wheel --out-dir app
+    build: rm -f dist/wikibricks-*.whl app/wikibricks-*.whl && uv build --wheel && cp dist/wikibricks-*.whl app/
     path: .
 
 variables:

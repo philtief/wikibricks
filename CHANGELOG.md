@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3] - 2026-04-22
+
+### Added
+
+- **LLM-free graph primitives on `WikiClient`**: `propose_edges` (VS nearest-
+  neighbor + exact-title entity match with per-edge `confidence` + `origin`),
+  `commit_edges` (batch MERGE), `graph_neighbors` (1–3 hop traversal), and
+  `fix_broken_links` (deterministic endpoint cleanup). No model calls inside
+  WikiBricks — the calling agent stays the only LLM in the loop.
+- **Default curate pipeline** (`notebooks/wiki_curate.py` +
+  `resources/wiki_curate_job.yml`). One shipped Lakeflow Job with two tasks:
+  (1) `curate` — deterministic connect + lint + repair (no LLM, library
+  contract); (2) `promote` — optional trace-driven LLM synthesis that depends
+  on `curate`. Drop the `promote` task block to run LLM-free.
+- `confidence FLOAT` and `origin STRING` columns on the `links` table, with
+  allowed origins `manual | auto-vs | auto-title | auto-cite`.
+
+### Changed
+
+- `add_link_sql` now writes `confidence` + `origin` and raises `ValueError` on
+  invalid origin or out-of-range confidence.
+- Legacy `notebooks/wiki_lint.py` fixed: the `wiki_log` INSERT now matches the
+  real schema (`log_id, op_type, path, query, details, created_by`).
+- Removed `resources/wiki_lint_job.yml` and `resources/promotion_pipeline.yml`;
+  both superseded by the single two-task `wiki_curate_job.yml`. Promote task
+  uses `databricks-claude-sonnet-4-5` by default (override via `llm_model`
+  bundle var).
+
 ## [0.1.0] - 2026-04-21
 
 Initial public release. A Delta + Vector Search wiki store for AI agents on

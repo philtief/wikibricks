@@ -1,10 +1,21 @@
 """WikiBricks -- browse, search, edit, and chat with your wiki knowledge base."""
 
+import re
+
 import streamlit as st
 from databricks.sdk import WorkspaceClient
 from openai import OpenAI
 
 from wikibricks import WikiClient
+
+
+def slugify(text: str) -> str:
+    """Lowercase, non-alphanumerics to dashes, trim to 60 chars."""
+    return re.sub(r"[^a-z0-9]+", "-", (text or "").lower()).strip("-")[:60]
+
+
+# Seed namespaces when the wiki is empty
+SUGGESTED_NAMESPACES = ["topics", "concepts", "entities", "guides", "promoted"]
 
 # --- Configuration ---
 WAREHOUSE_ID = "41754a8563a43a49"
@@ -181,6 +192,44 @@ if mode == "Chat":
 # ── Browse Mode ───────────────────────────────────────────────────────────────
 elif mode == "Browse":
     st.title("Browse Wiki")
+    ws, _, wiki = get_clients()
+
+    # A tree click queues a path; apply it before widgets render so the text_input picks it up
+    auto_read = False
+    if "queued_read_path" in st.session_state:
+        st.session_state["read_path"] = st.session_state.pop("queued_read_path")
+        auto_read = True
+
+    # Page tree -- group by top-level path segment, each leaf is a button
+    with st.expander("All pages", expanded=True):
+        try:
+            all_pages = wiki.list_pages()
+        except Exception as e:
+            st.error(f"Failed to list pages: {e}")
+            all_pages = []
+
+        if not all_pages:
+            st.info("No pages yet. Use **Write** mode to create one.")
+        else:
+            groups: dict[str, list[dict]] = {}
+            for p in all_pages:
+                path = p.get("path", "") or ""
+                top = path.split("/", 1)[0] if "/" in path else "(root)"
+                groups.setdefault(top, []).append(p)
+
+            for top in sorted(groups):
+                st.markdown(f"**{top}/**")
+                for p in groups[top]:
+                    path = p.get("path", "")
+                    title = p.get("title", "Untitled")
+                    ptype = p.get("page_type", "")
+                    if st.button(
+                        f"{title}  ·  `{path}`  ·  {ptype}",
+                        key=f"tree_{path}",
+                        use_container_width=True,
+                    ):
+                        st.session_state["queued_read_path"] = path
+                        st.rerun()
 
     search_col, btn_col = st.columns([4, 1])
     with search_col:
@@ -189,13 +238,12 @@ elif mode == "Browse":
         st.write("")  # vertical alignment spacer
         search_clicked = st.button("Search", use_container_width=True)
 
-    # Read a specific page by path
-    with st.expander("Read page by path"):
+    # Read a specific page by path (pre-filled via tree click)
+    with st.expander("Read page by path", expanded=auto_read):
         read_path = st.text_input("Page path", placeholder="databricks/delta-lake", key="read_path")
         read_clicked = st.button("Read")
 
-    if read_clicked and read_path:
-        ws, _, wiki = get_clients()
+    if (read_clicked or auto_read) and read_path:
         with st.spinner("Loading page..."):
             page = wiki.read_page(read_path.strip())
         if page:
@@ -211,7 +259,6 @@ elif mode == "Browse":
                 with st.expander("Source provenance"):
                     st.markdown(f"Linked source IDs: `{source_ids}`")
 
-            # Show version history
             with st.spinner("Loading history..."):
                 versions = wiki.history(read_path.strip())
             if versions:
@@ -225,7 +272,6 @@ elif mode == "Browse":
             st.warning(f"No page found at path: `{read_path}`")
 
     elif (search_clicked or query) and query:
-        ws, _, wiki = get_clients()
         with st.spinner("Searching..."):
             results = search_wiki(wiki, query.strip())
 
@@ -236,11 +282,15 @@ elif mode == "Browse":
                 path = page.get("path", "")
                 page_type = page.get("page_type", "")
                 version = page.get("version", "?")
-                content_preview = (page.get("content_text", "") or "")[:200]
+                content_full = page.get("content_text", "") or ""
                 with st.container(border=True):
                     st.markdown(f"**{title}** (`{path}`)")
                     st.caption(f"{page_type} | v{version}")
-                    st.markdown(content_preview + ("..." if len(page.get("content_text", "") or "") > 200 else ""))
+                    if st.button("Open full page", key=f"open_{path}"):
+                        st.session_state["queued_read_path"] = path
+                        st.rerun()
+                    with st.expander("Show full content"):
+                        st.markdown(content_full if content_full else "_(empty)_")
         else:
             st.info("No results found.")
 
@@ -248,17 +298,64 @@ elif mode == "Browse":
 # ── Write Mode ────────────────────────────────────────────────────────────────
 elif mode == "Write":
     st.title("Write Wiki Page")
-    st.caption("Create a new page or update an existing one")
+    st.caption(
+        "Pages live in "
+        "`agent_marketplace_catalog.wiki.pages`; the path below is the wiki slug, "
+        "not a UC location. Pick a namespace to keep related pages together."
+    )
+    ws, _, wiki = get_clients()
 
-    with st.form("write_form"):
-        path = st.text_input("Page path", placeholder="databricks/new-topic")
-        title = st.text_input("Title", placeholder="My Wiki Page Title")
-        page_type = st.selectbox("Page type", PAGE_TYPES)
-        tags_input = st.text_input("Tags (comma-separated)", placeholder="databricks, delta-lake, concept")
-        summary = st.text_area("Summary", placeholder="Brief summary of the page content")
-        body = st.text_area("Body", placeholder="Full page content (Markdown supported)", height=300)
-        created_by = st.text_input("Author", value="user")
-        submitted = st.form_submit_button("Save Page", use_container_width=True)
+    # Discover existing namespaces (top-level path prefixes) for the dropdown
+    try:
+        existing_pages = wiki.list_pages()
+    except Exception:
+        existing_pages = []
+    existing_ns = sorted({
+        (p.get("path") or "").split("/", 1)[0]
+        for p in existing_pages
+        if "/" in (p.get("path") or "")
+    })
+    ns_options = existing_ns or SUGGESTED_NAMESPACES
+    ns_options = ns_options + ["+ new namespace"]
+
+    title = st.text_input("Title", placeholder="My Wiki Page Title", key="w_title")
+
+    col_ns, col_slug = st.columns([1, 2])
+    with col_ns:
+        ns_choice = st.selectbox("Namespace", ns_options, key="w_ns")
+        if ns_choice == "+ new namespace":
+            namespace = st.text_input(
+                "New namespace", placeholder="e.g. databricks", key="w_ns_new"
+            ).strip()
+        else:
+            namespace = ns_choice
+    with col_slug:
+        default_slug = slugify(title)
+        slug = st.text_input(
+            "Slug", value=default_slug, placeholder="auto-generated from title",
+            key="w_slug",
+        ).strip()
+
+    path = f"{namespace}/{slug}" if namespace and slug else ""
+    if path:
+        st.markdown(f"**Path preview:** `{path}`")
+    else:
+        st.caption("Fill Namespace and Slug to see the final path.")
+
+    page_type = st.selectbox("Page type", PAGE_TYPES, key="w_type")
+    tags_input = st.text_input(
+        "Tags (comma-separated)", placeholder="databricks, delta-lake, concept",
+        key="w_tags",
+    )
+    summary = st.text_area(
+        "Summary", placeholder="Brief summary of the page content", key="w_summary"
+    )
+    body = st.text_area(
+        "Body", placeholder="Full page content (Markdown supported)", height=300,
+        key="w_body",
+    )
+    created_by = st.text_input("Author", value="user", key="w_author")
+    submitted = st.button("Save Page", use_container_width=True, type="primary")
 
     if submitted:
         errors = validate_write_form(path, title, summary, body)
@@ -266,7 +363,6 @@ elif mode == "Write":
             for err in errors:
                 st.error(err)
         else:
-            ws, _, wiki = get_clients()
             tags = [t.strip() for t in tags_input.split(",") if t.strip()] if tags_input else None
             content = {"summary": summary.strip(), "body": body.strip()}
             with st.spinner("Saving page..."):

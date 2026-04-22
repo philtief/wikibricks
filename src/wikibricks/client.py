@@ -11,8 +11,13 @@ from wikibricks.ops import (
     LINKS_TABLE,
     LOG_TABLE,
     PAGES_TABLE,
+    PAGES_VS_SOURCE_TABLE,
     SOURCES_TABLE,
+    VALID_LINK_ORIGINS,
+    VALID_LINK_TYPES,
     VS_INDEX,
+    delete_broken_links_sql,
+    graph_neighbors_sql,
 )
 
 
@@ -48,6 +53,11 @@ class WikiClient:
     def _escape(self, value: str) -> str:
         """Escape backslashes and single quotes for Databricks SQL string literals."""
         return value.replace("\\", "\\\\").replace("'", "\\'")
+
+    @staticmethod
+    def _manifest_columns(manifest):
+        """Return [col, ...] from a SQL ResultManifest (manifest.schema.columns in databricks-sdk)."""
+        return manifest.schema.columns
 
     def _log(self, op_type, path=None, query=None, details=None):
         """Log an operation to the wiki_log table. Failures are silently ignored."""
@@ -132,8 +142,40 @@ class WikiClient:
 
         self._exec(archive_sql)
         self._exec(merge_sql)
+        self._sync_vs_source(path)
         self._log("write", path=path)
         return f"Wrote wiki page: {path}"
+
+    def _sync_vs_source(self, path: str) -> None:
+        """Mirror a single page into the VS-source projection table.
+
+        The VS DELTA_SYNC pipeline cannot tolerate VARIANT columns on the source
+        table (CDF dedup uses `lead(col, ...)` which requires an ordering type).
+        We maintain a parallel table without the VARIANT `content` column that
+        the index points at.
+        """
+        self._exec(
+            f"MERGE INTO {PAGES_VS_SOURCE_TABLE} AS target "
+            f"USING (SELECT page_id, path, title, page_type, content_text, tags, version "
+            f"FROM {PAGES_TABLE} WHERE path = '{path}') AS source "
+            f"ON target.path = source.path "
+            f"WHEN MATCHED THEN UPDATE SET * "
+            f"WHEN NOT MATCHED THEN INSERT *"
+        )
+
+    def list_pages(self, path_prefix: str | None = None) -> list[dict]:
+        """List wiki pages for navigation. Returns path, title, page_type, version."""
+        prefix_esc = self._escape(path_prefix) if path_prefix else None
+        where = f"WHERE path LIKE '{prefix_esc}%'" if prefix_esc else ""
+        resp = self._exec(
+            f"SELECT path, title, page_type, version "
+            f"FROM {PAGES_TABLE} {where} ORDER BY path"
+        )
+        rows = resp.result.data_array if resp.result else []
+        if not rows:
+            return []
+        cols = [c.name for c in self._manifest_columns(resp.manifest)]
+        return [dict(zip(cols, row)) for row in rows]
 
     def read_page(self, path: str) -> dict | None:
         """Read a wiki page by path. Returns page dict or None if not found."""
@@ -145,7 +187,7 @@ class WikiClient:
         rows = resp.result.data_array if resp.result else []
         if not rows:
             return None
-        cols = [c.name for c in resp.manifest.columns]
+        cols = [c.name for c in self._manifest_columns(resp.manifest)]
         self._log("read", path=path)
         return dict(zip(cols, rows[0]))
 
@@ -169,6 +211,7 @@ class WikiClient:
         resp = self.ws.vector_search_indexes.query_index(**kwargs)
         if not resp.result or not resp.result.data_array:
             return []
+        # Vector Search API returns columns directly on manifest, not under .schema
         cols = [c.name for c in resp.manifest.columns]
         self._log("search", query=query)
         return [dict(zip(cols, row)) for row in resp.result.data_array]
@@ -182,7 +225,7 @@ class WikiClient:
         rows = resp.result.data_array if resp.result else []
         if not rows:
             return []
-        cols = [c.name for c in resp.manifest.columns]
+        cols = [c.name for c in self._manifest_columns(resp.manifest)]
         return [dict(zip(cols, row)) for row in rows]
 
     def ingest_source(
@@ -292,6 +335,165 @@ class WikiClient:
         self._log("bulk_import", details=details)
         return {"written": written, "would_write": len(pages), "source_tag": source_tag}
 
+    def propose_edges(
+        self,
+        path: str,
+        num_candidates: int = 10,
+        min_similarity: float = 0.7,
+    ) -> list[dict]:
+        """Propose candidate edges for a page without calling an LLM.
+
+        Combines two deterministic signals:
+        - Vector Search nearest neighbors on ``content_text`` (origin ``auto-vs``).
+          ``confidence`` = VS similarity score, kept only if >= ``min_similarity``.
+        - Exact-title substring match: other wiki page titles that appear verbatim
+          in this page's body (origin ``auto-title``, confidence 1.0).
+
+        Edges are proposed only — nothing is written. The agent or curate job
+        decides which to commit via :meth:`commit_edges`.
+
+        Returns a list of dicts::
+
+            {"source_page_id": ..., "target_page_id": ...,
+             "target_path": ..., "target_title": ...,
+             "link_type": "related", "confidence": float, "origin": str}
+        """
+        page = self.read_page(path)
+        if not page:
+            return []
+        source_id = page.get("page_id")
+        content = page.get("content_text") or ""
+        if not source_id or not content:
+            return []
+
+        candidates: dict[tuple[str, str], dict] = {}
+
+        try:
+            hits = self.search(content[:500], mode="HYBRID", num_results=num_candidates + 1)
+        except Exception:
+            hits = []
+        for h in hits:
+            tgt_id = h.get("page_id")
+            if not tgt_id or tgt_id == source_id:
+                continue
+            score = float(h.get("score", 0.0) or 0.0)
+            if score < min_similarity:
+                continue
+            key = (tgt_id, "related")
+            candidates[key] = {
+                "source_page_id": source_id,
+                "target_page_id": tgt_id,
+                "target_path": h.get("path"),
+                "target_title": h.get("title"),
+                "link_type": "related",
+                "confidence": round(score, 4),
+                "origin": "auto-vs",
+            }
+
+        other_pages = self.list_pages()
+        content_lower = content.lower()
+        for p in other_pages:
+            title = (p.get("title") or "").strip()
+            if not title or len(title) < 3:
+                continue
+            if p.get("path") == path:
+                continue
+            if title.lower() not in content_lower:
+                continue
+            tgt_resp = self._exec(
+                f"SELECT page_id FROM {PAGES_TABLE} WHERE path = '{self._escape(p['path'])}'"
+            )
+            rows = tgt_resp.result.data_array if tgt_resp.result else []
+            if not rows:
+                continue
+            tgt_id = rows[0][0]
+            if tgt_id == source_id:
+                continue
+            key = (tgt_id, "related")
+            candidates[key] = {
+                "source_page_id": source_id,
+                "target_page_id": tgt_id,
+                "target_path": p.get("path"),
+                "target_title": title,
+                "link_type": "related",
+                "confidence": 1.0,
+                "origin": "auto-title",
+            }
+
+        return list(candidates.values())
+
+    def commit_edges(self, edges: list[dict]) -> int:
+        """Batch-MERGE edges into the links table. Returns number of rows attempted.
+
+        Each edge dict must contain: source_page_id, target_page_id, link_type,
+        confidence, origin. Invalid rows are skipped silently.
+        """
+        written = 0
+        for e in edges:
+            lt = e.get("link_type", "related")
+            origin = e.get("origin", "manual")
+            conf = float(e.get("confidence", 1.0))
+            src = e.get("source_page_id")
+            tgt = e.get("target_page_id")
+            if not src or not tgt or lt not in VALID_LINK_TYPES or origin not in VALID_LINK_ORIGINS:
+                continue
+            if not 0.0 <= conf <= 1.0:
+                continue
+            try:
+                self._exec(
+                    f"MERGE INTO {LINKS_TABLE} AS t "
+                    f"USING (SELECT '{src}' AS src, '{tgt}' AS tgt, "
+                    f"'{lt}' AS lt, CAST({conf} AS FLOAT) AS conf, "
+                    f"'{origin}' AS org) AS s "
+                    f"ON t.source_page_id = s.src AND t.target_page_id = s.tgt "
+                    f"AND t.link_type = s.lt "
+                    f"WHEN MATCHED THEN UPDATE SET confidence = s.conf, origin = s.org "
+                    f"WHEN NOT MATCHED THEN INSERT "
+                    f"(source_page_id, target_page_id, link_type, confidence, origin) "
+                    f"VALUES (s.src, s.tgt, s.lt, s.conf, s.org)"
+                )
+                written += 1
+            except Exception:
+                continue
+        if written:
+            self._log("connect", details=f"committed={written}")
+        return written
+
+    def graph_neighbors(
+        self,
+        path: str,
+        depth: int = 1,
+        link_types: list[str] | None = None,
+    ) -> list[dict]:
+        """Return outgoing neighbors of a page up to ``depth`` hops.
+
+        Pure graph traversal over the links table — no LLM, no embeddings.
+        """
+        page = self.read_page(path)
+        if not page or not page.get("page_id"):
+            return []
+        sql = graph_neighbors_sql(page["page_id"], depth=depth, link_types=link_types)
+        resp = self._exec(sql)
+        rows = resp.result.data_array if resp.result else []
+        if not rows:
+            return []
+        cols = [c.name for c in self._manifest_columns(resp.manifest)]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def fix_broken_links(self) -> int:
+        """Delete link rows whose endpoint page no longer exists. Returns rows deleted."""
+        before = self._exec(f"SELECT COUNT(*) FROM {LINKS_TABLE}")
+        before_rows = before.result.data_array if before.result else [[0]]
+        before_count = int(before_rows[0][0]) if before_rows else 0
+        self._exec(delete_broken_links_sql())
+        after = self._exec(f"SELECT COUNT(*) FROM {LINKS_TABLE}")
+        after_rows = after.result.data_array if after.result else [[0]]
+        after_count = int(after_rows[0][0]) if after_rows else 0
+        deleted = max(before_count - after_count, 0)
+        if deleted:
+            self._log("lint", details=f"fix_broken_links deleted={deleted}")
+        return deleted
+
     def materialize_index(self) -> str:
         """Materialize the wiki index as a page at _meta/index.
 
@@ -305,7 +507,7 @@ class WikiClient:
             f"FROM {PAGES_TABLE} WHERE path NOT LIKE '_meta/%' ORDER BY path"
         )
         rows = resp.result.data_array if resp.result else []
-        cols = [c.name for c in resp.manifest.columns] if rows else []
+        cols = [c.name for c in self._manifest_columns(resp.manifest)] if rows else []
 
         entries = [dict(zip(cols, row)) for row in rows]
         body_lines = [

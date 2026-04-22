@@ -17,13 +17,15 @@ def _col(name):
 
 
 def _mock_response(rows=None, columns=None):
-    """Build a mock StatementResponse."""
+    """Build a mock StatementResponse. Mirrors real SDK shape: manifest.schema.columns."""
     resp = MagicMock()
     resp.status = StatementStatus(state=StatementState.SUCCEEDED, error=None)
     if rows is not None:
         resp.result.data_array = rows
         if columns:
-            resp.manifest.columns = [_col(c) for c in columns]
+            resp.manifest.schema.columns = [_col(c) for c in columns]
+        else:
+            resp.manifest.schema = None
     else:
         resp.result = None
     return resp
@@ -38,8 +40,8 @@ class TestWritePage:
         result = wiki.write_page("test/page", "Test", '{"summary":"s","body":"b"}')
 
         assert result == "Wrote wiki page: test/page"
-        # archive + merge + _log
-        assert ws.statement_execution.execute_statement.call_count == 3
+        # archive + merge + _sync_vs_source + _log
+        assert ws.statement_execution.execute_statement.call_count == 4
 
     def test_archive_sql_targets_history(self):
         ws = MagicMock()
@@ -130,6 +132,42 @@ class TestReadPage:
         assert wiki.read_page("nonexistent") is None
 
 
+class TestListPages:
+    def test_returns_rows_ordered_by_path(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response(
+            rows=[["a/one", "One", "concept", "1"], ["b/two", "Two", "entity", "2"]],
+            columns=["path", "title", "page_type", "version"],
+        )
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        pages = wiki.list_pages()
+
+        assert [p["path"] for p in pages] == ["a/one", "b/two"]
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "ORDER BY path" in sql
+        assert PAGES_TABLE in sql
+
+    def test_filters_by_prefix(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response(
+            rows=[], columns=["path", "title", "page_type", "version"]
+        )
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        wiki.list_pages(path_prefix="sample/")
+
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "LIKE 'sample/%'" in sql
+
+    def test_returns_empty_when_no_rows(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response(rows=[])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        assert wiki.list_pages() == []
+
+
 class TestSearch:
     def test_calls_vector_search(self):
         ws = MagicMock()
@@ -210,7 +248,8 @@ class TestLog:
         ws.statement_execution.execute_statement.return_value = _mock_response([])
         wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
         wiki.write_page("test/page", "Test", '{"summary":"s","body":"b"}')
-        log_call = ws.statement_execution.execute_statement.call_args_list[2]
+        # archive[0] + merge[1] + _sync_vs_source[2] + _log[3]
+        log_call = ws.statement_execution.execute_statement.call_args_list[3]
         sql = log_call.kwargs["statement"]
         assert LOG_TABLE in sql
         assert "write" in sql
@@ -236,7 +275,8 @@ class TestLog:
         call_count = [0]
         def side_effect(**kwargs):
             call_count[0] += 1
-            if call_count[0] <= 2:
+            # archive[1] + merge[2] + _sync_vs_source[3] succeed; _log[4] raises
+            if call_count[0] <= 3:
                 return _mock_response([])
             raise RuntimeError("log table missing")
         ws.statement_execution.execute_statement.side_effect = side_effect
@@ -378,3 +418,236 @@ class TestBulkWritePages:
                 if "bulk_import" in c.kwargs.get("statement", "")]
         assert len(logs) >= 1
         assert any("hotpot-dev" in s for s in logs)
+
+
+def _vs_response(rows, columns):
+    """Mock Vector Search response shape (manifest.columns, not manifest.schema.columns)."""
+    resp = MagicMock()
+    resp.result.data_array = rows
+    resp.manifest.columns = [_col(c) for c in columns]
+    return resp
+
+
+class TestProposeEdges:
+    def _setup(self, ws, page_row, other_pages, vs_hits):
+        """Configure ws mock so read_page, list_pages, search, and id-resolver all work."""
+        page_cols = ["page_id", "path", "title", "page_type", "content_text",
+                     "tags", "created_by", "created_at", "updated_at", "version"]
+        list_cols = ["path", "title", "page_type", "version"]
+        vs_cols = ["page_id", "path", "title", "page_type", "content_text",
+                   "tags", "version", "score"]
+
+        def handler(**kwargs):
+            sql = kwargs["statement"].strip()
+            if sql.startswith("SELECT page_id, path, title, page_type, content_text, tags, created_by"):
+                return _mock_response([page_row], columns=page_cols)
+            if sql.startswith("SELECT path, title, page_type, version"):
+                rows = [[p["path"], p["title"], p.get("page_type", "concept"),
+                         p.get("version", 1)] for p in other_pages]
+                return _mock_response(rows, columns=list_cols)
+            if sql.startswith("SELECT page_id FROM"):
+                for p in other_pages:
+                    if f"'{p['path']}'" in sql:
+                        return _mock_response([[p["page_id"]]], columns=["page_id"])
+                return _mock_response([], columns=["page_id"])
+            return _mock_response([])
+
+        ws.statement_execution.execute_statement.side_effect = handler
+        ws.vector_search_indexes.query_index.return_value = _vs_response(vs_hits, vs_cols)
+
+    def test_returns_empty_when_page_not_found(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        assert wiki.propose_edges("missing/page") == []
+
+    def test_vs_candidate_above_threshold_is_included(self):
+        ws = MagicMock()
+        page_row = ["page-a", "topics/a", "A", "concept",
+                    "some content about apples", ["t"], "agent", "t", "t", 1]
+        vs_hits = [["page-b", "topics/b", "B", "concept", "...", [], "1", 0.91]]
+        self._setup(ws, page_row, other_pages=[], vs_hits=vs_hits)
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        edges = wiki.propose_edges("topics/a", min_similarity=0.7)
+
+        assert len(edges) == 1
+        assert edges[0]["target_page_id"] == "page-b"
+        assert edges[0]["origin"] == "auto-vs"
+        assert edges[0]["confidence"] == 0.91
+        assert edges[0]["link_type"] == "related"
+
+    def test_vs_candidate_below_threshold_is_dropped(self):
+        ws = MagicMock()
+        page_row = ["page-a", "topics/a", "A", "concept", "content", [], "agent", "t", "t", 1]
+        vs_hits = [["page-b", "topics/b", "B", "concept", "...", [], "1", 0.3]]
+        self._setup(ws, page_row, other_pages=[], vs_hits=vs_hits)
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        edges = wiki.propose_edges("topics/a", min_similarity=0.7)
+        assert edges == []
+
+    def test_excludes_self_reference(self):
+        ws = MagicMock()
+        page_row = ["page-a", "topics/a", "A", "concept", "content", [], "agent", "t", "t", 1]
+        vs_hits = [["page-a", "topics/a", "A", "concept", "...", [], "1", 0.99]]
+        self._setup(ws, page_row, other_pages=[], vs_hits=vs_hits)
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        assert wiki.propose_edges("topics/a") == []
+
+    def test_exact_title_match_yields_auto_title_edge(self):
+        ws = MagicMock()
+        page_row = ["page-a", "topics/a", "A",
+                    "concept", "This page discusses Databricks extensively.",
+                    [], "agent", "t", "t", 1]
+        other_pages = [
+            {"page_id": "page-db", "path": "topics/databricks", "title": "Databricks"},
+        ]
+        self._setup(ws, page_row, other_pages=other_pages, vs_hits=[])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        edges = wiki.propose_edges("topics/a")
+        assert len(edges) == 1
+        assert edges[0]["origin"] == "auto-title"
+        assert edges[0]["confidence"] == 1.0
+        assert edges[0]["target_page_id"] == "page-db"
+
+    def test_title_match_dedupes_against_vs_candidate(self):
+        ws = MagicMock()
+        page_row = ["page-a", "topics/a", "A", "concept",
+                    "Talks about Databricks.", [], "agent", "t", "t", 1]
+        other_pages = [
+            {"page_id": "page-db", "path": "topics/databricks", "title": "Databricks"},
+        ]
+        vs_hits = [["page-db", "topics/databricks", "Databricks",
+                    "concept", "...", [], "1", 0.85]]
+        self._setup(ws, page_row, other_pages=other_pages, vs_hits=vs_hits)
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        edges = wiki.propose_edges("topics/a")
+        # Same (target, link_type) pair → one edge, auto-title wins (more specific).
+        assert len(edges) == 1
+        assert edges[0]["origin"] == "auto-title"
+
+
+class TestCommitEdges:
+    def test_merges_valid_edges(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        written = wiki.commit_edges([
+            {"source_page_id": "a", "target_page_id": "b",
+             "link_type": "related", "confidence": 0.9, "origin": "auto-vs"},
+            {"source_page_id": "a", "target_page_id": "c",
+             "link_type": "related", "confidence": 1.0, "origin": "auto-title"},
+        ])
+        assert written == 2
+        calls = [c.kwargs["statement"] for c in
+                 ws.statement_execution.execute_statement.call_args_list]
+        assert any("MERGE INTO" in s for s in calls)
+
+    def test_skips_invalid_link_type(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        written = wiki.commit_edges([
+            {"source_page_id": "a", "target_page_id": "b",
+             "link_type": "bogus", "confidence": 0.9, "origin": "auto-vs"},
+        ])
+        assert written == 0
+
+    def test_skips_invalid_origin(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        written = wiki.commit_edges([
+            {"source_page_id": "a", "target_page_id": "b",
+             "link_type": "related", "confidence": 0.9, "origin": "llm"},
+        ])
+        assert written == 0
+
+    def test_skips_out_of_range_confidence(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        written = wiki.commit_edges([
+            {"source_page_id": "a", "target_page_id": "b",
+             "link_type": "related", "confidence": 2.0, "origin": "auto-vs"},
+        ])
+        assert written == 0
+
+    def test_empty_list_is_noop(self):
+        ws = MagicMock()
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        assert wiki.commit_edges([]) == 0
+        ws.statement_execution.execute_statement.assert_not_called()
+
+
+class TestGraphNeighbors:
+    def test_returns_neighbor_rows(self):
+        ws = MagicMock()
+        page_row = ["page-a", "topics/a", "A", "concept", "c", [], "agent", "t", "t", 1]
+        page_cols = ["page_id", "path", "title", "page_type", "content_text",
+                     "tags", "created_by", "created_at", "updated_at", "version"]
+        neighbor_cols = ["source_page_id", "target_page_id", "target_path",
+                         "target_title", "link_type", "confidence", "origin", "hop"]
+        neighbor_rows = [
+            ["page-a", "page-b", "topics/b", "B", "related", 0.9, "auto-vs", 1],
+        ]
+
+        def handler(**kwargs):
+            sql = kwargs["statement"].strip()
+            if sql.startswith("SELECT page_id, path, title"):
+                return _mock_response([page_row], columns=page_cols)
+            return _mock_response(neighbor_rows, columns=neighbor_cols)
+
+        ws.statement_execution.execute_statement.side_effect = handler
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        neighbors = wiki.graph_neighbors("topics/a", depth=1)
+        assert len(neighbors) == 1
+        assert neighbors[0]["target_path"] == "topics/b"
+        assert neighbors[0]["hop"] == 1
+
+    def test_returns_empty_when_page_not_found(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        assert wiki.graph_neighbors("missing") == []
+
+    def test_depth_out_of_range_raises(self):
+        ws = MagicMock()
+        page_row = ["page-a", "topics/a", "A", "concept", "c", [], "agent", "t", "t", 1]
+        page_cols = ["page_id", "path", "title", "page_type", "content_text",
+                     "tags", "created_by", "created_at", "updated_at", "version"]
+        ws.statement_execution.execute_statement.return_value = _mock_response(
+            [page_row], columns=page_cols)
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        with pytest.raises(ValueError):
+            wiki.graph_neighbors("topics/a", depth=5)
+
+
+class TestFixBrokenLinks:
+    def test_returns_delta_count(self):
+        ws = MagicMock()
+        responses = iter([
+            _mock_response([[10]], columns=["c"]),
+            _mock_response([]),
+            _mock_response([[7]], columns=["c"]),
+        ])
+        ws.statement_execution.execute_statement.side_effect = lambda **_: next(responses)
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        deleted = wiki.fix_broken_links()
+        assert deleted == 3
+
+    def test_zero_when_nothing_deleted(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([[5]], columns=["c"])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        assert wiki.fix_broken_links() == 0

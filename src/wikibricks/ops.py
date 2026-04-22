@@ -17,6 +17,7 @@ HISTORY_TABLE = f"{CATALOG}.{SCHEMA}.pages_history"
 LINKS_TABLE = f"{CATALOG}.{SCHEMA}.links"
 SOURCES_TABLE = f"{CATALOG}.{SCHEMA}.sources"
 LOG_TABLE = f"{CATALOG}.{SCHEMA}.wiki_log"
+PAGES_VS_SOURCE_TABLE = f"{CATALOG}.{SCHEMA}.pages_vs_source"
 VS_INDEX = f"{CATALOG}.{SCHEMA}.pages_index"
 VS_ENDPOINT = "wiki-vs-endpoint"
 EMBEDDING_MODEL = "databricks-bge-large-en"
@@ -71,6 +72,8 @@ def create_tables_sql():
             source_page_id  STRING  NOT NULL,
             target_page_id  STRING  NOT NULL,
             link_type       STRING  NOT NULL DEFAULT 'related',
+            confidence      FLOAT   NOT NULL DEFAULT 1.0,
+            origin          STRING  NOT NULL DEFAULT 'manual',
             created_at      TIMESTAMP DEFAULT current_timestamp()
         )
         USING DELTA
@@ -101,6 +104,22 @@ def create_tables_sql():
         )
         USING DELTA
         TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {PAGES_VS_SOURCE_TABLE} (
+            page_id      STRING        NOT NULL,
+            path         STRING        NOT NULL,
+            title        STRING        NOT NULL,
+            page_type    STRING        NOT NULL,
+            content_text STRING,
+            tags         ARRAY<STRING>,
+            version      INT           NOT NULL
+        )
+        USING DELTA
+        TBLPROPERTIES (
+            'delta.enableChangeDataFeed' = 'true',
+            'delta.feature.allowColumnDefaults' = 'supported'
+        )
         """,
     ]
 
@@ -163,64 +182,6 @@ def write_page_sql(path, title, page_type, content_json, created_by, tags=None):
     return [archive_sql, merge_sql]
 
 
-def search_query(query_text, mode="HYBRID", num_results=5):
-    """Return kwargs for vector_search_indexes.query_index.
-
-    Args:
-        query_text: The search query.
-        mode: One of "ANN", "FULL_TEXT", "HYBRID".
-        num_results: Max results to return.
-    """
-    if mode not in ("ANN", "FULL_TEXT", "HYBRID"):
-        raise ValueError(f"Invalid search mode: {mode}. Must be ANN, FULL_TEXT, or HYBRID.")
-
-    kwargs = {
-        "index_name": VS_INDEX,
-        "columns": ["page_id", "path", "title", "page_type", "content_text", "tags", "version"],
-        "query_text": query_text,
-        "num_results": num_results,
-    }
-    if mode != "ANN":
-        kwargs["query_type"] = mode
-
-    return kwargs
-
-
-def read_page_sql(path):
-    """Return SQL to read a page by path with its cross-references."""
-    return f"""
-    SELECT p.page_id, p.path, p.title, p.page_type, p.content, p.tags,
-           p.created_by, p.created_at, p.updated_at, p.version,
-           l.target_page_id, l.link_type,
-           t.path AS target_path, t.title AS target_title
-    FROM {PAGES_TABLE} p
-    LEFT JOIN {LINKS_TABLE} l ON p.page_id = l.source_page_id
-    LEFT JOIN {PAGES_TABLE} t ON l.target_page_id = t.page_id
-    WHERE p.path = '{path}'
-    """
-
-
-def read_subtree_sql(path_prefix):
-    """Return SQL to read all current pages under a path prefix."""
-    return f"""
-    SELECT page_id, path, title, page_type,
-           content:summary::STRING AS summary, tags, version
-    FROM {PAGES_TABLE}
-    WHERE path = '{path_prefix}' OR path LIKE '{path_prefix}/%'
-    ORDER BY path_depth, title
-    """
-
-
-def version_history_sql(path):
-    """Return SQL to read version history for a page."""
-    return f"""
-    SELECT version, created_by, created_at, content:summary::STRING AS summary
-    FROM {HISTORY_TABLE}
-    WHERE path = '{path}'
-    ORDER BY version DESC
-    """
-
-
 def create_vs_index_spec():
     """Return kwargs for ``w.vector_search_indexes.create_index()``."""
     return {
@@ -229,7 +190,7 @@ def create_vs_index_spec():
         "primary_key": "page_id",
         "index_type": VectorIndexType.DELTA_SYNC,
         "delta_sync_index_spec": DeltaSyncVectorIndexSpecRequest(
-            source_table=PAGES_TABLE,
+            source_table=PAGES_VS_SOURCE_TABLE,
             pipeline_type=PipelineType.TRIGGERED,
             embedding_source_columns=[
                 EmbeddingSourceColumn(
@@ -502,38 +463,38 @@ def eval_supporting_fact_f1(retrieved_paths, relevant_paths):
     return 2 * precision * recall / (precision + recall)
 
 
-def add_link_sql(source_page_id, target_page_id, link_type="related"):
-    """Return SQL to add a cross-reference link (idempotent via MERGE)."""
-    if link_type not in ("related", "contradicts", "extends", "supersedes", "cites"):
+VALID_LINK_TYPES = ("related", "contradicts", "extends", "supersedes", "cites")
+VALID_LINK_ORIGINS = ("manual", "auto-vs", "auto-title", "auto-cite")
+
+
+def add_link_sql(source_page_id, target_page_id, link_type="related",
+                 confidence=1.0, origin="manual"):
+    """Return SQL to add a cross-reference link (idempotent via MERGE).
+
+    Args:
+        source_page_id: Source page ID.
+        target_page_id: Target page ID.
+        link_type: One of related, contradicts, extends, supersedes, cites.
+        confidence: [0.0, 1.0] — 1.0 for manual edges, similarity score for auto.
+        origin: manual, auto-vs (VS nearest-neighbor), auto-title (exact title match),
+                auto-cite (promote_answer citation).
+    """
+    if link_type not in VALID_LINK_TYPES:
         raise ValueError(f"Invalid link type: {link_type}")
+    if origin not in VALID_LINK_ORIGINS:
+        raise ValueError(f"Invalid link origin: {origin}")
+    if not 0.0 <= float(confidence) <= 1.0:
+        raise ValueError(f"confidence must be in [0, 1], got {confidence}")
 
     return f"""
     MERGE INTO {LINKS_TABLE} AS t
-    USING (SELECT '{source_page_id}' AS src, '{target_page_id}' AS tgt, '{link_type}' AS lt) AS s
+    USING (SELECT '{source_page_id}' AS src, '{target_page_id}' AS tgt,
+                  '{link_type}' AS lt, CAST({float(confidence)} AS FLOAT) AS conf,
+                  '{origin}' AS org) AS s
     ON t.source_page_id = s.src AND t.target_page_id = s.tgt AND t.link_type = s.lt
-    WHEN NOT MATCHED THEN INSERT (source_page_id, target_page_id, link_type)
-    VALUES (s.src, s.tgt, s.lt)
-    """
-
-
-def ingest_source_sql(uri, title=None, content_text=None, source_type="manual"):
-    """Return SQL to insert a source into the sources table."""
-    title_sql = f"'{title}'" if title else "NULL"
-    content_sql = f"'{content_text}'" if content_text else "NULL"
-    return f"""
-    INSERT INTO {SOURCES_TABLE} (source_id, uri, title, content_text, source_type)
-    VALUES (uuid(), '{uri}', {title_sql}, {content_sql}, '{source_type}')
-    """
-
-
-def log_operation_sql(op_type, path=None, query=None, details=None, created_by="agent"):
-    """Return SQL to log a wiki operation."""
-    path_sql = f"'{path}'" if path else "NULL"
-    query_sql = f"'{query}'" if query else "NULL"
-    details_sql = f"'{details}'" if details else "NULL"
-    return f"""
-    INSERT INTO {LOG_TABLE} (log_id, op_type, path, query, details, created_by)
-    VALUES (uuid(), '{op_type}', {path_sql}, {query_sql}, {details_sql}, '{created_by}')
+    WHEN MATCHED THEN UPDATE SET confidence = s.conf, origin = s.org
+    WHEN NOT MATCHED THEN INSERT (source_page_id, target_page_id, link_type, confidence, origin)
+    VALUES (s.src, s.tgt, s.lt, s.conf, s.org)
     """
 
 
@@ -545,14 +506,6 @@ def create_index_view_sql():
            tags, version, updated_at
     FROM {PAGES_TABLE}
     ORDER BY path
-    """
-
-
-def cdf_since_sql(table, since_timestamp):
-    """Return SQL to query Change Data Feed changes since a timestamp."""
-    return f"""
-    SELECT * FROM table_changes('{table}', '{since_timestamp}')
-    WHERE _change_type IN ('insert', 'update_postimage')
     """
 
 
@@ -602,8 +555,52 @@ def duplicate_paths_sql():
 def broken_links_sql():
     """Return SQL for link rows whose target_page_id no longer exists in pages."""
     return f"""
-    SELECT l.link_id, l.source_page_id, l.target_page_id, l.link_type
+    SELECT l.source_page_id, l.target_page_id, l.link_type
     FROM {LINKS_TABLE} l
     LEFT JOIN {PAGES_TABLE} p ON p.page_id = l.target_page_id
     WHERE p.page_id IS NULL
     """
+
+
+def delete_broken_links_sql():
+    """Return SQL to delete link rows whose target_page_id no longer exists in pages."""
+    return f"""
+    DELETE FROM {LINKS_TABLE}
+    WHERE target_page_id NOT IN (SELECT page_id FROM {PAGES_TABLE})
+       OR source_page_id NOT IN (SELECT page_id FROM {PAGES_TABLE})
+    """
+
+
+def graph_neighbors_sql(page_id, depth=1, link_types=None):
+    """Return SQL for outgoing link neighbors of a page up to `depth` hops.
+
+    Depth-limited BFS implemented as UNION ALL over depth levels (up to 3).
+    Returns: source_page_id, target_page_id, target_path, target_title, link_type,
+             confidence, origin, hop.
+    """
+    if depth < 1 or depth > 3:
+        raise ValueError(f"depth must be in [1, 3], got {depth}")
+
+    type_filter = ""
+    if link_types:
+        types_csv = ",".join(f"'{lt}'" for lt in link_types)
+        type_filter = f" AND l.link_type IN ({types_csv})"
+
+    def _hop(level, source_expr):
+        return f"""
+        SELECT l.source_page_id, l.target_page_id,
+               p.path AS target_path, p.title AS target_title,
+               l.link_type, l.confidence, l.origin, {level} AS hop
+        FROM {LINKS_TABLE} l
+        JOIN {PAGES_TABLE} p ON p.page_id = l.target_page_id
+        WHERE l.source_page_id IN ({source_expr}){type_filter}
+        """
+
+    seed = f"'{page_id}'"
+    parts = [_hop(1, seed)]
+    if depth >= 2:
+        parts.append(_hop(2, f"SELECT target_page_id FROM ({parts[0]})"))
+    if depth >= 3:
+        parts.append(_hop(3, f"SELECT target_page_id FROM ({parts[1]})"))
+
+    return " UNION ALL ".join(parts)

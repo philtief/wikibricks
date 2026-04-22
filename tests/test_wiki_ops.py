@@ -1,11 +1,14 @@
 """Tests for WikiBricks wiki_ops module."""
 
+import pytest
+
 from wikibricks.ops import (
     CATALOG,
     HISTORY_TABLE,
     LINKS_TABLE,
     LOG_TABLE,
     PAGES_TABLE,
+    PAGES_VS_SOURCE_TABLE,
     SCHEMA,
     SCHEMA_VOLUME_PATH,
     SOURCES_TABLE,
@@ -14,22 +17,17 @@ from wikibricks.ops import (
     VS_INDEX,
     add_link_sql,
     broken_links_sql,
-    cdf_since_sql,
     create_index_view_sql,
     create_schema_sql,
     create_tables_sql,
     create_uc_functions_sql,
     create_vs_index_spec,
+    delete_broken_links_sql,
     duplicate_paths_sql,
     get_schema,
-    ingest_source_sql,
-    log_operation_sql,
+    graph_neighbors_sql,
     orphan_pages_sql,
-    read_page_sql,
-    read_subtree_sql,
-    search_query,
     stale_pages_sql,
-    version_history_sql,
     write_page_sql,
 )
 
@@ -54,9 +52,18 @@ class TestConstants:
 
 
 class TestCreateTablesSql:
-    def test_returns_five_statements(self):
+    def test_returns_six_statements(self):
         stmts = create_tables_sql()
-        assert len(stmts) == 5
+        assert len(stmts) == 6
+
+    def test_pages_vs_source_projection_table(self):
+        stmts = create_tables_sql()
+        joined = "\n".join(stmts)
+        assert PAGES_VS_SOURCE_TABLE in joined
+        vs_sql = next(s for s in stmts if PAGES_VS_SOURCE_TABLE in s)
+        assert "VARIANT" not in vs_sql
+        assert "content_text" in vs_sql
+        assert "enableChangeDataFeed" in vs_sql
 
     def test_pages_table_has_required_columns(self):
         stmts = create_tables_sql()
@@ -98,6 +105,14 @@ class TestCreateTablesSql:
         stmts = create_tables_sql()
         links_sql = stmts[2]
         assert "link_type" in links_sql
+
+    def test_links_table_has_confidence_and_origin(self):
+        stmts = create_tables_sql()
+        links_sql = stmts[2]
+        assert "confidence" in links_sql
+        assert "FLOAT" in links_sql.upper()
+        assert "origin" in links_sql
+        assert "'manual'" in links_sql
 
     def test_sources_table_has_required_columns(self):
         stmts = create_tables_sql()
@@ -216,84 +231,6 @@ class TestWritePageSql:
         assert "PARSE_JSON" in merge_sql
 
 
-class TestSearchQuery:
-    def test_hybrid_mode(self):
-        kwargs = search_query("example query", mode="HYBRID")
-        assert kwargs["index_name"] == VS_INDEX
-        assert kwargs["query_text"] == "example query"
-        assert kwargs["query_type"] == "HYBRID"
-
-    def test_full_text_mode(self):
-        kwargs = search_query("CLM-4005", mode="FULL_TEXT")
-        assert kwargs["query_type"] == "FULL_TEXT"
-
-    def test_ann_mode_has_no_query_type(self):
-        kwargs = search_query("example query", mode="ANN")
-        assert "query_type" not in kwargs
-
-    def test_default_num_results(self):
-        kwargs = search_query("test")
-        assert kwargs["num_results"] == 5
-
-    def test_custom_num_results(self):
-        kwargs = search_query("test", num_results=10)
-        assert kwargs["num_results"] == 10
-
-    def test_columns_include_content_text(self):
-        kwargs = search_query("test")
-        assert "content_text" in kwargs["columns"]
-        assert "page_id" in kwargs["columns"]
-        assert "path" in kwargs["columns"]
-
-    def test_invalid_mode_raises(self):
-        try:
-            search_query("test", mode="INVALID")
-            assert False, "Should have raised ValueError"
-        except ValueError as e:
-            assert "INVALID" in str(e)
-
-    def test_no_is_current_filter(self):
-        """Current table only has current pages - no filter needed."""
-        kwargs = search_query("test")
-        assert "filters" not in kwargs
-
-
-class TestReadPageSql:
-    def test_joins_links_and_targets(self):
-        sql = read_page_sql("topics/example")
-        assert "LEFT JOIN" in sql
-        assert LINKS_TABLE in sql
-        assert "target_path" in sql
-
-    def test_filters_by_path(self):
-        sql = read_page_sql("topics/example")
-        assert "topics/example" in sql
-
-
-class TestReadSubtreeSql:
-    def test_uses_like_for_prefix(self):
-        sql = read_subtree_sql("topics/example")
-        assert "LIKE 'topics/example/%'" in sql
-
-    def test_includes_exact_path(self):
-        sql = read_subtree_sql("topics/example")
-        assert "path = 'topics/example'" in sql
-
-    def test_orders_by_depth(self):
-        sql = read_subtree_sql("topics")
-        assert "path_depth" in sql
-
-
-class TestVersionHistorySql:
-    def test_queries_history_table(self):
-        sql = version_history_sql("topics/example")
-        assert HISTORY_TABLE in sql
-
-    def test_orders_by_version_desc(self):
-        sql = version_history_sql("test")
-        assert "ORDER BY version DESC" in sql
-
-
 class TestCreateVsIndexSpec:
     def test_spec_structure(self):
         spec = create_vs_index_spec()
@@ -305,7 +242,7 @@ class TestCreateVsIndexSpec:
     def test_delta_sync_spec(self):
         spec = create_vs_index_spec()
         ds = spec["delta_sync_index_spec"]
-        assert ds.source_table == PAGES_TABLE
+        assert ds.source_table == PAGES_VS_SOURCE_TABLE
         assert ds.pipeline_type.value == "TRIGGERED"
 
     def test_embedding_config(self):
@@ -424,57 +361,22 @@ class TestAddLinkSql:
             sql = add_link_sql("a", "b", lt)
             assert lt in sql
 
+    def test_default_confidence_is_one(self):
+        sql = add_link_sql("a", "b", "related")
+        assert "1.0" in sql
 
-class TestIngestSourceSql:
-    def test_inserts_into_sources_table(self):
-        sql = ingest_source_sql("https://example.com/doc", "Example Doc", "Some content", "url")
-        assert "INSERT INTO" in sql
-        assert SOURCES_TABLE in sql
+    def test_confidence_passed_through(self):
+        sql = add_link_sql("a", "b", "related", confidence=0.85, origin="auto-vs")
+        assert "0.85" in sql
+        assert "auto-vs" in sql
 
-    def test_includes_all_fields(self):
-        sql = ingest_source_sql("https://example.com", "Title", "Content", "url")
-        assert "https://example.com" in sql
-        assert "Title" in sql
-        assert "Content" in sql
-        assert "url" in sql
+    def test_invalid_origin_raises(self):
+        with pytest.raises(ValueError):
+            add_link_sql("a", "b", "related", origin="llm")
 
-    def test_null_optional_fields(self):
-        sql = ingest_source_sql("https://example.com")
-        assert "NULL" in sql
-        assert "https://example.com" in sql
-
-    def test_default_source_type(self):
-        sql = ingest_source_sql("https://example.com")
-        assert "manual" in sql
-
-
-class TestLogOperationSql:
-    def test_inserts_into_log_table(self):
-        sql = log_operation_sql("write", path="topics/test")
-        assert "INSERT INTO" in sql
-        assert LOG_TABLE in sql
-
-    def test_includes_op_type(self):
-        sql = log_operation_sql("search", query="test query")
-        assert "search" in sql
-        assert "test query" in sql
-
-    def test_null_optional_fields(self):
-        sql = log_operation_sql("read")
-        assert sql.count("NULL") >= 2
-
-    def test_default_created_by(self):
-        sql = log_operation_sql("write")
-        assert "agent" in sql
-
-    def test_custom_created_by(self):
-        sql = log_operation_sql("promote", created_by="chat")
-        assert "chat" in sql
-
-    def test_all_op_types_accepted(self):
-        for op in ("write", "search", "read", "ingest", "lint", "promote"):
-            sql = log_operation_sql(op)
-            assert op in sql
+    def test_out_of_range_confidence_raises(self):
+        with pytest.raises(ValueError):
+            add_link_sql("a", "b", "related", confidence=1.5)
 
 
 class TestCreateIndexViewSql:
@@ -494,22 +396,6 @@ class TestCreateIndexViewSql:
     def test_orders_by_path(self):
         sql = create_index_view_sql()
         assert "ORDER BY path" in sql
-
-
-class TestCdfSinceSql:
-    def test_queries_table_changes(self):
-        sql = cdf_since_sql(PAGES_TABLE, "2026-01-01T00:00:00")
-        assert "table_changes" in sql
-        assert PAGES_TABLE in sql
-
-    def test_includes_timestamp(self):
-        sql = cdf_since_sql(PAGES_TABLE, "2026-04-01T00:00:00")
-        assert "2026-04-01T00:00:00" in sql
-
-    def test_filters_change_types(self):
-        sql = cdf_since_sql(PAGES_TABLE, "2026-01-01")
-        assert "insert" in sql
-        assert "update_postimage" in sql
 
 
 class TestOrphanPagesSql:
@@ -577,3 +463,42 @@ class TestBrokenLinksSql:
     def test_filters_missing_targets(self):
         sql = broken_links_sql()
         assert "IS NULL" in sql
+
+
+class TestDeleteBrokenLinksSql:
+    def test_deletes_from_links_table(self):
+        sql = delete_broken_links_sql()
+        assert "DELETE FROM" in sql
+        assert LINKS_TABLE in sql
+
+    def test_checks_both_endpoints(self):
+        sql = delete_broken_links_sql()
+        assert "target_page_id" in sql
+        assert "source_page_id" in sql
+
+
+class TestGraphNeighborsSql:
+    def test_depth_one_returns_single_level(self):
+        sql = graph_neighbors_sql("page-a", depth=1)
+        assert "UNION ALL" not in sql
+        assert "page-a" in sql
+
+    def test_depth_two_unions_two_levels(self):
+        sql = graph_neighbors_sql("page-a", depth=2)
+        assert sql.count("UNION ALL") == 1
+
+    def test_depth_three_unions_three_levels(self):
+        sql = graph_neighbors_sql("page-a", depth=3)
+        assert sql.count("UNION ALL") == 2
+
+    def test_filters_by_link_types(self):
+        sql = graph_neighbors_sql("page-a", depth=1, link_types=["related", "cites"])
+        assert "'related'" in sql
+        assert "'cites'" in sql
+        assert "IN (" in sql
+
+    def test_out_of_range_depth_raises(self):
+        with pytest.raises(ValueError):
+            graph_neighbors_sql("page-a", depth=0)
+        with pytest.raises(ValueError):
+            graph_neighbors_sql("page-a", depth=4)
