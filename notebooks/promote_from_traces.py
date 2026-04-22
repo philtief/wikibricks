@@ -9,7 +9,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/agent_marketplace_catalog/ai_agent/raw_data/wikibricks-0.1.3-py3-none-any.whl
+# MAGIC %pip install /Volumes/agent_marketplace_catalog/ai_agent/raw_data/wikibricks-0.1.4-py3-none-any.whl
 # MAGIC %restart_python
 
 # COMMAND ----------
@@ -24,6 +24,7 @@ from wikibricks.promote_logic import (
     filter_eligible_clusters,
     get_promote_window,
     is_duplicate_hit,
+    judge_response_is_numeric,
     now_utc,
     parse_judge_score,
 )
@@ -164,7 +165,16 @@ for cluster in eligible:
             ChatMessage(role=ChatMessageRole.USER, content=f"Q: {query}\n\nA: {canonical}"),
         ],
     )
-    score = parse_judge_score(judge_resp.choices[0].message.content)
+    raw_judge = judge_resp.choices[0].message.content
+    score = parse_judge_score(raw_judge)
+
+    # Discriminate 'judge returned gibberish' from 'legitimate low score'
+    # so an operator querying wiki_log can spot prompt drift early.
+    if not judge_response_is_numeric(raw_judge):
+        wiki._log("promote_parse_fail", query=query,  # noqa: SLF001
+                  details=f"cluster_size={len(cluster)} raw={(raw_judge or '')[:80]!r}")
+        rejected_count += 1
+        continue
 
     if score < JUDGE_THRESHOLD:
         wiki._log("promote_reject", query=query,  # noqa: SLF001
@@ -196,6 +206,14 @@ for cluster in eligible:
     promoted_count += 1
 
 print(f"promoted: {promoted_count}, rejected: {rejected_count}")
+
+# Trigger the VS index so just-promoted pages are immediately searchable.
+# The DELTA_SYNC index runs in TRIGGERED mode; without this, new pages stay
+# invisible to `WikiClient.search` until the next external sync and the
+# `is_duplicate_hit` dedup check on the next run can miss them.
+if promoted_count > 0:
+    wiki.sync_index()
+    print("triggered VS index sync")
 
 # COMMAND ----------
 

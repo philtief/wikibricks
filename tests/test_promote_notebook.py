@@ -369,10 +369,10 @@ class TestNotebookIntegration:
         assert any("Cluster 0" in q for q in queries)
         assert any("Cluster 1" in q for q in queries)
 
-    def test_non_numeric_judge_response_rejects_cluster(self):
-        # parse_judge_score returns 0.0 for anything that doesn't start
-        # with a digit. Integration-level guard that the notebook treats
-        # that as a reject (score < 4.5), not as a crash.
+    def test_non_numeric_judge_response_logs_parse_fail(self):
+        # When the judge returns gibberish (prompt drift), the notebook logs
+        # `promote_parse_fail` — NOT `promote_reject` — so an operator can
+        # distinguish 'bad LLM output' from 'legitimate low score'.
         spark = _make_spark(silver_rows=self._silver(5, 1))
         ws = _make_ws(judge_score="excellent!")
         wiki = _make_wiki()
@@ -382,12 +382,18 @@ class TestNotebookIntegration:
 
         wiki.promote_answer.assert_not_called()
         wiki.write_page.assert_not_called()
+
+        parse_fail_calls = [
+            c for c in wiki._log.call_args_list
+            if c.args and c.args[0] == "promote_parse_fail"
+        ]
         reject_calls = [
             c for c in wiki._log.call_args_list
             if c.args and c.args[0] == "promote_reject"
         ]
-        assert len(reject_calls) == 1
-        # The details string must surface the parsed score so an operator
-        # inspecting wiki_log can see why the cluster was rejected.
-        details = reject_calls[0].kwargs.get("details", "")
-        assert "score=0.0" in details
+        assert len(parse_fail_calls) == 1
+        assert len(reject_calls) == 0
+        # The details string must surface the raw judge output so an operator
+        # can see what the judge said (truncated).
+        details = parse_fail_calls[0].kwargs.get("details", "")
+        assert "excellent!" in details

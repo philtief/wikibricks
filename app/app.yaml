@@ -9,3 +9,9 @@ command:
 env:
   - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
     value: "false"
+  - name: WIKIBRICKS_LLM_MODEL
+    value: "databricks-claude-sonnet-4-5"
+  - name: WIKIBRICKS_VS_INDEX
+    value: "agent_marketplace_catalog.wiki.pages_index"
+  - name: WIKIBRICKS_WAREHOUSE_ID
+    value: "41754a8563a43a49"

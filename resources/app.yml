@@ -16,6 +16,8 @@ resources:
             value: ${var.vs_endpoint}
           - name: WIKIBRICKS_LLM_MODEL
             value: ${var.llm_model}
+          - name: WIKIBRICKS_VS_INDEX
+            value: ${var.catalog}.${var.schema}.pages_index
       resources:
         - name: sql-warehouse
           description: SQL warehouse the app uses for read/write ops.

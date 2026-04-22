@@ -1,5 +1,6 @@
 """WikiBricks -- browse, search, edit, and chat with your wiki knowledge base."""
 
+import os
 import re
 
 import streamlit as st
@@ -18,9 +19,12 @@ def slugify(text: str) -> str:
 SUGGESTED_NAMESPACES = ["topics", "concepts", "entities", "guides", "promoted"]
 
 # --- Configuration ---
-WAREHOUSE_ID = "41754a8563a43a49"
-VS_INDEX = "agent_marketplace_catalog.wiki.pages_index"
-LLM_MODEL = "databricks-claude-sonnet-4-5"
+# Runtime-overridable via env; defaults match the dev bundle so local `streamlit
+# run` still works without app.yaml. The bundle wires these to ${var.*} so an
+# LLM-endpoint rename or catalog move doesn't require an app code edit.
+WAREHOUSE_ID = os.getenv("WIKIBRICKS_WAREHOUSE_ID", "41754a8563a43a49")
+VS_INDEX = os.getenv("WIKIBRICKS_VS_INDEX", "agent_marketplace_catalog.wiki.pages_index")
+LLM_MODEL = os.getenv("WIKIBRICKS_LLM_MODEL", "databricks-claude-sonnet-4-5")
 SEARCH_COLUMNS = ["page_id", "path", "title", "page_type", "content_text", "tags", "version"]
 PAGE_TYPES = ["concept", "entity", "synthesis", "comparison"]
 
@@ -184,6 +188,7 @@ if mode == "Chat":
                     score = int(score_text[0]) if score_text and score_text[0].isdigit() else 0
                     if score >= 4:
                         promoted_path = wiki.promote_answer(prompt, response, pages)
+                        wiki.sync_index()
                         st.toast(f"Answer saved to wiki: {promoted_path}", icon="📝")
                 except Exception:
                     pass
