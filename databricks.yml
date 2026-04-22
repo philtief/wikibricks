@@ -26,6 +26,17 @@ variables:
   llm_model:
     description: Foundation-Model-API endpoint used by the Streamlit app chat + judge.
     default: databricks-claude-sonnet-4-5
+  embed_model:
+    description: FMAPI embedding endpoint used by promote_from_traces to cluster queries.
+    default: databricks-bge-large-en
+  auto_commit_threshold:
+    description: Confidence floor above which curate auto-commits proposed edges.
+    default: "0.85"
+  cluster_threshold:
+    description: >
+      Cosine-similarity floor for joining an existing query cluster in promote.
+      Lower = coarser grouping (more promotion candidates); higher = stricter.
+    default: "0.80"
 
 include:
   - resources/*.yml
@@ -44,6 +55,7 @@ targets:
       profile: fe-vm-agent-marketplace
     variables:
       schema: wiki
+      auto_commit_threshold: "0.75"
 
   staging:
     workspace:

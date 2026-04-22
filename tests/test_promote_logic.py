@@ -4,12 +4,15 @@ Covers every deterministic decision `notebooks/promote_from_traces.py` makes:
 clustering, eligibility filtering, judge-score parsing, dedup detection.
 """
 
+from datetime import datetime, timedelta, timezone
+
 import pytest
 
 from wikibricks.promote_logic import (
     cluster_by_cosine,
     cosine,
     filter_eligible_clusters,
+    get_promote_window,
     is_duplicate_hit,
     parse_judge_score,
 )
@@ -128,6 +131,39 @@ class TestParseJudgeScore:
     ])
     def test_parses_expected_value(self, text, expected):
         assert parse_judge_score(text) == expected
+
+
+class TestGetPromoteWindow:
+    def _t(self, h):
+        return datetime(2026, 4, 22, h, tzinfo=timezone.utc)
+
+    def test_first_run_reads_max_lookback(self):
+        now = self._t(12)
+        start, end = get_promote_window(None, now, max_lookback=timedelta(days=7))
+        assert end == now
+        assert start == now - timedelta(days=7)
+
+    def test_steady_state_reads_from_last_watermark(self):
+        last = self._t(6)
+        now = self._t(12)
+        start, end = get_promote_window(last, now, max_lookback=timedelta(days=7))
+        assert start == last
+        assert end == now
+
+    def test_large_gap_is_capped_at_max_lookback(self):
+        # Last run was 90 days ago; cap the catch-up to 7 days.
+        now = datetime(2026, 4, 22, 12, tzinfo=timezone.utc)
+        last = now - timedelta(days=90)
+        start, end = get_promote_window(last, now, max_lookback=timedelta(days=7))
+        assert start == now - timedelta(days=7)
+        assert end == now
+
+    def test_future_watermark_returns_zero_width(self):
+        # Clock skew or replay: watermark is ahead of now. Window must be empty.
+        now = self._t(6)
+        future = self._t(12)
+        start, end = get_promote_window(future, now)
+        assert start == end == now
 
 
 class TestIsDuplicateHit:

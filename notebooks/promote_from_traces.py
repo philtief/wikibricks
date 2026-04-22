@@ -13,13 +13,17 @@
 
 # COMMAND ----------
 
+from datetime import timezone
+
 from databricks.sdk import WorkspaceClient
 
-from wikibricks import WikiClient
+from wikibricks import PROMOTE_CHECKPOINT_TABLE, WikiClient
 from wikibricks.promote_logic import (
     cluster_by_cosine,
     filter_eligible_clusters,
+    get_promote_window,
     is_duplicate_hit,
+    now_utc,
     parse_judge_score,
 )
 
@@ -34,12 +38,14 @@ def _param(name: str, default: str) -> str:
 
 
 WAREHOUSE_ID = _param("warehouse_id", "41754a8563a43a49")
-TRACES_TABLE = _param("traces_table", "agent_marketplace_catalog.default.agent_traces")
+TRACES_TABLE = _param("traces_table", "agent_marketplace_catalog.wiki.agent_traces")
 JUDGE_ENDPOINT = _param("judge_endpoint", "databricks-claude-sonnet-4-5")
+EMBED_ENDPOINT = _param("embed_endpoint", "databricks-bge-large-en")
 MIN_CLUSTER_MEMBERS = int(_param("min_cluster_members", "5"))
 MIN_DISTINCT_SESSIONS = int(_param("min_distinct_sessions", "3"))
 JUDGE_THRESHOLD = float(_param("judge_threshold", "4.5"))
 MAX_CLUSTERS_PER_RUN = int(_param("max_clusters_per_run", "50"))
+CLUSTER_THRESHOLD = float(_param("cluster_threshold", "0.80"))
 
 wiki = WikiClient(warehouse_id=WAREHOUSE_ID)
 ws = WorkspaceClient()
@@ -50,15 +56,30 @@ ws = WorkspaceClient()
 
 # COMMAND ----------
 
+# Read the checkpoint so we only process traces we haven't seen before.
+try:
+    cp_rows = spark.sql(  # noqa: F821
+        f"SELECT last_watermark_ts FROM {PROMOTE_CHECKPOINT_TABLE} "
+        f"WHERE checkpoint_id = 'promote'"
+    ).collect()
+    last_watermark = cp_rows[0]["last_watermark_ts"].replace(tzinfo=timezone.utc) if cp_rows else None
+except Exception as e:
+    print(f"checkpoint: first run or checkpoint table missing ({type(e).__name__}: {e})")
+    last_watermark = None
+
+window_start, window_end = get_promote_window(last_watermark, now_utc())
+print(f"window: ({window_start.isoformat()}, {window_end.isoformat()}]")
+
 try:
     silver = spark.sql(  # noqa: F821
         f"""
         SELECT session_id,
                first(user_query) AS query,
                first(model_response) AS answer,
-               collect_set(retrieved_paths) AS sources
+               array_distinct(flatten(collect_set(retrieved_paths))) AS sources
         FROM {TRACES_TABLE}
-        WHERE DATE(timestamp) = current_date() - INTERVAL 1 DAY
+        WHERE timestamp > '{window_start.isoformat()}'
+          AND timestamp <= '{window_end.isoformat()}'
         GROUP BY session_id
         """
     ).collect()
@@ -86,18 +107,17 @@ from databricks.sdk.service.serving import ChatMessage, ChatMessageRole  # noqa:
 
 def embed(text: str) -> list[float]:
     resp = ws.serving_endpoints.query(
-        name="databricks-bge-large-en",
+        name=EMBED_ENDPOINT,
         input=[text],
     )
-    return resp.data[0]["embedding"]
+    return resp.data[0].embedding
 
 
 rows = [dict(r.asDict()) for r in silver]
 for r in rows:
     r["embedding"] = embed(r["query"])
 
-THRESHOLD = 0.88
-clusters = cluster_by_cosine(rows, THRESHOLD)
+clusters = cluster_by_cosine(rows, CLUSTER_THRESHOLD)
 eligible = filter_eligible_clusters(
     clusters,
     min_members=MIN_CLUSTER_MEMBERS,
@@ -175,3 +195,26 @@ for cluster in eligible:
     promoted_count += 1
 
 print(f"promoted: {promoted_count}, rejected: {rejected_count}")
+
+# COMMAND ----------
+
+# MAGIC %md ## Advance the watermark
+# MAGIC Only runs if the whole promote phase completed; failure earlier exits the
+# MAGIC notebook and leaves the checkpoint untouched so the next run retries.
+
+# COMMAND ----------
+
+spark.sql(  # noqa: F821
+    f"""
+    MERGE INTO {PROMOTE_CHECKPOINT_TABLE} t
+    USING (SELECT 'promote' AS checkpoint_id,
+                  TIMESTAMP '{window_end.isoformat()}' AS last_watermark_ts,
+                  current_timestamp() AS updated_at) s
+    ON t.checkpoint_id = s.checkpoint_id
+    WHEN MATCHED THEN UPDATE SET
+        last_watermark_ts = s.last_watermark_ts,
+        updated_at        = s.updated_at
+    WHEN NOT MATCHED THEN INSERT *
+    """
+)
+print(f"checkpoint advanced to {window_end.isoformat()}")

@@ -8,6 +8,7 @@ workspace.
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from math import sqrt
 from typing import Sequence
 
@@ -83,6 +84,39 @@ def parse_judge_score(text: str) -> float:
         return float(first) if first.isdigit() else 0.0
     except ValueError:
         return 0.0
+
+
+def get_promote_window(
+    last_watermark: datetime | None,
+    now: datetime,
+    *,
+    max_lookback: timedelta = timedelta(days=7),
+) -> tuple[datetime, datetime]:
+    """Compute the (start, end] timestamp window for promote's silver read.
+
+    Rules:
+      - First run (no checkpoint): read the last `max_lookback` up to `now`.
+      - Steady state: read from `last_watermark` up to `now`.
+      - If the gap between `last_watermark` and `now` exceeds `max_lookback`
+        (e.g. job was disabled for a month), cap the start at
+        `now - max_lookback` so one catch-up run doesn't try to score
+        months of traces in a single job.
+      - If `last_watermark >= now` (clock skew or replay), return a zero-width
+        window so the caller reads nothing rather than emitting an invalid
+        SQL range.
+    """
+    if last_watermark is None:
+        return now - max_lookback, now
+    if last_watermark >= now:
+        return now, now
+    earliest_allowed = now - max_lookback
+    start = max(last_watermark, earliest_allowed)
+    return start, now
+
+
+def now_utc() -> datetime:
+    """Centralised UTC-now so tests can patch it."""
+    return datetime.now(timezone.utc)
 
 
 def is_duplicate_hit(

@@ -18,6 +18,7 @@ LINKS_TABLE = f"{CATALOG}.{SCHEMA}.links"
 SOURCES_TABLE = f"{CATALOG}.{SCHEMA}.sources"
 LOG_TABLE = f"{CATALOG}.{SCHEMA}.wiki_log"
 PAGES_VS_SOURCE_TABLE = f"{CATALOG}.{SCHEMA}.pages_vs_source"
+PROMOTE_CHECKPOINT_TABLE = f"{CATALOG}.{SCHEMA}.promote_checkpoint"
 VS_INDEX = f"{CATALOG}.{SCHEMA}.pages_index"
 VS_ENDPOINT = "wiki-vs-endpoint"
 EMBEDDING_MODEL = "databricks-bge-large-en"
@@ -120,6 +121,15 @@ def create_tables_sql():
             'delta.enableChangeDataFeed' = 'true',
             'delta.feature.allowColumnDefaults' = 'supported'
         )
+        """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {PROMOTE_CHECKPOINT_TABLE} (
+            checkpoint_id     STRING    NOT NULL,
+            last_watermark_ts TIMESTAMP NOT NULL,
+            updated_at        TIMESTAMP DEFAULT current_timestamp()
+        )
+        USING DELTA
+        TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
         """,
     ]
 

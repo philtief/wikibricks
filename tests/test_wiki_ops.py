@@ -52,9 +52,18 @@ class TestConstants:
 
 
 class TestCreateTablesSql:
-    def test_returns_six_statements(self):
+    def test_returns_seven_statements(self):
         stmts = create_tables_sql()
-        assert len(stmts) == 6
+        assert len(stmts) == 7
+
+    def test_promote_checkpoint_table(self):
+        from wikibricks import PROMOTE_CHECKPOINT_TABLE
+        stmts = create_tables_sql()
+        joined = "\n".join(stmts)
+        assert PROMOTE_CHECKPOINT_TABLE in joined
+        cp_sql = next(s for s in stmts if PROMOTE_CHECKPOINT_TABLE in s)
+        assert "last_watermark_ts" in cp_sql
+        assert "checkpoint_id" in cp_sql
 
     def test_pages_vs_source_projection_table(self):
         stmts = create_tables_sql()

@@ -187,3 +187,7 @@ summary = build_curate_summary(
 )
 summary["timestamp"] = datetime.now(timezone.utc).isoformat()
 print(json.dumps(summary, indent=2))
+
+# Persist the summary for cross-run auditing. Queryable as:
+#   SELECT created_at, details FROM wiki_log WHERE op_type='curate_run'
+wiki._log("curate_run", details=json.dumps(summary))  # noqa: SLF001

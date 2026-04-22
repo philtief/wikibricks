@@ -9,6 +9,7 @@ resources:
           2. promote — trace-driven canonical-answer synthesis. Uses an LLM
              (${var.llm_model}). Opt-out by removing this task block; the curate
              task stays green on its own.
+      max_concurrent_runs: 1
       schedule:
         quartz_cron_expression: "0 0 4 ? * *"
         timezone_id: UTC
@@ -21,7 +22,7 @@ resources:
               warehouse_id: ${var.warehouse_id}
               stale_days: "90"
               connect_lookback_hours: "48"
-              auto_commit_threshold: "0.85"
+              auto_commit_threshold: ${var.auto_commit_threshold}
               min_similarity: "0.70"
               max_pages_per_run: "500"
               repair_broken_links: "true"
@@ -35,10 +36,12 @@ resources:
             base_parameters:
               warehouse_id: ${var.warehouse_id}
               judge_endpoint: ${var.llm_model}
+              embed_endpoint: ${var.embed_model}
               min_cluster_members: "5"
               min_distinct_sessions: "3"
               judge_threshold: "4.5"
               max_clusters_per_run: "50"
+              cluster_threshold: ${var.cluster_threshold}
           environment_key: serverless
           timeout_seconds: 1800
       environments:
