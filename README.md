@@ -5,12 +5,20 @@ Catalog, exposed as native MCP tools. One `databricks bundle deploy` and your
 agent has a persistent, versioned, typed-link knowledge store that **grows
 from its own answer traces** via a nightly maintenance job.
 
-> **Grounding idea.** WikiBricks is a Databricks-native implementation of
-> Andrej Karpathy's
-> [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) —
-> instead of re-retrieving raw documents at every query, the agent
-> incrementally compiles a structured, interlinked wiki it maintains itself.
-> Knowledge **compounds** instead of getting re-derived.
+> **Grounding ideas.**
+> 1. Andrej Karpathy's
+>    [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+>    — instead of re-retrieving raw documents at every query, the agent
+>    incrementally compiles a structured, interlinked wiki it maintains
+>    itself. Knowledge **compounds** instead of getting re-derived.
+> 2. *[Context and Memory for Agents on Databricks](https://medium.com/@philipp.tiefenbacher_42173/context-and-memory-for-agents-on-databricks-f3c945cd8681)*
+>    — the reusable-memory-pattern argument: agent memory should be built
+>    from Databricks-native primitives (Delta, Unity Catalog, Vector Search,
+>    Model Serving, MCP) rather than a bespoke side-car, so every deployment
+>    inherits governance, lineage, and scale-to-zero for free.
+>
+> WikiBricks is the concrete intersection: Karpathy's compile-don't-retrieve
+> pattern, implemented on the Databricks stack.
 
 ## Why
 
