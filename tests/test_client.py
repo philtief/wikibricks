@@ -254,6 +254,20 @@ class TestLog:
         assert LOG_TABLE in sql
         assert "write" in sql
 
+    def test_log_sql_includes_log_id(self):
+        # wiki_log.log_id is NOT NULL in the DDL. If the INSERT omits it the
+        # statement fails and _log silently swallows — so library-side writes
+        # never land in the audit log. Regression test for bug found during
+        # Phase 3 promote-path validation.
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.write_page("test/page", "Test", '{"summary":"s","body":"b"}')
+        log_call = ws.statement_execution.execute_statement.call_args_list[3]
+        sql = log_call.kwargs["statement"]
+        assert "log_id" in sql
+        assert "uuid()" in sql
+
     def test_read_logs_operation(self):
         ws = MagicMock()
         ws.statement_execution.execute_statement.return_value = _mock_response(

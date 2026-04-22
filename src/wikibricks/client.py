@@ -66,8 +66,8 @@ class WikiClient:
         details_sql = f"'{details}'" if details else "NULL"
         try:
             self._exec(
-                f"INSERT INTO {LOG_TABLE} (op_type, path, query, details) "
-                f"VALUES ('{op_type}', {path_sql}, {query_sql}, {details_sql})"
+                f"INSERT INTO {LOG_TABLE} (log_id, op_type, path, query, details) "
+                f"VALUES (uuid(), '{op_type}', {path_sql}, {query_sql}, {details_sql})"
             )
         except Exception:
             pass
