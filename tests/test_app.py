@@ -191,3 +191,110 @@ class TestSearchWiki:
         wiki.search.side_effect = Exception("connection failed")
         result = app_module.search_wiki(wiki, "test")
         assert result == []
+
+
+class TestBrowseMode:
+    """End-to-end AppTest drive of Browse Mode.
+
+    Guards the Streamlit session_state round-trip fixed in #38/#39: tree-button
+    click → queued_read_path → rerun → text_input pre-fill → read_page call.
+    """
+
+    @staticmethod
+    def _mocks():
+        ws = MagicMock()
+        ws.config.authenticate.return_value = {"Authorization": "Bearer test"}
+        ws.config.host = "https://test"
+
+        wiki = MagicMock()
+        wiki.list_pages.return_value = [
+            {"path": "promoted/foo", "title": "Foo", "page_type": "synthesis"},
+            {"path": "topics/bar", "title": "Bar", "page_type": "concept"},
+        ]
+        wiki.search.return_value = [{
+            "path": "promoted/foo", "title": "Foo",
+            "page_type": "synthesis", "version": 1,
+            "content_text": "Foo full text.",
+        }]
+        wiki.read_page.return_value = {
+            "path": "promoted/foo", "title": "Foo",
+            "page_type": "synthesis", "version": 1,
+            "content_text": "Foo full text.",
+        }
+        wiki.history.return_value = [{
+            "version": 1, "created_by": "x",
+            "created_at": "t", "summary": "s",
+        }]
+        return ws, wiki
+
+    @staticmethod
+    def _open_browse():
+        from streamlit.testing.v1 import AppTest
+        at = AppTest.from_file(str(APP_DIR / "app.py"))
+        at.run(timeout=10)
+        at.sidebar.radio[0].set_value("Browse").run(timeout=10)
+        return at
+
+    def test_browse_title_and_list_pages_called(self):
+        ws, wiki = self._mocks()
+        with patch("databricks.sdk.WorkspaceClient", return_value=ws), \
+             patch("wikibricks.WikiClient", return_value=wiki), \
+             patch("openai.OpenAI"):
+            at = self._open_browse()
+            assert any(t.value == "Browse Wiki" for t in at.title)
+            assert wiki.list_pages.called
+
+    def test_tree_button_click_loads_page(self):
+        ws, wiki = self._mocks()
+        with patch("databricks.sdk.WorkspaceClient", return_value=ws), \
+             patch("wikibricks.WikiClient", return_value=wiki), \
+             patch("openai.OpenAI"):
+            at = self._open_browse()
+            at.button(key="tree_promoted/foo").click().run(timeout=10)
+            wiki.read_page.assert_called_with("promoted/foo")
+            assert at.session_state["read_path"] == "promoted/foo"
+
+    def test_read_page_by_path_loads_and_shows_history(self):
+        ws, wiki = self._mocks()
+        with patch("databricks.sdk.WorkspaceClient", return_value=ws), \
+             patch("wikibricks.WikiClient", return_value=wiki), \
+             patch("openai.OpenAI"):
+            at = self._open_browse()
+            at.text_input(key="read_path").set_value("promoted/foo")
+            # Click the "Read" button (first non-tree button without key).
+            read_btn = next(b for b in at.button if b.label == "Read")
+            read_btn.click().run(timeout=10)
+            wiki.read_page.assert_called_with("promoted/foo")
+            wiki.history.assert_called_with("promoted/foo")
+
+    def test_search_returns_results_and_open_button(self):
+        ws, wiki = self._mocks()
+        with patch("databricks.sdk.WorkspaceClient", return_value=ws), \
+             patch("wikibricks.WikiClient", return_value=wiki), \
+             patch("openai.OpenAI"):
+            at = self._open_browse()
+            next(t for t in at.text_input if t.label == "Search pages").set_value("foo")
+            search_btn = next(b for b in at.button if b.label == "Search")
+            search_btn.click().run(timeout=10)
+            wiki.search.assert_called_with("foo", num_results=5)
+            assert any(b.key == "open_promoted/foo" for b in at.button)
+
+    def test_open_full_page_button_queues_read(self):
+        ws, wiki = self._mocks()
+        with patch("databricks.sdk.WorkspaceClient", return_value=ws), \
+             patch("wikibricks.WikiClient", return_value=wiki), \
+             patch("openai.OpenAI"):
+            at = self._open_browse()
+            next(t for t in at.text_input if t.label == "Search pages").set_value("foo")
+            next(b for b in at.button if b.label == "Search").click().run(timeout=10)
+            at.button(key="open_promoted/foo").click().run(timeout=10)
+            wiki.read_page.assert_called_with("promoted/foo")
+
+    def test_list_pages_error_shown_gracefully(self):
+        ws, wiki = self._mocks()
+        wiki.list_pages.side_effect = Exception("warehouse down")
+        with patch("databricks.sdk.WorkspaceClient", return_value=ws), \
+             patch("wikibricks.WikiClient", return_value=wiki), \
+             patch("openai.OpenAI"):
+            at = self._open_browse()
+            assert any("warehouse down" in (e.value or "") for e in at.error)

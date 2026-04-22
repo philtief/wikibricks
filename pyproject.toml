@@ -11,6 +11,8 @@ dependencies = [
 dev = [
     "pytest>=8.0",
     "ruff>=0.15",
+    "streamlit>=1.37",
+    "openai>=1.0",
 ]
 
 [build-system]
