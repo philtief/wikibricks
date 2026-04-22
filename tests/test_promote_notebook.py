@@ -76,14 +76,29 @@ def _make_spark(*, silver_rows=None, silver_raises: bool = False) -> MagicMock:
     return spark
 
 
+def _embed_for(text: str) -> list[float]:
+    """Deterministic fake embedding.
+
+    Queries tagged `"Cluster 0 ..."` / `"Cluster 1 ..."` map to orthogonal
+    unit vectors, so rows with the same tag cluster together and rows
+    with different tags don't. Lets tests exercise multi-cluster runs
+    without touching a real embedding endpoint.
+    """
+    if "Cluster 0" in text:
+        return [1.0, 0.0, 0.0]
+    if "Cluster 1" in text:
+        return [0.0, 1.0, 0.0]
+    if "Cluster 2" in text:
+        return [0.0, 0.0, 1.0]
+    return [1.0, 0.0, 0.0]
+
+
 def _make_ws(*, judge_score: str = "5") -> MagicMock:
     """Route `serving_endpoints.query` by endpoint name.
 
-    - embed endpoint: return object whose `.data[0].embedding` is a fixed
-      vector (identical across calls → all rows cluster together, which
-      makes tests deterministic regardless of the cluster threshold).
-    - chat endpoint: return synth or judge output based on the system
-      prompt's content.
+    - embed endpoint: `.data[0].embedding` is a deterministic vector
+      routed off the input text via `_embed_for`.
+    - chat endpoint: synth or judge response based on the system prompt.
     """
     ws = MagicMock()
 
@@ -91,9 +106,13 @@ def _make_ws(*, judge_score: str = "5") -> MagicMock:
         name = kwargs.get("name", "")
         resp = MagicMock()
         if "bge" in name or "embed" in name:
-            emb = MagicMock()
-            emb.embedding = [1.0, 0.0, 0.0]
-            resp.data = [emb]
+            texts = kwargs.get("input") or [""]
+            data = []
+            for t in texts:
+                emb = MagicMock()
+                emb.embedding = _embed_for(t)
+                data.append(emb)
+            resp.data = data
             return resp
         sys_content = ""
         msgs = kwargs.get("messages", [])
@@ -313,12 +332,11 @@ class TestNotebookIntegration:
         assert len(silver_sqls) == 1
         assert "array_distinct(flatten(collect_set(retrieved_paths)))" in silver_sqls[0]
 
-    def test_embedding_call_shape(self):
-        # The embed function must pass input=[text] and read the response
-        # via attribute access. If the notebook regresses to dict access
-        # on resp.data[0], this test fails because our mock exposes
-        # .embedding as an attribute only (no __getitem__ semantics for
-        # "embedding" key).
+    def test_every_silver_query_is_embedded(self):
+        # Guards against regressions that skip the embed step or lose
+        # queries in transit. Counts distinct texts sent to the embed
+        # endpoint, NOT call count - tolerates a future batching refactor
+        # that would change one-per-call to one-call-many-inputs.
         spark = _make_spark(silver_rows=self._silver(5, 1))
         ws = _make_ws(judge_score="5")
         wiki = _make_wiki()
@@ -326,11 +344,50 @@ class TestNotebookIntegration:
 
         _exec_notebook(spark, ws, wiki, dbutils)
 
-        embed_calls = [
-            c for c in ws.serving_endpoints.query.call_args_list
-            if ("bge" in c.kwargs.get("name", "") or "embed" in c.kwargs.get("name", ""))
+        seen: set[str] = set()
+        for c in ws.serving_endpoints.query.call_args_list:
+            name = c.kwargs.get("name", "")
+            if "bge" in name or "embed" in name:
+                for t in c.kwargs.get("input") or []:
+                    seen.add(t)
+        expected = {f"Cluster 0 paraphrase {i}" for i in range(5)}
+        assert seen == expected
+
+    def test_multiple_eligible_clusters_each_promote_once(self):
+        # Two clusters, orthogonal embeddings via _embed_for, judge=5 for both.
+        # Exercises the `for cluster in eligible` loop with len > 1 and
+        # confirms each cluster triggers its own synth+judge+promote.
+        spark = _make_spark(silver_rows=self._silver(5, 2))
+        ws = _make_ws(judge_score="5")
+        wiki = _make_wiki()
+        dbutils = _make_dbutils()
+
+        _exec_notebook(spark, ws, wiki, dbutils)
+
+        assert wiki.promote_answer.call_count == 2
+        queries = [c.args[0] for c in wiki.promote_answer.call_args_list]
+        assert any("Cluster 0" in q for q in queries)
+        assert any("Cluster 1" in q for q in queries)
+
+    def test_non_numeric_judge_response_rejects_cluster(self):
+        # parse_judge_score returns 0.0 for anything that doesn't start
+        # with a digit. Integration-level guard that the notebook treats
+        # that as a reject (score < 4.5), not as a crash.
+        spark = _make_spark(silver_rows=self._silver(5, 1))
+        ws = _make_ws(judge_score="excellent!")
+        wiki = _make_wiki()
+        dbutils = _make_dbutils()
+
+        _exec_notebook(spark, ws, wiki, dbutils)
+
+        wiki.promote_answer.assert_not_called()
+        wiki.write_page.assert_not_called()
+        reject_calls = [
+            c for c in wiki._log.call_args_list
+            if c.args and c.args[0] == "promote_reject"
         ]
-        assert len(embed_calls) == 5
-        for c in embed_calls:
-            assert isinstance(c.kwargs.get("input"), list)
-            assert len(c.kwargs["input"]) == 1
+        assert len(reject_calls) == 1
+        # The details string must surface the parsed score so an operator
+        # inspecting wiki_log can see why the cluster was rejected.
+        details = reject_calls[0].kwargs.get("details", "")
+        assert "score=0.0" in details
