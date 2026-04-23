@@ -2,6 +2,7 @@
 
 import ast
 import importlib
+import os
 import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -9,6 +10,17 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 APP_DIR = Path(__file__).parent.parent / "app"
+
+# Env vars the app requires at import time (fails fast via `st.stop()` if unset,
+# which is the documented behavior for a production deploy). Tests stub both.
+_TEST_WAREHOUSE_ID = "test-warehouse"
+_TEST_VS_INDEX = "test_catalog.test_schema.pages_index"
+
+
+@pytest.fixture(autouse=True)
+def _app_env(monkeypatch):
+    monkeypatch.setenv("WIKIBRICKS_WAREHOUSE_ID", _TEST_WAREHOUSE_ID)
+    monkeypatch.setenv("WIKIBRICKS_VS_INDEX", _TEST_VS_INDEX)
 
 
 class _SessionState(dict):
@@ -114,7 +126,7 @@ class TestBuildContext:
 
 class TestConstants:
     def test_vs_index_name(self, app_module):
-        assert app_module.VS_INDEX == "agent_marketplace_catalog.wiki.pages_index"
+        assert app_module.VS_INDEX == _TEST_VS_INDEX
 
     def test_search_columns_include_essentials(self, app_module):
         cols = app_module.SEARCH_COLUMNS
@@ -135,7 +147,28 @@ class TestConstants:
         assert "comparison" in app_module.PAGE_TYPES
 
     def test_warehouse_id(self, app_module):
-        assert app_module.WAREHOUSE_ID == "41754a8563a43a49"
+        assert app_module.WAREHOUSE_ID == _TEST_WAREHOUSE_ID
+
+    def test_missing_required_env_vars_stops_app(self):
+        """App must fail fast when required env is missing; silent defaults
+        would point at the wrong workspace.
+        """
+        for var in ("WIKIBRICKS_WAREHOUSE_ID", "WIKIBRICKS_VS_INDEX"):
+            os.environ.pop(var, None)
+
+        mock_st = MagicMock()
+        mock_st.session_state = _SessionState()
+        mock_st.stop.side_effect = SystemExit
+
+        with patch.dict(sys.modules, {"streamlit": mock_st,
+                                      "openai": MagicMock(),
+                                      "wikibricks": MagicMock()}):
+            spec = importlib.util.spec_from_file_location("app_missing_env",
+                                                          APP_DIR / "app.py")
+            mod = importlib.util.module_from_spec(spec)
+            with pytest.raises(SystemExit):
+                spec.loader.exec_module(mod)
+        mock_st.error.assert_called_once()
 
 
 class TestValidateWriteForm:

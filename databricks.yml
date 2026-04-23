@@ -10,13 +10,15 @@ artifacts:
 variables:
   catalog:
     description: Unity Catalog catalog to deploy the wiki store into.
-    default: agent_marketplace_catalog
+    default: main
   schema:
     description: Schema under the catalog.
     default: wiki
   warehouse_id:
-    description: SQL warehouse used by UC functions and the deploy notebook.
-    default: 41754a8563a43a49
+    description: >
+      SQL warehouse used by UC functions and the deploy notebook. Required —
+      pass with `--var=warehouse_id=<id>` or set a per-target default in an
+      uncommitted `databricks.override.yml`.
   vs_endpoint:
     description: Vector Search endpoint name.
     default: wiki_endpoint
@@ -56,28 +58,24 @@ sync:
     - app/wikibricks-*.whl
 
 targets:
+  # Workspace host/profile are intentionally unset — supply via
+  # `DATABRICKS_CONFIG_PROFILE` env var, `--profile <name>` flag, or an
+  # uncommitted `databricks.override.yml`. Example override file shipped at
+  # `databricks.override.example.yml`.
   dev:
     mode: development
     default: true
-    workspace:
-      host: https://fevm-agent-marketplace.cloud.databricks.com
-      profile: fe-vm-agent-marketplace
     variables:
       schema: wiki
       auto_commit_threshold: "0.75"
 
   staging:
-    workspace:
-      host: https://fevm-agent-marketplace.cloud.databricks.com
-      profile: fe-vm-agent-marketplace
     variables:
       schema: wiki_staging
 
   prod:
     mode: production
     workspace:
-      host: https://fevm-agent-marketplace.cloud.databricks.com
-      profile: fe-vm-agent-marketplace
       # Example shared location. Override to /Workspace/Users/<your-principal>/...
       # for a single-principal production deployment.
       root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}

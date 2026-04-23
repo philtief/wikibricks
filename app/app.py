@@ -19,12 +19,24 @@ def slugify(text: str) -> str:
 SUGGESTED_NAMESPACES = ["topics", "concepts", "entities", "guides", "promoted"]
 
 # --- Configuration ---
-# Runtime-overridable via env; defaults match the dev bundle so local `streamlit
-# run` still works without app.yaml. The bundle wires these to ${var.*} so an
-# LLM-endpoint rename or catalog move doesn't require an app code edit.
-WAREHOUSE_ID = os.getenv("WIKIBRICKS_WAREHOUSE_ID", "41754a8563a43a49")
-VS_INDEX = os.getenv("WIKIBRICKS_VS_INDEX", "agent_marketplace_catalog.wiki.pages_index")
+# Required env vars (wired from bundle vars via resources/app.yml). No
+# hardcoded workspace defaults: a first-time user deploying into their own
+# workspace would otherwise hit UC errors that don't name the real cause.
+WAREHOUSE_ID = os.getenv("WIKIBRICKS_WAREHOUSE_ID")
+VS_INDEX = os.getenv("WIKIBRICKS_VS_INDEX")
 LLM_MODEL = os.getenv("WIKIBRICKS_LLM_MODEL", "databricks-claude-sonnet-4-5")
+
+if not WAREHOUSE_ID or not VS_INDEX:
+    missing = [
+        name for name, val in (("WIKIBRICKS_WAREHOUSE_ID", WAREHOUSE_ID),
+                               ("WIKIBRICKS_VS_INDEX", VS_INDEX)) if not val
+    ]
+    st.error(
+        f"Missing required env var(s): {', '.join(missing)}. "
+        f"Set them in `resources/app.yml` (bundle deploy) or your shell "
+        f"(local `streamlit run`). See README → Quick start."
+    )
+    st.stop()
 SEARCH_COLUMNS = ["page_id", "path", "title", "page_type", "content_text", "tags", "version"]
 PAGE_TYPES = ["concept", "entity", "synthesis", "comparison"]
 

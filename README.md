@@ -99,14 +99,18 @@ databricks bundle deploy --target dev \
 The Streamlit app reads the same config from env vars so one image ships to
 any workspace:
 
-| Variable | Default |
-|---|---|
-| `WIKIBRICKS_WAREHOUSE_ID` | `41754a8563a43a49` |
-| `WIKIBRICKS_VS_INDEX` | `agent_marketplace_catalog.wiki.pages_index` |
-| `WIKIBRICKS_LLM_MODEL` | `databricks-claude-sonnet-4-5` |
+| Variable | Default | Required |
+|---|---|---|
+| `WIKIBRICKS_WAREHOUSE_ID` | *(none)* | yes |
+| `WIKIBRICKS_VS_INDEX` | *(none — e.g. `<catalog>.<schema>.pages_index`)* | yes |
+| `WIKIBRICKS_LLM_MODEL` | `databricks-claude-sonnet-4-5` | no |
 
 `resources/app.yml` wires these from the bundle's `catalog` / `schema` /
-`warehouse_id` vars automatically.
+`warehouse_id` vars automatically. For local `streamlit run`, export them in
+your shell first — the app fails fast with a clear error if they're missing.
+
+For CLI profile/host, copy `databricks.override.example.yml` →
+`databricks.override.yml` (gitignored) and fill in your workspace.
 
 ## Core API
 
@@ -167,7 +171,7 @@ Two external benchmarks, both honest:
 
 ```bash
 uv sync
-uv run pytest                       # 305 tests, no workspace needed
+uv run pytest                       # 306 tests, no workspace needed
 uv run ruff check src tests scripts
 uv build                            # → dist/wikibricks-0.1.4-py3-none-any.whl
 ```

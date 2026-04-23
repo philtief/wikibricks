@@ -7,6 +7,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.4] - 2026-04-23
+
+### Added
+
+- **`WikiClient.sync_index()`** — triggers the DELTA_SYNC Vector Search
+  index and logs `vs_sync` / `vs_sync_fail` to `wiki_log`. Called
+  automatically from `promote_from_traces` after successful promotions and
+  from the Streamlit app after chat-mode auto-promote, so freshly written
+  pages are searchable within one sync cycle.
+- **Parse-fail discrimination in promote.** `promote_from_traces.py` now
+  distinguishes *judge returned non-numeric text* (`promote_parse_fail`)
+  from *legitimate low score* (`promote_reject`), so operators querying
+  `wiki_log` can spot prompt drift independently of quality failures.
+- **`judge_response_is_numeric`** helper in `wikibricks.promote_logic`.
+- **Cross-task DAG integration test** (`tests/test_job_dag.py`) — executes
+  `wiki_curate.py` and `promote_from_traces.py` in the real job DAG order
+  against a `spec_set=WikiClient` mock, so method drift between the two
+  notebooks fails loudly instead of silently.
+- **`scripts/diagnose_traces.py`** — standalone diagnostic reporting
+  trace volume, query-length percentiles, exact-match cluster eligibility,
+  and `wiki_log` event counts. Run before trusting a scheduled promote
+  window.
+- **Env-var configuration for the Streamlit app**
+  (`WIKIBRICKS_WAREHOUSE_ID`, `WIKIBRICKS_VS_INDEX`, `WIKIBRICKS_LLM_MODEL`).
+  Wired from bundle vars in `resources/app.yml`. Warehouse ID and VS index
+  are required — the app fails fast with a clear error if unset.
+- **Browse-mode AppTest coverage** (`tests/test_app.py::TestBrowseMode`) —
+  six in-process Streamlit tests covering the tree-button → session-state
+  round-trip.
+- **`databricks.override.example.yml`** — template for per-developer
+  workspace host / profile / warehouse_id overrides.
+  `databricks.override.yml` is gitignored.
+
+### Changed
+
+- **`judge_threshold` default lowered 4.5 → 4.0.** The judge prompt asks
+  for a single digit 1–5, so 4.5 rejected every integer score; 4.0 admits
+  4 and 5 as intended.
+- **Bundle variable defaults cleaned for public release.** `catalog`
+  default changed from a workspace-specific value to `main`; `warehouse_id`
+  has no default and must be supplied per target. Target `workspace.host`
+  / `profile` removed — provide via `DATABRICKS_CONFIG_PROFILE` env var or
+  the new override file.
+- **README refresh** — added operational-telemetry table, env-var config
+  table, updated test count (223 → 305) and wheel version (0.1.3 → 0.1.4).
+
+### Fixed
+
+- **Silent telemetry loss in `_log`.** Previous
+  `INSERT INTO ... VALUES (uuid(), ...)` was rejected by the SQL warehouse
+  as `INVALID_INLINE_TABLE.CANNOT_EVALUATE_EXPRESSION_IN_INLINE_TABLE` —
+  every log write from the warehouse path was silently dropping. Rewritten
+  to `INSERT INTO ... SELECT uuid(), ...`; verified end-to-end with live
+  `vs_sync` and `verify_fix` rows persisting. Any `wiki_log`-based
+  analysis that straddles 0.1.0–0.1.3 should note this gap.
+
 ## [0.1.3] - 2026-04-22
 
 ### Added
@@ -108,5 +164,7 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.1.4...HEAD
+[0.1.4]: https://github.com/philtief/wikibricks/compare/v0.1.3...v0.1.4
+[0.1.3]: https://github.com/philtief/wikibricks/compare/v0.1.0...v0.1.3
 [0.1.0]: https://github.com/philtief/wikibricks/releases/tag/v0.1.0
