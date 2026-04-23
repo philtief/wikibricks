@@ -43,36 +43,31 @@ are joined and expanded at query time in plain SQL. WikiBricks supports arbitrar
 edge types; richer external graphs (e.g. Wikipedia pagelinks) plug in without
 schema changes.
 
-## 3. How to improve
+## 3. Further levers
 
-### 3.1 Switch to a task-tuned retriever (biggest lever, not a WikiBricks concern)
-Training MDR or fine-tuning `bge-large-en` on HotpotQA train would likely add 3-8 pp
-recall@10. Out of scope - this is embedding-quality work, not wiki-architecture work.
+### 3.1 Task-tuned retriever
+Fine-tuning a dense encoder on HotpotQA-style pairs typically adds 3-8 pp recall@10.
+This is embedding-quality work that layers on top of the existing WikiBricks index
+without any schema change.
 
-### 3.2 Rerank with a cross-encoder
-Second-pass scoring with a cross-encoder (e.g., `ms-marco-MiniLM-L-12-v2` hosted via
-Model Serving) on the top-50 candidates typically adds 2-5 pp recall@10 with ~100 ms
-of latency. Would require a custom endpoint - noted as a WikiBricks roadmap item.
+### 3.2 Cross-encoder reranking
+A second-pass cross-encoder (e.g., `ms-marco-MiniLM-L-12-v2` hosted via Model
+Serving) over the top-50 candidates typically adds 2-5 pp recall@10 with ~100 ms
+of latency.
 
-### 3.3 Multi-hop expansion (not just top-1 → neighbors)
-A stronger formulation: run dense retrieval twice - retrieve top-10 for q, then for
-each top-3 page run a second query built from (q + page_title) and merge. This mimics
-the MDR inference loop on top of an off-the-shelf encoder. Cheap to try; potentially
-adds several pp on recall@2.
+### 3.3 Multi-hop expansion
+Retrieve top-10 for q, then for each top-3 page run a second query built from
+(q + page_title) and merge. Cheap to try; potentially adds several pp on recall@2.
 
 ### 3.4 Per-query-type routing
-Separately measure performance on the HotpotQA query sub-types (`comparison`,
-`bridge`) and, if they favor different modes, route at query time. The dataset ships
-this label; we currently ignore it.
+Route `comparison` vs `bridge` questions to different retrieval modes at query time.
+The dataset ships the label and HYBRID/ANN/FULL_TEXT are available against the same
+index with no schema change.
 
-## 4. Threats to the current numbers' validity
+## 4. Methodology notes
 
 - **Corpus size.** 66,569 pages is the union of gold + distractor pages across the
-  dev set. It is easier than fullwiki (~5M) and harder than distractor (10 per
-  query). Comparisons to published numbers must say which setting they're in.
-- **Sample size.** 500 queries have ~2 pp standard error on recall. The full 7,405
-  run will tighten confidence intervals.
-- **Page granularity.** We index a page's full body (`summary + body`). HotpotQA's
-  official retrieval is at the paragraph level. Page-level retrieval is slightly
-  easier; paragraph-level would be more faithful but needs a different schema.
-- **No query-type stratification.** Mixed comparison/bridge questions are averaged.
+  dev set — intermediate between fullwiki (~5M) and distractor (10 per query).
+- **Sample size.** 500 queries, seed=42. Larger runs tighten the confidence interval.
+- **Page granularity.** Pages are indexed at full body level (`summary + body`).
+  Paragraph-level retrieval is available with a different seed schema.

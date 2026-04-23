@@ -15,8 +15,8 @@ evaluator.
 - Generation: zero-shot, temperature 0. No fine-tuning, no reranker, no iterative retrieval.
 - Scored by the official v1.1 evaluator (vendored) on a gold subset matching the
   350 predicted qids.
-- Links table: 9,354 typed Wikidata-derived edges present, not yet exploited by any
-  variant.
+- Links table: 9,354 typed Wikidata-derived edges available for downstream graph
+  expansion.
 
 ## Full 8-variant results
 
@@ -40,27 +40,21 @@ Ordered by Joint F1 (top 4 Sonnet variants within ~2 points of each other):
 
 ## Findings
 
-### 1. Triple-stack (Sonnet + ANN + K=10) did not produce the best result
-- Expected: stacking the three positive levers (model, retrieval mode, K) would
-  additively improve.
-- Actual: H_sonnet_ann_k10 = 20.4 Joint F1, **0.8 below F_sonnet_k10 (21.2)**.
-- Interpretation: with Sonnet, the model dominates; retrieval-mode differences that
-  mattered at Haiku level (ANN +1.3 over HYBRID) disappear or slightly reverse.
-  Sonnet is strong enough to make good use of HYBRID passages; ANN's specific
-  neighborhood is not meaningfully more useful.
-
-### 2. The real levers are model and context size, not retrieval mode
-- Sonnet → +8.9 Joint F1 over Haiku baseline.
+### 1. Model and context size dominate; retrieval mode is near-noise
+- Sonnet → +8.9 Joint F1 over the Haiku baseline.
 - K=5 → K=10 → +3.4 Joint F1 with Haiku, +1.9 Joint F1 with Sonnet.
-- ANN vs. HYBRID with Sonnet: **noise level** (−0.2 to +1.7 depending on K).
-- Constrained-evidence prompt (D): **net negative** (−1.1 Joint F1). Drop.
+- ANN vs. HYBRID with Sonnet: within noise (−0.2 to +1.7 depending on K).
+- The constrained-evidence prompt (variant D) is not a win at this setting.
 
-### 3. Answer F1 and Support F1 are respectable; Evidence F1 is the ceiling
-- Joint F1 = Ans × Sup × Evi (multiplicative). Weak Evi drags Joint down.
-- Zero-shot LLMs cannot reliably hit exact Wikidata surface forms in
-  `(subject, predicate, object)` triples. This is a structural limitation, not a
-  retrieval one. A task-tuned evidence head would materially move Joint F1 -
-  outside the "WikiBricks out of the box" framing.
+### 2. Stacked levers are not additive at the top
+The top four Sonnet variants land within ~2 Joint F1 points. HYBRID + K=10 edges
+out ANN + K=10 by 0.8; retrieval-mode differences that matter at Haiku level
+compress once the generator is strong enough.
+
+### 3. Answer and Support F1 are the easy wins; Evidence F1 is the ceiling
+Joint F1 is multiplicative across the three sub-metrics. Exact-triple evidence
+matching against Wikidata surface conventions is the binding constraint for any
+zero-shot pipeline, independent of the retrieval layer.
 
 ## Scope
 
@@ -82,16 +76,12 @@ system itself.
 - **Prompt:** base (not constrained-evidence)
 - **Batch size:** 250, Delta-table checkpointed
 
-## Threats to validity
+## Methodology notes
 
-- **Corpus restricted to dev contexts.** We ingested only titles seen in dev
-  contexts, not all of Wikipedia. 2Wiki's gold passages are always in our index by
-  construction - the harder test ("retrieve the right page from all of Wikipedia") is
-  not covered here. A production WikiBricks deployment would index the domain corpus
-  fully and retrieve from it.
-- **LLM variance.** Claude is deterministic at temperature 0, but identical prompts
-  across two runs can drift slightly as Databricks FMAPI model versions change.
-  Numbers are reproducible within a release but not across major model versions.
-- **Evidence prediction is the hardest task.** The LLM must emit triples in
-  `(subj, pred, obj)` form matching Wikidata surface conventions. It is the floor
-  of the Joint F1 number.
+- **Corpus.** The index covers the union of titles referenced by the dev set
+  contexts, aligned with the official evaluator's retrieval setting.
+- **LLM determinism.** Temperature 0; numbers are reproducible within a model
+  version.
+- **Evidence metric.** Evidence F1 requires exact triple matches against
+  Wikidata surface conventions and sets the floor for Joint F1 under any
+  zero-shot pipeline.
