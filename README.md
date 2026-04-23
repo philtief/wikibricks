@@ -226,6 +226,11 @@ uv run ruff check src tests scripts
 uv build                            # → dist/wikibricks-0.1.4-py3-none-any.whl
 ```
 
+Coding agents (Claude Code, Cursor, Cortex, Copilot CLI) should read
+[`AGENTS.md`](AGENTS.md) for repo conventions, hard rules, release
+checklist, and known-wrong patterns. Claude Code picks it up via the
+`CLAUDE.md` symlink automatically.
+
 ## What this is not
 
 - Not a multi-hop QA system — the agent does the reasoning.
