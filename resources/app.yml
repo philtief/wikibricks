@@ -1,0 +1,26 @@
+resources:
+  apps:
+    wikibricks_app:
+      name: wikibricks-app
+      description: WikiBricks Streamlit app - browse, search, edit, chat.
+      source_code_path: ${workspace.file_path}/app
+      config:
+        env:
+          - name: WIKIBRICKS_CATALOG
+            value: ${var.catalog}
+          - name: WIKIBRICKS_SCHEMA
+            value: ${var.schema}
+          - name: WIKIBRICKS_WAREHOUSE_ID
+            value: ${var.warehouse_id}
+          - name: WIKIBRICKS_VS_ENDPOINT
+            value: ${var.vs_endpoint}
+          - name: WIKIBRICKS_LLM_MODEL
+            value: ${var.llm_model}
+          - name: WIKIBRICKS_VS_INDEX
+            value: ${var.catalog}.${var.schema}.pages_index
+      resources:
+        - name: sql-warehouse
+          description: SQL warehouse the app uses for read/write ops.
+          sql_warehouse:
+            id: ${var.warehouse_id}
+            permission: CAN_USE

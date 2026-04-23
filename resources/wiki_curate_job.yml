@@ -1,0 +1,52 @@
+resources:
+  jobs:
+    wikibricks_curate:
+      name: wikibricks_curate
+      description: >
+        Default WikiBricks maintenance pipeline. Two tasks:
+          1. curate — deterministic (VS nearest-neighbor + exact-title matching,
+             lint, broken-link repair). No LLM. This is the library contract.
+          2. promote — trace-driven canonical-answer synthesis. Uses an LLM
+             (${var.llm_model}). Opt-out by removing this task block; the curate
+             task stays green on its own.
+      max_concurrent_runs: 1
+      schedule:
+        quartz_cron_expression: "0 0 4 ? * *"
+        timezone_id: UTC
+        pause_status: UNPAUSED
+      tasks:
+        - task_key: curate
+          notebook_task:
+            notebook_path: ../notebooks/wiki_curate.py
+            base_parameters:
+              warehouse_id: ${var.warehouse_id}
+              stale_days: "90"
+              connect_lookback_hours: "48"
+              auto_commit_threshold: ${var.auto_commit_threshold}
+              min_similarity: "0.70"
+              max_pages_per_run: "500"
+              repair_broken_links: "true"
+          environment_key: serverless
+          timeout_seconds: 1800
+        - task_key: promote
+          depends_on:
+            - task_key: curate
+          notebook_task:
+            notebook_path: ../notebooks/promote_from_traces.py
+            base_parameters:
+              warehouse_id: ${var.warehouse_id}
+              judge_endpoint: ${var.llm_model}
+              embed_endpoint: ${var.embed_model}
+              min_cluster_members: "5"
+              min_distinct_sessions: "3"
+              judge_threshold: ${var.judge_threshold}
+              max_clusters_per_run: "50"
+              cluster_threshold: ${var.cluster_threshold}
+          environment_key: serverless
+          timeout_seconds: 1800
+      environments:
+        - environment_key: serverless
+          spec:
+            client: "2"
+      queue:
+        enabled: true

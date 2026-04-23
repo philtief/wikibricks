@@ -1,0 +1,21 @@
+resources:
+  jobs:
+    deploy_wiki_store:
+      name: wikibricks_deploy
+      tasks:
+        - task_key: deploy
+          notebook_task:
+            notebook_path: ../notebooks/deploy_wiki_store.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              warehouse_id: ${var.warehouse_id}
+              vs_endpoint: ${var.vs_endpoint}
+              seed_domain: ${var.seed_domain}
+          environment_key: serverless
+      environments:
+        - environment_key: serverless
+          spec:
+            client: "2"
+      queue:
+        enabled: true
