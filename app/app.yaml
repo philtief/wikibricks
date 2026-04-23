@@ -1,0 +1,18 @@
+command:
+  - "streamlit"
+  - "run"
+  - "app.py"
+  - "--server.port=8000"
+  - "--server.address=0.0.0.0"
+  - "--server.headless=true"
+
+env:
+  - name: STREAMLIT_BROWSER_GATHER_USAGE_STATS
+    value: "false"
+  # WIKIBRICKS_* env is injected by `resources/app.yml` when deployed via
+  # `databricks bundle deploy` (values come from the bundle's catalog / schema
+  # / warehouse_id vars). For a direct `databricks apps deploy` or local
+  # `streamlit run`, export WIKIBRICKS_WAREHOUSE_ID and WIKIBRICKS_VS_INDEX
+  # in the shell — the app fails fast with a clear st.error if they are unset.
+  - name: WIKIBRICKS_LLM_MODEL
+    value: "databricks-claude-sonnet-4-5"
