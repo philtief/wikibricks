@@ -3,11 +3,12 @@
 # MAGIC # WikiBricks: Deploy Wiki Store
 # MAGIC
 # MAGIC Creates the wiki schema, tables, Vector Search index, UC functions,
-# MAGIC and seeds test data on the agent-marketplace FEVM workspace.
+# MAGIC and seeds test data. Run once per workspace (idempotent — re-running is safe).
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/agent_marketplace_catalog/ai_agent/raw_data/wikibricks-0.1.4-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.1.4-py3-none-any.whl
+# MAGIC # ^ Update path to where the wheel lives in your workspace.
 # MAGIC %restart_python
 
 # COMMAND ----------
@@ -39,7 +40,7 @@ def _param(name: str, default: str) -> str:
     return val or default
 
 
-WAREHOUSE_ID = _param("warehouse_id", "41754a8563a43a49")
+WAREHOUSE_ID = _param("warehouse_id", "")
 SEED_DOMAIN = _param("seed_domain", "sample")
 
 w = WorkspaceClient()

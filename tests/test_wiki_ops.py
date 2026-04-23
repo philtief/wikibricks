@@ -34,7 +34,7 @@ from wikibricks.ops import (
 
 class TestConstants:
     def test_catalog_and_schema(self):
-        assert CATALOG == "agent_marketplace_catalog"
+        assert CATALOG == "main"
         assert SCHEMA == "wiki"
 
     def test_table_names_follow_three_level_namespace(self):

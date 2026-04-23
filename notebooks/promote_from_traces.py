@@ -9,7 +9,11 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/agent_marketplace_catalog/ai_agent/raw_data/wikibricks-0.1.4-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.1.4-py3-none-any.whl
+# MAGIC # ^ Update path to where the wheel lives in your workspace. `databricks
+# MAGIC #   bundle deploy` builds the wheel locally and syncs it to the bundle
+# MAGIC #   workspace path; for interactive runs, upload dist/wikibricks-*.whl
+# MAGIC #   to a Volume and edit the path above.
 # MAGIC %restart_python
 
 # COMMAND ----------
@@ -39,8 +43,8 @@ def _param(name: str, default: str) -> str:
     return val or default
 
 
-WAREHOUSE_ID = _param("warehouse_id", "41754a8563a43a49")
-TRACES_TABLE = _param("traces_table", "agent_marketplace_catalog.wiki.agent_traces")
+WAREHOUSE_ID = _param("warehouse_id", "")
+TRACES_TABLE = _param("traces_table", "<catalog>.<schema>.agent_traces")
 JUDGE_ENDPOINT = _param("judge_endpoint", "databricks-claude-sonnet-4-5")
 EMBED_ENDPOINT = _param("embed_endpoint", "databricks-bge-large-en")
 MIN_CLUSTER_MEMBERS = int(_param("min_cluster_members", "5"))

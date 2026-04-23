@@ -7,7 +7,8 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/agent_marketplace_catalog/ai_agent/raw_data/wikibricks-0.1.4-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.1.4-py3-none-any.whl
+# MAGIC # ^ Update path to where the wheel lives in your workspace.
 # MAGIC %restart_python
 
 # COMMAND ----------
@@ -32,7 +33,7 @@ def _param(name: str, default: str) -> str:
     return val or default
 
 
-WAREHOUSE_ID = _param("warehouse_id", "41754a8563a43a49")
+WAREHOUSE_ID = _param("warehouse_id", "")
 QUERIES_PATH = _param("queries_path", "/Workspace/Shared/wikibricks/hotpot/queries.jsonl")
 MODES = ["HYBRID", "ANN", "FULL_TEXT"]
 K_VALUES = [2, 10]

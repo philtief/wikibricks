@@ -28,7 +28,7 @@ Then, from a Databricks notebook:
 
 ```python
 from wikibricks import WikiClient
-wiki = WikiClient(warehouse_id="41754a8563a43a49")
+wiki = WikiClient(warehouse_id="<your-warehouse-id>")
 wiki.bulk_write_pages(
     "/Workspace/Shared/wikibricks/hotpot/pages.jsonl",
     source_tag="hotpot-dev-distractor",

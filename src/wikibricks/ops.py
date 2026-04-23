@@ -10,7 +10,7 @@ from databricks.sdk.service.vectorsearch import (
     VectorIndexType,
 )
 
-CATALOG = "agent_marketplace_catalog"
+CATALOG = "main"
 SCHEMA = "wiki"
 PAGES_TABLE = f"{CATALOG}.{SCHEMA}.pages"
 HISTORY_TABLE = f"{CATALOG}.{SCHEMA}.pages_history"

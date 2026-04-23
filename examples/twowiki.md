@@ -8,7 +8,9 @@ eval v1.1 script against the full 12,576-question dev set.
 - A Databricks workspace with a SQL warehouse, a VS endpoint (reused: `wiki-vs-endpoint`),
   and access to Foundation Model Serving (Claude family).
 - Databricks SDK on the client: `uv pip install -e .` from the repo root.
-- Profile `fe-vm-agent-marketplace` in `~/.databrickscfg` (adjust to your workspace).
+- A CLI profile in `~/.databrickscfg` pointing at your workspace; export
+  `DATABRICKS_CONFIG_PROFILE=<your-profile>` or pass `--profile` to every
+  `databricks` CLI call. All commands below assume the profile is set.
 
 ## 1. Fetch official assets
 
@@ -42,8 +44,9 @@ Produces:
 .venv/bin/python scripts/twowiki_02_vs_index.py   # VS DELTA_SYNC; waits for READY
 ```
 
-Creates `agent_marketplace_catalog.wiki_2wiki.{pages,links,pages_index}`. Initial sync
-for 55k paragraphs on `wiki-vs-endpoint` with `databricks-bge-large-en` takes ~20-30 min.
+Creates `<catalog>.wiki_2wiki.{pages,links,pages_index}` (catalog from
+`databricks.override.yml`). Initial sync for 55k paragraphs on
+`wiki-vs-endpoint` with `databricks-bge-large-en` takes ~20-30 min.
 
 ## 4. Retrieve + generate + evaluate
 

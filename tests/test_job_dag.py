@@ -77,7 +77,7 @@ def _make_spark_promote() -> MagicMock:
         result = MagicMock()
         if q.startswith("SELECT last_watermark_ts"):
             result.collect.return_value = []  # checkpoint miss (first run)
-        elif "FROM agent_marketplace_catalog.wiki.agent_traces" in q:
+        elif "agent_traces" in q:
             result.collect.return_value = []  # no traces
         else:
             result.collect.return_value = []
