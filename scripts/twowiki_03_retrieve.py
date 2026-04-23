@@ -19,11 +19,11 @@ from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
 
-os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-agent-marketplace")
-
-CATALOG = "agent_marketplace_catalog"
+CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
 SCHEMA = "wiki_2wiki"
-WAREHOUSE_ID = "41754a8563a43a49"
+WAREHOUSE_ID = os.environ.get("WIKIBRICKS_WAREHOUSE_ID") or sys.exit(
+    "WIKIBRICKS_WAREHOUSE_ID env var required"
+)
 VS_INDEX = f"{CATALOG}.{SCHEMA}.pages_index"
 QUERIES_PATH = Path("src/wikibricks/seeds/twowiki/queries.jsonl")
 OUT_DIR = Path("data/twowiki")

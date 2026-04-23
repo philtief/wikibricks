@@ -19,7 +19,10 @@ scheduled promote run:
 
 Run::
 
-    DATABRICKS_CONFIG_PROFILE=fe-vm-agent-marketplace \\
+    DATABRICKS_CONFIG_PROFILE=<your-profile> \\
+        WIKIBRICKS_WAREHOUSE_ID=<your-warehouse-id> \\
+        WIKIBRICKS_TRACES_TABLE=<catalog>.<schema>.agent_traces \\
+        WIKIBRICKS_LOG_TABLE=<catalog>.<schema>.wiki_log \\
         python scripts/diagnose_traces.py --window-days 7
 """
 
@@ -27,13 +30,20 @@ from __future__ import annotations
 
 import argparse
 import os
+import sys
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
 
-WAREHOUSE_ID = os.environ.get("WAREHOUSE_ID", "41754a8563a43a49")
-TRACES_TABLE = os.environ.get("TRACES_TABLE", "agent_marketplace_catalog.wiki.agent_traces")
-LOG_TABLE = os.environ.get("LOG_TABLE", "agent_marketplace_catalog.wiki.wiki_log")
+WAREHOUSE_ID = os.environ.get("WIKIBRICKS_WAREHOUSE_ID") or sys.exit(
+    "WIKIBRICKS_WAREHOUSE_ID env var required"
+)
+TRACES_TABLE = os.environ.get("WIKIBRICKS_TRACES_TABLE") or sys.exit(
+    "WIKIBRICKS_TRACES_TABLE env var required (e.g. <catalog>.<schema>.agent_traces)"
+)
+LOG_TABLE = os.environ.get("WIKIBRICKS_LOG_TABLE") or sys.exit(
+    "WIKIBRICKS_LOG_TABLE env var required (e.g. <catalog>.<schema>.wiki_log)"
+)
 
 
 def _run(ws: WorkspaceClient, sql: str) -> list[list]:

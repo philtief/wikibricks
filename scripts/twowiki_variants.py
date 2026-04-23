@@ -27,8 +27,6 @@ from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 
-os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-agent-marketplace")
-
 QUERIES_PATH = Path("src/wikibricks/seeds/twowiki/queries.jsonl")
 PAGES_PATH = Path("src/wikibricks/seeds/twowiki/pages.jsonl")
 IN_DIR = Path("data/twowiki")

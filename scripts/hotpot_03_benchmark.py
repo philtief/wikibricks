@@ -12,8 +12,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from databricks.sdk import WorkspaceClient
 
-os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-agent-marketplace")
-
 sys.path.insert(0, str(os.path.join(os.path.dirname(__file__), "..", "src")))
 from wikibricks.ops import (  # noqa: E402
     eval_mrr_multi,
@@ -21,9 +19,11 @@ from wikibricks.ops import (  # noqa: E402
     eval_supporting_fact_f1,
 )
 
-CATALOG = "agent_marketplace_catalog"
+CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
 SCHEMA = "wiki_hotpot"
-WAREHOUSE_ID = "41754a8563a43a49"
+WAREHOUSE_ID = os.environ.get("WIKIBRICKS_WAREHOUSE_ID") or sys.exit(
+    "WIKIBRICKS_WAREHOUSE_ID env var required"
+)
 VS_INDEX = f"{CATALOG}.{SCHEMA}.pages_index"
 QUERIES_PATH = "src/wikibricks/seeds/hotpot/queries.jsonl"
 OUT_PATH = "benchmark_results.json"

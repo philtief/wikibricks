@@ -15,9 +15,7 @@ from databricks.sdk.service.vectorsearch import (
     VectorIndexType,
 )
 
-os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-agent-marketplace")
-
-CATALOG = "agent_marketplace_catalog"
+CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
 SCHEMA = "wiki_hotpot"
 VS_ENDPOINT = "wiki-vs-endpoint"
 VS_INDEX = f"{CATALOG}.{SCHEMA}.pages_index"

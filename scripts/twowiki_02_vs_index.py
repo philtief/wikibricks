@@ -12,11 +12,9 @@ from databricks.sdk.service.vectorsearch import (
     VectorIndexType,
 )
 
-os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-agent-marketplace")
-
-CATALOG = "agent_marketplace_catalog"
+CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
 SCHEMA = "wiki_2wiki"
-VS_ENDPOINT = "wiki-vs-endpoint"
+VS_ENDPOINT = os.environ.get("WIKIBRICKS_VS_ENDPOINT", "wiki-vs-endpoint")
 VS_INDEX = f"{CATALOG}.{SCHEMA}.pages_index"
 PAGES_TABLE = f"{CATALOG}.{SCHEMA}.pages"
 EMBEDDING_MODEL = "databricks-bge-large-en"

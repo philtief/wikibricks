@@ -1,7 +1,13 @@
 """2WikiMultiHopQA - step 1: schema + tables + ingest pages/links.
 
-Uploads src/wikibricks/seeds/twowiki/*.jsonl to the volume, creates
-agent_marketplace_catalog.wiki_2wiki.*, then MERGEs pages and links.
+Uploads src/wikibricks/seeds/twowiki/*.jsonl to a Databricks volume, creates
+<catalog>.wiki_2wiki.*, then MERGEs pages and links.
+
+Configure via env vars (or set DATABRICKS_CONFIG_PROFILE):
+
+    WIKIBRICKS_CATALOG         default: main
+    WIKIBRICKS_WAREHOUSE_ID    required
+    WIKIBRICKS_TWOWIKI_VOL     default: /Volumes/<catalog>/default/twowiki
 
 Idempotent - re-run safe.
 """
@@ -13,12 +19,12 @@ from pathlib import Path
 
 from databricks.sdk import WorkspaceClient
 
-os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-agent-marketplace")
-
-CATALOG = "agent_marketplace_catalog"
+CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
 SCHEMA = "wiki_2wiki"
-WAREHOUSE_ID = "41754a8563a43a49"
-VOL = f"/Volumes/{CATALOG}/ai_agent/raw_data/twowiki"
+WAREHOUSE_ID = os.environ.get("WIKIBRICKS_WAREHOUSE_ID") or sys.exit(
+    "WIKIBRICKS_WAREHOUSE_ID env var required"
+)
+VOL = os.environ.get("WIKIBRICKS_TWOWIKI_VOL", f"/Volumes/{CATALOG}/default/twowiki")
 SEED_DIR = Path("src/wikibricks/seeds/twowiki")
 
 w = WorkspaceClient()

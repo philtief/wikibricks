@@ -30,16 +30,16 @@ from pathlib import Path
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 
-os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-agent-marketplace")
-
 QUERIES_PATH = Path("src/wikibricks/seeds/twowiki/queries.jsonl")
 PAGES_PATH = Path("src/wikibricks/seeds/twowiki/pages.jsonl")
 IN_DIR = Path("data/twowiki")
 OUT_DIR = Path("data/twowiki")
 
-CATALOG = "agent_marketplace_catalog"
+CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
 SCHEMA = "wiki_2wiki"
-WAREHOUSE_ID = "41754a8563a43a49"
+WAREHOUSE_ID = os.environ.get("WIKIBRICKS_WAREHOUSE_ID") or sys.exit(
+    "WIKIBRICKS_WAREHOUSE_ID env var required"
+)
 CHECKPOINT_TABLE = f"{CATALOG}.{SCHEMA}.predictions_checkpoints"
 
 DEFAULT_MODES = ["HYBRID", "ANN", "FULL_TEXT"]

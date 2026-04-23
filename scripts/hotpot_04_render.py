@@ -2,15 +2,16 @@
 
 import json
 import os
+import sys
 from datetime import datetime
 
 from databricks.sdk import WorkspaceClient
 
-os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-agent-marketplace")
-
-CATALOG = "agent_marketplace_catalog"
+CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
 SCHEMA = "wiki_hotpot"
-WAREHOUSE_ID = "41754a8563a43a49"
+WAREHOUSE_ID = os.environ.get("WIKIBRICKS_WAREHOUSE_ID") or sys.exit(
+    "WIKIBRICKS_WAREHOUSE_ID env var required"
+)
 IN_PATH = "benchmark_results.json"
 OUT_PATH = "hotpotqa_results.html"
 

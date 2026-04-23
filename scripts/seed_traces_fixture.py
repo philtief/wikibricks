@@ -8,7 +8,9 @@ Also ensures `promote_checkpoint` exists and is empty, so the next promote run
 reads the full fixture window.
 
 Run:
-    DATABRICKS_CONFIG_PROFILE=fe-vm-agent-marketplace \
+    DATABRICKS_CONFIG_PROFILE=<your-profile> \
+        WIKIBRICKS_WAREHOUSE_ID=<your-warehouse-id> \
+        WIKIBRICKS_TRACES_TABLE=<catalog>.<schema>.agent_traces \
         python scripts/seed_traces_fixture.py
 """
 
@@ -16,14 +18,21 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import uuid
 from datetime import datetime, timedelta, timezone
 
 from databricks.sdk import WorkspaceClient
 
-WAREHOUSE_ID = os.environ.get("WAREHOUSE_ID", "41754a8563a43a49")
-TRACES_TABLE = os.environ.get(
-    "TRACES_TABLE", "agent_marketplace_catalog.wiki.agent_traces"
+WAREHOUSE_ID = os.environ.get("WIKIBRICKS_WAREHOUSE_ID") or sys.exit(
+    "WIKIBRICKS_WAREHOUSE_ID env var required"
+)
+TRACES_TABLE = os.environ.get("WIKIBRICKS_TRACES_TABLE") or sys.exit(
+    "WIKIBRICKS_TRACES_TABLE env var required (e.g. <catalog>.<schema>.agent_traces)"
+)
+CHECKPOINT_TABLE = os.environ.get(
+    "WIKIBRICKS_CHECKPOINT_TABLE",
+    ".".join(TRACES_TABLE.split(".")[:-1] + ["promote_checkpoint"]),
 )
 
 CLUSTERS = [
@@ -162,15 +171,15 @@ def main() -> None:
 
     # Ensure the checkpoint table exists (the promote notebook needs it) and
     # reset it so the next run sees all fixture rows.
-    run_sql(w, """
-        CREATE TABLE IF NOT EXISTS agent_marketplace_catalog.wiki.promote_checkpoint (
+    run_sql(w, f"""
+        CREATE TABLE IF NOT EXISTS {CHECKPOINT_TABLE} (
             checkpoint_id     STRING    NOT NULL,
             last_watermark_ts TIMESTAMP NOT NULL,
             updated_at        TIMESTAMP
         ) USING DELTA
     """)
-    run_sql(w, """
-        DELETE FROM agent_marketplace_catalog.wiki.promote_checkpoint
+    run_sql(w, f"""
+        DELETE FROM {CHECKPOINT_TABLE}
         WHERE checkpoint_id = 'promote'
     """)
 

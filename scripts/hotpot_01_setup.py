@@ -1,8 +1,15 @@
 """HotpotQA benchmark - step 1: schema + tables + bulk ingest pages & links.
 
-Reads pages.jsonl + links.jsonl from /Volumes/agent_marketplace_catalog/ai_agent/raw_data/hotpot/,
-creates agent_marketplace_catalog.wiki_hotpot.*, bulk-MERGEs 66k pages in a single statement,
-then resolves path→page_id and inserts 14k links.
+Reads pages.jsonl + links.jsonl from a Databricks volume, creates
+<catalog>.wiki_hotpot.*, bulk-MERGEs 66k pages in a single statement, then
+resolves path→page_id and inserts 14k links.
+
+Configure via env vars (or set a Databricks CLI profile via
+DATABRICKS_CONFIG_PROFILE):
+
+    WIKIBRICKS_CATALOG        default: main
+    WIKIBRICKS_WAREHOUSE_ID   required
+    WIKIBRICKS_HOTPOT_VOL     default: /Volumes/<catalog>/default/hotpot
 
 Idempotent - re-run safe.
 """
@@ -13,12 +20,12 @@ import time
 
 from databricks.sdk import WorkspaceClient
 
-os.environ.setdefault("DATABRICKS_CONFIG_PROFILE", "fe-vm-agent-marketplace")
-
-CATALOG = "agent_marketplace_catalog"
+CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
 SCHEMA = "wiki_hotpot"
-WAREHOUSE_ID = "41754a8563a43a49"
-VOL = f"/Volumes/{CATALOG}/ai_agent/raw_data/hotpot"
+WAREHOUSE_ID = os.environ.get("WIKIBRICKS_WAREHOUSE_ID") or sys.exit(
+    "WIKIBRICKS_WAREHOUSE_ID env var required"
+)
+VOL = os.environ.get("WIKIBRICKS_HOTPOT_VOL", f"/Volumes/{CATALOG}/default/hotpot")
 
 w = WorkspaceClient()
 

@@ -8,7 +8,8 @@
 #   scripts/twowiki_batch_loop.sh HYBRID 250 50     # run up to 50 batches of 250 on HYBRID
 #
 # Resumes from the Delta checkpoint table on each batch - safe to Ctrl-C at any time.
-# DO NOT launch this until the current IP is allowlisted on fe-vm-agent-marketplace.
+# Requires WIKIBRICKS_WAREHOUSE_ID (and optionally WIKIBRICKS_CATALOG) set in env,
+# plus a Databricks CLI profile via DATABRICKS_CONFIG_PROFILE.
 
 set -euo pipefail
 
