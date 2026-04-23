@@ -75,29 +75,66 @@ need to know the pipeline has real traffic to work with.
 ## Quick start
 
 Prerequisites: a Databricks workspace with Unity Catalog, a SQL warehouse, and
-a Vector Search endpoint.
+a Vector Search endpoint. Databricks CLI configured (`databricks configure` or
+a profile in `~/.databrickscfg`).
+
+**1. Clone and configure for your workspace.**
 
 ```bash
 git clone https://github.com/philtief/wikibricks.git
 cd wikibricks
+cp databricks.override.example.yml databricks.override.yml
+# edit databricks.override.yml with your host, profile, catalog, warehouse_id
+```
+
+`databricks.override.yml` is gitignored. The Databricks CLI merges it on top
+of `databricks.yml` automatically — no extra flags. Fields you will typically
+edit:
+
+| Setting | Where | What to put |
+|---|---|---|
+| Workspace host | `workspace.host` | `https://<your-workspace>.cloud.databricks.com` |
+| CLI profile | `workspace.profile` | Name from `~/.databrickscfg` |
+| UC catalog | `variables.catalog` | A catalog you can CREATE SCHEMA in |
+| SQL warehouse | `variables.warehouse_id` | A warehouse you have CAN_USE on |
+
+Optional per-workspace tweaks (edit `databricks.yml` directly or add them to
+the override file): `vs_endpoint`, `llm_model`, `embed_model`,
+`auto_commit_threshold`, `cluster_threshold`, `judge_threshold`,
+`seed_domain` (`sample` | `hotpot` | `custom` | `none`).
+
+**2. Deploy.**
+
+```bash
 databricks bundle deploy --target dev
 databricks bundle run deploy_wiki_store --target dev
 ```
 
-MCP endpoint after deploy:
-`https://<workspace>/api/2.0/mcp/functions/<catalog>/<schema>`. Point any MCP
-client at it.
+The `deploy_wiki_store` notebook creates the schema, Delta tables, Vector
+Search index, and UC functions. Subsequent `bundle deploy` calls push code
+changes only.
 
-Override per target:
+**3. Point your agent at the MCP endpoint.**
+
+`https://<workspace>/api/2.0/mcp/functions/<catalog>/<schema>` — OAuth,
+`unity-catalog` scope, UC permissions enforced.
+
+### Ad-hoc overrides (no override file)
+
+For one-off deploys, skip the override file and pass vars on the CLI:
 
 ```bash
 databricks bundle deploy --target dev \
-  --var="catalog=my_catalog" --var="schema=wiki" \
-  --var="warehouse_id=abc123" --var="vs_endpoint=my-vs-endpoint"
+  --var="catalog=my_catalog" \
+  --var="warehouse_id=abc123" \
+  --var="vs_endpoint=my-vs-endpoint"
 ```
 
-The Streamlit app reads the same config from env vars so one image ships to
-any workspace:
+### App runtime env vars
+
+The Streamlit app reads workspace config from env. `resources/app.yml` wires
+these from the bundle vars automatically, so editing the override file is
+usually enough.
 
 | Variable | Default | Required |
 |---|---|---|
@@ -105,12 +142,25 @@ any workspace:
 | `WIKIBRICKS_VS_INDEX` | *(none — e.g. `<catalog>.<schema>.pages_index`)* | yes |
 | `WIKIBRICKS_LLM_MODEL` | `databricks-claude-sonnet-4-5` | no |
 
-`resources/app.yml` wires these from the bundle's `catalog` / `schema` /
-`warehouse_id` vars automatically. For local `streamlit run`, export them in
-your shell first — the app fails fast with a clear error if they're missing.
+For local `streamlit run` (outside the bundle), export them in your shell
+first — the app fails fast with a clear error if they're missing.
 
-For CLI profile/host, copy `databricks.override.example.yml` →
-`databricks.override.yml` (gitignored) and fill in your workspace.
+### Customizing content
+
+The shipped `sample` seed loads 5 meta-pages that describe WikiBricks itself —
+useful as a smoke test, not a real wiki. Three options to seed real content:
+
+1. **Custom JSONL.** Set `seed_domain=custom` in the override file and export
+   `WIKIBRICKS_CUSTOM_PAGES=/path/to/your/pages.jsonl` before running
+   `deploy_wiki_store`. One JSON object per line with fields `path`, `title`,
+   `page_type` (`concept` | `entity` | `synthesis` | `comparison`), `content`
+   (object with `summary` + `body`), `tags`, `created_by`.
+2. **Empty store + Python writes.** Set `seed_domain=none` and call
+   `WikiClient.write_page` / `bulk_write_pages` from your own script. Useful
+   when content comes from an upstream pipeline.
+3. **HotpotQA corpus.** Set `seed_domain=hotpot` to reuse the ~66k-page
+   Wikipedia subset used by the retrieval benchmark — handy as a realistic
+   test corpus.
 
 ## Core API
 
