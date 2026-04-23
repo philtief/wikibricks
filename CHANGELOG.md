@@ -45,23 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`judge_threshold` default lowered 4.5 → 4.0.** The judge prompt asks
   for a single digit 1–5, so 4.5 rejected every integer score; 4.0 admits
   4 and 5 as intended.
-- **Bundle variable defaults cleaned for public release.** `catalog`
-  default changed from a workspace-specific value to `main`; `warehouse_id`
-  has no default and must be supplied per target. Target `workspace.host`
-  / `profile` removed — provide via `DATABRICKS_CONFIG_PROFILE` env var or
-  the new override file.
+- **Portable bundle variable defaults.** `catalog` default is `main`;
+  `warehouse_id` has no default and must be supplied per target. Target
+  `workspace.host` / `profile` are provided via `DATABRICKS_CONFIG_PROFILE`
+  env var or the new override file.
 - **README refresh** — added operational-telemetry table, env-var config
   table, updated test count (223 → 305) and wheel version (0.1.3 → 0.1.4).
 
 ### Fixed
 
-- **Silent telemetry loss in `_log`.** Previous
-  `INSERT INTO ... VALUES (uuid(), ...)` was rejected by the SQL warehouse
-  as `INVALID_INLINE_TABLE.CANNOT_EVALUATE_EXPRESSION_IN_INLINE_TABLE` —
-  every log write from the warehouse path was silently dropping. Rewritten
-  to `INSERT INTO ... SELECT uuid(), ...`; verified end-to-end with live
-  `vs_sync` and `verify_fix` rows persisting. Any `wiki_log`-based
-  analysis that straddles 0.1.0–0.1.3 should note this gap.
+- **`_log` telemetry writes on SQL warehouse.** Rewrote the insert from
+  `INSERT INTO ... VALUES (uuid(), ...)` to `INSERT INTO ... SELECT uuid(),
+  ...` so `wiki_log` rows persist from the warehouse execution path.
 
 ## [0.1.3] - 2026-04-22
 

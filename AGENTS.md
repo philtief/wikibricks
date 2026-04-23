@@ -1,8 +1,7 @@
 # AGENTS.md — instructions for coding agents working on WikiBricks
 
-This file is for LLM coding agents (Claude Code, Cursor, Cortex, Copilot CLI,
-etc.) asked to modify this repo. Humans should read `README.md` first.
-Claude Code reads `CLAUDE.md` by default — a symlink is provided.
+This file is for LLM coding agents asked to modify this repo. Humans should
+read `README.md` first.
 
 ## What WikiBricks is (1 paragraph)
 
@@ -54,9 +53,8 @@ CHANGELOG.md               Keep-a-Changelog format, SemVer
    vars with no workspace-specific fallbacks. Workspace specifics go in
    `databricks.override.yml` (gitignored).
 5. **No destructive git operations without explicit user confirmation.** No
-   `git push --force`, no `git reset --hard`, no branch deletion. Do not
-   push to `main` — the pre-push hook allows it but the user expects local
-   commits only unless told otherwise.
+   `git push --force`, no `git reset --hard`, no branch deletion. Keep
+   commits local until tests are green and a push is explicitly requested.
 
 ## Commands you will actually run
 
@@ -96,28 +94,23 @@ When bumping the library version (e.g. 0.1.4 → 0.1.5):
 4. `README.md` — update test count + wheel filename in the Development section if they've moved.
 5. Run `uv build` to produce the new wheel, copy it to `app/` if the app bundles it.
 
-## Known-wrong patterns (will burn you)
+## Platform gotchas
 
 - **`INSERT INTO t VALUES (uuid(), ...)` on a SQL warehouse** — rejected as
   `INVALID_INLINE_TABLE.CANNOT_EVALUATE_EXPRESSION_IN_INLINE_TABLE`. Use
-  `INSERT INTO t (cols) SELECT uuid(), ...` instead. This bit `_log` silently
-  in 0.1.0–0.1.3; see 0.1.4 fix in `src/wikibricks/client.py::_log`.
-- **`MagicMock()` without `spec_set`** hides method drift. Cross-notebook DAG
-  tests (`tests/test_job_dag.py`) use `MagicMock(spec_set=WikiClient)` so a
-  typo or removed method fails loudly. Follow that pattern for anything that
-  mocks `WikiClient`.
+  `INSERT INTO t (cols) SELECT uuid(), ...` instead.
+- **`MagicMock()` without `spec_set`** hides method drift. Use
+  `MagicMock(spec_set=WikiClient)` so a typo or removed method fails loudly.
 - **Databricks Apps listen on port 8000, not 8080.** `app/app.yaml` already
-  has `--server.port=8000`. If you touch it and flip to 8080, the proxy will
-  return 502 "App Not Available" even though the app is running.
+  has `--server.port=8000`. Flipping to 8080 causes a 502 at the proxy.
 - **Streamlit `AppTest` session_state does not support `.get()`.** Use
   `at.session_state["key"]`, not `at.session_state.get("key")`.
 - **`dbutils.fs.cp("file:...")` fails on serverless.** Use Spark `.write` to
   Volumes instead.
-- **Judge threshold is on an integer scale (1–5).** The prompt asks for a
-  single digit. `4.5` rejects every real score; `4.0` admits 4 and 5. Keep
-  thresholds at integer grid points unless you're changing the prompt.
+- **Judge threshold is on an integer scale (1–5).** Keep thresholds at
+  integer grid points unless you're changing the prompt.
 - **`ChatAgentMessage` (MLflow 3) requires `id=str(uuid.uuid4())`.** Missing
-  `id` is a common source of confusing deserialization errors.
+  `id` produces confusing deserialization errors.
 
 ## WikiClient API surface (stable)
 
