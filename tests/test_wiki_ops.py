@@ -282,7 +282,11 @@ class TestCreateUcFunctionsSql:
         assert "CREATE OR REPLACE FUNCTION" in search_fn
         assert "RETURNS STRING" in search_fn
         assert "question STRING" in search_fn
-        assert "mode STRING" in search_fn
+        assert "num_results INT" in search_fn
+        assert "vector_search" in search_fn
+        assert "pages_index" in search_fn
+        assert "query_type => 'HYBRID'" in search_fn
+        assert "LIKE concat" not in search_fn
 
     def test_fn_wiki_read(self):
         stmts = create_uc_functions_sql("wh-123")

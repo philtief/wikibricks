@@ -1,5 +1,6 @@
 """WikiBricks: Delta + Vector Search wiki store for AI agents on Databricks."""
 
+from wikibricks.agent_tools import make_agent_tools
 from wikibricks.client import WikiClient
 from wikibricks.ops import (
     CATALOG,
@@ -18,6 +19,7 @@ from wikibricks.ops import (
 
 __all__ = [
     "WikiClient",
+    "make_agent_tools",
     "CATALOG",
     "SCHEMA",
     "PAGES_TABLE",

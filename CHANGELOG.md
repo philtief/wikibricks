@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **`fn_wiki_search` now uses Vector Search.** The UC function previously
+  did SQL `LIKE` substring matching over `content_text` / `title`, which
+  meant the managed-MCP search surface was keyword-only while the Python
+  `WikiClient.search` path was semantic. `fn_wiki_search` now calls the
+  `vector_search()` SQL TVF with `query_type => 'HYBRID'` against
+  `pages_index`, returning top-K pages ranked by semantic + lexical
+  relevance with their full `content_text`. Signature changed from
+  `(question, mode)` to `(question, num_results INT DEFAULT 5)` — agents
+  that hard-coded `mode='HYBRID'` must drop the argument.
+
+### Added
+
+- **`wikibricks.make_agent_tools(warehouse_id)`** — factory that returns
+  plain Python callables for the two write operations UC functions cannot
+  perform: `wiki_write_page` and `wiki_promote_answer`. Register with any
+  agent framework (Databricks Agent Framework, LangChain, LlamaIndex, a
+  custom MCP server) to give agents direct promote-to-memory capability
+  without routing through the curate job's trace-driven promote path.
+
 ## [0.1.4] - 2026-04-23
 
 ### Added
