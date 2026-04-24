@@ -12,4 +12,6 @@ app/wikibricks-*.whl
 .cache/
 .databricks/
 data/
+NEXT_STEPS.md
+linkedin_post.md
 
