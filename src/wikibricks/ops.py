@@ -229,19 +229,21 @@ def create_uc_functions_sql(warehouse_id):
     """
     fn_search = f"""
     CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_search(
-        question STRING COMMENT 'The search query text',
-        mode STRING DEFAULT 'HYBRID' COMMENT 'Search mode: ANN (semantic), FULL_TEXT (exact), or HYBRID (both)'
+        question STRING COMMENT 'Natural-language search query',
+        num_results INT DEFAULT 5 COMMENT 'Top-K pages to return (1-20)'
     )
     RETURNS STRING
-    COMMENT 'Search wiki pages by semantic similarity, keyword match, or hybrid. Returns JSON array of matching pages.'
+    COMMENT 'HYBRID Vector Search (semantic + FULL_TEXT) over wiki pages. Returns JSON top-K pages with content_text.'
     RETURN (
         SELECT to_json(collect_list(struct(
-            page_id, path, title, page_type,
-            content_text, tags, version
+            page_id, path, title, page_type, content_text, tags, version, search_score
         )))
-        FROM {PAGES_TABLE}
-        WHERE content_text LIKE concat('%', question, '%')
-           OR title LIKE concat('%', question, '%')
+        FROM vector_search(
+            index => '{VS_INDEX}',
+            query => question,
+            num_results => num_results,
+            query_type => 'HYBRID'
+        )
     )
     """
 

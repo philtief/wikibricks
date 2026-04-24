@@ -180,9 +180,30 @@ wiki.commit_edges([c for c in candidates if my_agent_approves(c)])
 wiki.graph_neighbors("topics/vector-search", depth=2)   # 1–3 hop SQL BFS
 wiki.search("what index modes exist", mode="HYBRID")    # HYBRID / ANN / FULL_TEXT
 wiki.history("topics/vector-search")                    # versioned writes
+
+# Direct promote: synthesize a chat answer into a canonical page with cites
+# edges back to every source. Works in-session — no waiting for the nightly
+# promote job.
+wiki.promote_answer(
+    query="What index modes does Vector Search support?",
+    answer="HYBRID, ANN, and FULL_TEXT. HYBRID combines the other two.",
+    source_pages=[wiki.read_page("topics/vector-search")],
+)
 ```
 
 Full surface: [`src/wikibricks/client.py`](src/wikibricks/client.py).
+
+### Two write paths, one contract
+
+| Path | Who calls it | When |
+|---|---|---|
+| `WikiClient.promote_answer(...)` (Python) | App / notebook / SDK-capable agent | Immediate, in-session |
+| `notebooks/promote_from_traces.py` (LLM) | Scheduled `promote` task | Nightly, trace-driven |
+| `make_agent_tools(...)` → `wiki_promote_answer` | MCP / LangChain / Agent Framework tool | Immediate, from any agent |
+
+All three land in the same `pages` table with the same `cites` edges and the
+same `promote` row in `wiki_log`. Pick whichever fits your agent runtime —
+the library contract is identical.
 
 ## MCP tools
 
@@ -191,7 +212,7 @@ connect.
 
 | Tool | Description |
 |---|---|
-| `fn_wiki_search(question, mode)` | HYBRID / ANN / FULL_TEXT over `pages` |
+| `fn_wiki_search(question, num_results)` | HYBRID Vector Search over `pages` |
 | `fn_wiki_read(page_path)` | Read a page by path |
 | `fn_wiki_history(page_path)` | Full version history |
 | `fn_wiki_log(num_entries)` | Recent operation log |
@@ -200,6 +221,35 @@ connect.
 | `fn_wiki_write_help()` | How to write good wiki pages |
 
 Auth: OAuth, `unity-catalog` scope. UC permissions enforced.
+
+### Agent-side write tools (for MCP / LangChain / Agent Framework)
+
+UC SQL functions can't perform DML, so writes are exposed as plain Python
+callables agents can register as tools. Same guarantees as
+`WikiClient.write_page` / `promote_answer` — just packaged for tool-calling
+runtimes:
+
+```python
+from wikibricks import make_agent_tools
+
+tools = make_agent_tools(warehouse_id="abc123")
+
+# Register tools["wiki_write_page"] and tools["wiki_promote_answer"] with
+# your agent framework. Schemas come from their docstrings + type hints.
+
+tools["wiki_promote_answer"](
+    question="What is a Delta table?",
+    answer="A Delta table is ...",
+    source_paths=["topics/delta", "topics/acid"],
+)
+# → {"path": "promoted/what-is-a-delta-table", "cited": 2}
+```
+
+`wiki_promote_answer` is the direct promote path for MCP-hosted agents: it
+creates a `synthesis` page at `promoted/<slug>`, links `cites` edges back
+to every resolved source, and logs an `op_type=promote` row — same rows
+the nightly `promote` job would produce, just written the moment the
+agent decides the answer is worth keeping.
 
 ## Development
 

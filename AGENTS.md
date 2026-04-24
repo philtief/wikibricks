@@ -18,6 +18,7 @@ deterministic `curate` task (library contract) and an optional LLM-driven
 src/wikibricks/            Library core — LLM-free, governs the public API
   client.py                WikiClient (Python API)
   ops.py                   DDL + UC function CREATE statements
+  agent_tools.py           Custom agent-tool factory for write ops (DML)
   promote_logic.py         Pure helpers for the promote notebook
   curate_logic.py          Pure helpers for the curate notebook
   seeds/                   Domain-agnostic seed loaders
@@ -123,9 +124,15 @@ version and document it in CHANGELOG. Current methods:
 - `_log` (private, used by notebooks; `spec_set` allows it)
 
 UC functions exposed via MCP (defined in `src/wikibricks/ops.py`):
-`fn_wiki_search`, `fn_wiki_read`, `fn_wiki_history`, `fn_wiki_log`,
-`fn_wiki_index`, `fn_wiki_schema`, `fn_wiki_write_help`. Every parameter has
-a `COMMENT`; agents discover these via the MCP endpoint.
+`fn_wiki_search` (HYBRID `vector_search()` TVF), `fn_wiki_read`,
+`fn_wiki_history`, `fn_wiki_log`, `fn_wiki_index`, `fn_wiki_schema`,
+`fn_wiki_write_help`. Every parameter has a `COMMENT`; agents discover
+these via the MCP endpoint.
+
+Write operations (DML) are exposed through `wikibricks.make_agent_tools`,
+not UC functions — SQL UDFs cannot MERGE. Register the returned
+`wiki_write_page` and `wiki_promote_answer` callables with your agent
+framework to give an agent direct promote-to-memory capability.
 
 ## Telemetry — `wiki_log` op_types
 
