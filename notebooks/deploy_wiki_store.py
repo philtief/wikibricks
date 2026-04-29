@@ -14,21 +14,8 @@
 # COMMAND ----------
 
 import json
+import os
 import time
-
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.vectorsearch import EndpointType
-
-from wikibricks.ops import (
-    VS_ENDPOINT,
-    create_index_view_sql,
-    create_schema_sql,
-    create_tables_sql,
-    create_uc_functions_sql,
-    create_vs_index_spec,
-    seed_pages,
-    write_page_sql,
-)
 
 
 def _param(name: str, default: str) -> str:
@@ -40,8 +27,26 @@ def _param(name: str, default: str) -> str:
     return val or default
 
 
+# Resolve catalog/schema BEFORE importing wikibricks so its module-level
+# CATALOG/SCHEMA constants point at the deploy target, not the defaults.
+os.environ["WIKIBRICKS_CATALOG"] = _param("catalog", "main")
+os.environ["WIKIBRICKS_SCHEMA"] = _param("schema", "wiki")
 WAREHOUSE_ID = _param("warehouse_id", "")
 SEED_DOMAIN = _param("seed_domain", "sample")
+
+from databricks.sdk import WorkspaceClient  # noqa: E402
+from databricks.sdk.service.vectorsearch import EndpointType  # noqa: E402
+
+from wikibricks.ops import (  # noqa: E402
+    VS_ENDPOINT,
+    create_index_view_sql,
+    create_schema_sql,
+    create_tables_sql,
+    create_uc_functions_sql,
+    create_vs_index_spec,
+    seed_pages,
+    write_page_sql,
+)
 
 w = WorkspaceClient()
 
@@ -65,7 +70,8 @@ print(f"Schema: {result.status.state}")
 
 # COMMAND ----------
 
-table_names = ["pages", "pages_history", "links", "sources", "wiki_log"]
+table_names = ["pages", "pages_history", "links", "sources", "wiki_log",
+               "pages_vs_source", "promote_checkpoint"]
 for i, stmt in enumerate(create_tables_sql()):
     result = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,
