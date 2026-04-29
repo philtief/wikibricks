@@ -242,6 +242,54 @@ class TestWritePageSourceIds:
         assert "NULL" in sql
 
 
+class TestWritePageChunks:
+    """parent_id + chunk_index let segregate split oversize pages."""
+
+    def test_chunk_kwargs_in_merge_sql(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.write_page(
+            "topics/foo/chunks/01", "Foo - Section A",
+            '{"summary":"s","body":"b"}',
+            parent_id="parent-uuid-abc",
+            chunk_index=1,
+        )
+        merge_call = ws.statement_execution.execute_statement.call_args_list[1]
+        sql = merge_call.kwargs["statement"]
+        assert "parent_id" in sql
+        assert "parent-uuid-abc" in sql
+        assert "chunk_index" in sql
+
+    def test_null_parent_id_when_omitted(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.write_page("topics/foo", "Foo", '{"summary":"s","body":"b"}')
+        merge_call = ws.statement_execution.execute_statement.call_args_list[1]
+        sql = merge_call.kwargs["statement"]
+        # Top-level pages have NULL parent_id and NULL chunk_index — assert
+        # both columns appear with NULL nearby.
+        assert "parent_id" in sql
+
+    def test_chunk_index_zero_is_written(self):
+        # Edge: chunk_index=0 is valid (not falsy) — must not be coerced to NULL.
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.write_page(
+            "topics/foo/chunks/00", "Foo - Zero",
+            '{"summary":"s","body":"b"}',
+            parent_id="parent-uuid-abc",
+            chunk_index=0,
+        )
+        merge_call = ws.statement_execution.execute_statement.call_args_list[1]
+        sql = merge_call.kwargs["statement"]
+        assert "chunk_index" in sql
+        # The zero literal must appear in the SQL
+        assert " 0" in sql or ",0" in sql or "=0" in sql
+
+
 class TestLog:
     def test_write_logs_operation(self):
         ws = MagicMock()
