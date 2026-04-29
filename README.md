@@ -38,15 +38,25 @@ the agent calling the wiki is the only LLM in the loop.
 ## The maintenance loop — what makes this a wiki and not a log
 
 Every deployment ships one Lakeflow Job (`wikibricks_curate`) that runs daily.
-Two tasks, both optional-to-edit:
+Three tasks, the last two optional-to-edit:
 
 1. **`curate`** — deterministic, LLM-free. Proposes new typed edges via Vector
    Search nearest-neighbor + exact-title matching, tagged with `confidence` +
    `origin ∈ {auto-vs, auto-title}`. Auto-commits anything above
    `auto_commit_threshold=0.85`; leaves the rest for the agent to decide on its
-   next call. Runs lint (orphans, stale pages, duplicates, broken links) and
-   deterministic link repair. This is the library contract.
-2. **`promote`** — opt-in, trace-driven. Mines agent session traces, clusters
+   next call. Runs lint (orphans, stale pages, duplicates, broken links),
+   deterministic link repair, and a Phase 4 health check that flags pages
+   `oversize` / `empty` / `ok`. This is the library contract.
+2. **`segregate`** — opt-in, LLM-driven. Picks up pages flagged
+   `health_status='oversize'` by curate's Phase 4 and splits each into a
+   parent (summary + Markdown ToC) plus N chunk children, joined by
+   `parent_id` + `chunk_index`. Deterministic chunking lives in
+   `src/wikibricks/segregate_logic.py`; the LLM (`${var.llm_model}`) is asked
+   only for a 1–2 sentence summary and one short title per chunk. Reassembly
+   is via `fn_wiki_read_full(parent_path)`. Drop the `segregate` task block
+   in `resources/wiki_curate_job.yml` to run fully LLM-free; curate stays
+   green on its own.
+3. **`promote`** — opt-in, trace-driven. Mines agent session traces, clusters
    recurring questions, has `databricks-claude-sonnet-4-5` synthesize one
    canonical answer per cluster, scores it with an LLM judge, and writes
    passing clusters to `promoted/<slug>` with `cites` edges back to the source
@@ -212,13 +222,14 @@ the library contract is identical.
 
 ## MCP tools
 
-Seven UC functions auto-exposed as MCP tools — agents discover them on
+Eight UC functions auto-exposed as MCP tools — agents discover them on
 connect.
 
 | Tool | Description |
 |---|---|
 | `fn_wiki_search(question, num_results)` | HYBRID Vector Search over `pages` |
 | `fn_wiki_read(page_path)` | Read a page by path |
+| `fn_wiki_read_full(parent_path)` | Read a parent + all chunk children, ordered by `chunk_index` |
 | `fn_wiki_history(page_path)` | Full version history |
 | `fn_wiki_log(num_entries)` | Recent operation log |
 | `fn_wiki_index()` | Page catalog |
