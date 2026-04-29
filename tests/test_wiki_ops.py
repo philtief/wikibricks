@@ -1,5 +1,8 @@
 """Tests for WikiBricks wiki_ops module."""
 
+import importlib
+import os
+
 import pytest
 
 from wikibricks.ops import (
@@ -33,9 +36,10 @@ from wikibricks.ops import (
 
 
 class TestConstants:
-    def test_catalog_and_schema(self):
-        assert CATALOG == "main"
-        assert SCHEMA == "wiki"
+    def test_catalog_and_schema_defaults(self):
+        """Default to main.wiki when env vars unset (backward compat)."""
+        assert CATALOG == os.environ.get("WIKIBRICKS_CATALOG", "main")
+        assert SCHEMA == os.environ.get("WIKIBRICKS_SCHEMA", "wiki")
 
     def test_table_names_follow_three_level_namespace(self):
         assert PAGES_TABLE == f"{CATALOG}.{SCHEMA}.pages"
@@ -49,6 +53,30 @@ class TestConstants:
 
     def test_vs_index_name(self):
         assert VS_INDEX == f"{CATALOG}.{SCHEMA}.pages_index"
+
+
+class TestEnvOverride:
+    """Env-var override of catalog/schema for personal-wikibricks-dev fork."""
+
+    def test_env_vars_override_catalog_and_schema(self, monkeypatch):
+        """Setting WIKIBRICKS_CATALOG / WIKIBRICKS_SCHEMA before import retargets all tables."""
+        monkeypatch.setenv("WIKIBRICKS_CATALOG", "agent_marketplace_catalog")
+        monkeypatch.setenv("WIKIBRICKS_SCHEMA", "philipp_local")
+        import wikibricks.ops as _ops
+        importlib.reload(_ops)
+        try:
+            assert _ops.CATALOG == "agent_marketplace_catalog"
+            assert _ops.SCHEMA == "philipp_local"
+            assert _ops.PAGES_TABLE == "agent_marketplace_catalog.philipp_local.pages"
+            assert _ops.HISTORY_TABLE == "agent_marketplace_catalog.philipp_local.pages_history"
+            assert _ops.LINKS_TABLE == "agent_marketplace_catalog.philipp_local.links"
+            assert _ops.LOG_TABLE == "agent_marketplace_catalog.philipp_local.wiki_log"
+            assert _ops.VS_INDEX == "agent_marketplace_catalog.philipp_local.pages_index"
+            assert _ops.SOURCES_VOLUME == "/Volumes/agent_marketplace_catalog/philipp_local/sources"
+        finally:
+            monkeypatch.delenv("WIKIBRICKS_CATALOG", raising=False)
+            monkeypatch.delenv("WIKIBRICKS_SCHEMA", raising=False)
+            importlib.reload(_ops)
 
 
 class TestCreateTablesSql:
@@ -104,6 +132,25 @@ class TestCreateTablesSql:
         """Current table should not have is_current - every row IS current."""
         stmts = create_tables_sql()
         assert "is_current" not in stmts[0].lower()
+
+    def test_pages_table_has_chunk_columns(self):
+        """parent_id + chunk_index let maintenance segregate oversized pages into linked chunks."""
+        pages_sql = create_tables_sql()[0]
+        assert "parent_id" in pages_sql
+        assert "chunk_index" in pages_sql
+
+    def test_pages_table_has_health_columns(self):
+        """Maintenance writes health verdicts back to the page row."""
+        pages_sql = create_tables_sql()[0]
+        assert "health_status" in pages_sql
+        assert "health_score" in pages_sql
+        assert "last_health_check" in pages_sql
+
+    def test_history_table_has_chunk_and_health_columns(self):
+        """History captures the same chunk/health fields so versioning is faithful."""
+        history_sql = create_tables_sql()[1]
+        for col in ("parent_id", "chunk_index", "health_status", "health_score", "last_health_check"):
+            assert col in history_sql, f"missing {col} in history DDL"
 
     def test_history_table_has_archived_at(self):
         stmts = create_tables_sql()
@@ -271,9 +318,20 @@ class TestCreateVsIndexSpec:
 
 
 class TestCreateUcFunctionsSql:
-    def test_returns_seven_functions(self):
+    def test_returns_eight_functions(self):
+        """fn_wiki_read_full added so MCP can reassemble parent + chunk pages."""
         stmts = create_uc_functions_sql("warehouse-id-123")
-        assert len(stmts) == 7
+        assert len(stmts) == 8
+
+    def test_fn_wiki_read_full_reassembles_chunks(self):
+        stmts = create_uc_functions_sql("wh-123")
+        full_fn = next(s for s in stmts if "fn_wiki_read_full" in s)
+        assert "CREATE OR REPLACE FUNCTION" in full_fn
+        assert "page_path STRING" in full_fn
+        assert "parent_id" in full_fn
+        assert "chunk_index" in full_fn
+        # Should order chunks by chunk_index
+        assert "ORDER BY" in full_fn
 
     def test_fn_wiki_search(self):
         stmts = create_uc_functions_sql("wh-123")

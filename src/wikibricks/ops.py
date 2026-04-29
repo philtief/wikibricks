@@ -1,6 +1,7 @@
 """WikiBricks: Delta + Vector Search wiki store operations for AI agents."""
 
 import json
+import os
 from pathlib import Path
 
 from databricks.sdk.service.vectorsearch import (
@@ -10,8 +11,8 @@ from databricks.sdk.service.vectorsearch import (
     VectorIndexType,
 )
 
-CATALOG = "main"
-SCHEMA = "wiki"
+CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
+SCHEMA = os.environ.get("WIKIBRICKS_SCHEMA", "wiki")
 PAGES_TABLE = f"{CATALOG}.{SCHEMA}.pages"
 HISTORY_TABLE = f"{CATALOG}.{SCHEMA}.pages_history"
 LINKS_TABLE = f"{CATALOG}.{SCHEMA}.links"
@@ -31,19 +32,24 @@ def create_tables_sql():
     return [
         f"""
         CREATE TABLE IF NOT EXISTS {PAGES_TABLE} (
-            page_id      STRING        NOT NULL,
-            path         STRING        NOT NULL,
-            path_depth   INT           GENERATED ALWAYS AS (size(split(path, '/'))),
-            title        STRING        NOT NULL,
-            page_type    STRING        NOT NULL,
-            content      VARIANT       NOT NULL,
-            content_text STRING,
-            tags         ARRAY<STRING>,
-            source_ids   ARRAY<STRING>,
-            created_by   STRING        NOT NULL,
-            created_at   TIMESTAMP     DEFAULT current_timestamp(),
-            updated_at   TIMESTAMP     DEFAULT current_timestamp(),
-            version      INT           NOT NULL DEFAULT 1
+            page_id           STRING        NOT NULL,
+            path              STRING        NOT NULL,
+            path_depth        INT           GENERATED ALWAYS AS (size(split(path, '/'))),
+            title             STRING        NOT NULL,
+            page_type         STRING        NOT NULL,
+            content           VARIANT       NOT NULL,
+            content_text      STRING,
+            tags              ARRAY<STRING>,
+            source_ids        ARRAY<STRING>,
+            parent_id         STRING,
+            chunk_index       INT,
+            health_status     STRING        DEFAULT 'unknown',
+            health_score      DOUBLE,
+            last_health_check TIMESTAMP,
+            created_by        STRING        NOT NULL,
+            created_at        TIMESTAMP     DEFAULT current_timestamp(),
+            updated_at        TIMESTAMP     DEFAULT current_timestamp(),
+            version           INT           NOT NULL DEFAULT 1
         )
         USING DELTA
         TBLPROPERTIES (
@@ -53,17 +59,22 @@ def create_tables_sql():
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {HISTORY_TABLE} (
-            page_id      STRING        NOT NULL,
-            path         STRING        NOT NULL,
-            title        STRING        NOT NULL,
-            page_type    STRING        NOT NULL,
-            content      VARIANT       NOT NULL,
-            content_text STRING,
-            tags         ARRAY<STRING>,
-            created_by   STRING        NOT NULL,
-            created_at   TIMESTAMP     NOT NULL,
-            version      INT           NOT NULL,
-            archived_at  TIMESTAMP     DEFAULT current_timestamp()
+            page_id           STRING        NOT NULL,
+            path              STRING        NOT NULL,
+            title             STRING        NOT NULL,
+            page_type         STRING        NOT NULL,
+            content           VARIANT       NOT NULL,
+            content_text      STRING,
+            tags              ARRAY<STRING>,
+            parent_id         STRING,
+            chunk_index       INT,
+            health_status     STRING,
+            health_score      DOUBLE,
+            last_health_check TIMESTAMP,
+            created_by        STRING        NOT NULL,
+            created_at        TIMESTAMP     NOT NULL,
+            version           INT           NOT NULL,
+            archived_at       TIMESTAMP     DEFAULT current_timestamp()
         )
         USING DELTA
         TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
@@ -263,6 +274,38 @@ def create_uc_functions_sql(warehouse_id):
     )
     """
 
+    fn_read_full = f"""
+    CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_read_full(
+        page_path STRING COMMENT 'Path of the parent or standalone page'
+    )
+    RETURNS STRING
+    COMMENT 'Read a page plus all chunk contents in order. Use when a page may have been segregated by maintenance.'
+    RETURN (
+        WITH parent AS (
+            SELECT page_id, path, title, page_type, content, tags,
+                   created_by, created_at, updated_at, version
+            FROM {PAGES_TABLE}
+            WHERE path = page_path
+        ),
+        chunks AS (
+            SELECT c.chunk_index, c.content
+            FROM {PAGES_TABLE} c
+            JOIN parent p ON c.parent_id = p.page_id
+            ORDER BY c.chunk_index
+        )
+        SELECT to_json(struct(
+            (SELECT first(page_id) FROM parent) AS page_id,
+            (SELECT first(path) FROM parent) AS path,
+            (SELECT first(title) FROM parent) AS title,
+            (SELECT first(page_type) FROM parent) AS page_type,
+            (SELECT first(content) FROM parent) AS content,
+            (SELECT collect_list(content) FROM chunks) AS chunk_contents,
+            (SELECT first(tags) FROM parent) AS tags,
+            (SELECT first(version) FROM parent) AS version
+        ))
+    )
+    """
+
     fn_history = f"""
     CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_history(
         page_path STRING COMMENT 'The wiki page path to get history for'
@@ -347,7 +390,7 @@ def create_uc_functions_sql(warehouse_id):
     RETURN ('{write_help}')
     """
 
-    return [fn_search, fn_read, fn_history, fn_log, fn_index, fn_schema, fn_write_help]
+    return [fn_search, fn_read, fn_history, fn_log, fn_index, fn_schema, fn_write_help, fn_read_full]
 
 
 def seed_pages(domain: str = "sample"):
