@@ -238,6 +238,9 @@ def create_uc_functions_sql(warehouse_id):
     Returns [fn_wiki_search, fn_wiki_read, fn_wiki_history].
     Write is handled by a custom agent tool (UC functions can't do DML).
     """
+    # vector_search() requires foldable INT for num_results (cannot reference
+    # a UDF parameter directly), so we fix the inner K and trim with
+    # ROW_NUMBER() in the outer query.
     fn_search = f"""
     CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_search(
         question STRING COMMENT 'Natural-language search query',
@@ -249,12 +252,16 @@ def create_uc_functions_sql(warehouse_id):
         SELECT to_json(collect_list(struct(
             page_id, path, title, page_type, content_text, tags, version, search_score
         )))
-        FROM vector_search(
-            index => '{VS_INDEX}',
-            query => question,
-            num_results => num_results,
-            query_type => 'HYBRID'
+        FROM (
+            SELECT *, ROW_NUMBER() OVER (ORDER BY search_score DESC) AS rn
+            FROM vector_search(
+                index => '{VS_INDEX}',
+                query_text => question,
+                num_results => 20,
+                query_type => 'HYBRID'
+            )
         )
+        WHERE rn <= num_results
     )
     """
 

@@ -344,6 +344,16 @@ class TestCreateUcFunctionsSql:
         assert "vector_search" in search_fn
         assert "pages_index" in search_fn
         assert "query_type => 'HYBRID'" in search_fn
+        # AI_SEARCH_HYBRID_QUERY_PARAM_DEPRECATION_ERROR: HYBRID mode requires
+        # query_text =>, not query =>. Locking this in so the runtime error
+        # does not regress.
+        assert "query_text =>" in search_fn
+        assert "query =>" not in search_fn
+        # NON_FOLDABLE_ARGUMENT: vector_search()'s num_results must be a
+        # constant. Inner num_results is fixed; outer ROW_NUMBER() filter
+        # honors the caller's parameter.
+        assert "ROW_NUMBER()" in search_fn
+        assert "rn <= num_results" in search_fn
         assert "LIKE concat" not in search_fn
 
     def test_fn_wiki_read(self):

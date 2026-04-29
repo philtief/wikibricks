@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`fn_wiki_search` SQL UDF compatible with current `vector_search()`
+  TVF.** Two runtime errors blocked the function from being created:
+  `AI_SEARCH_HYBRID_QUERY_PARAM_DEPRECATION_ERROR` (HYBRID mode now requires
+  `query_text =>` instead of `query =>`) and `NON_FOLDABLE_ARGUMENT` (UDF
+  parameters can't be passed straight through to `num_results =>`). The
+  inner `num_results` is now fixed at 20; the outer query trims to the
+  caller's K via `ROW_NUMBER()`.
+- **`deploy_wiki_store` notebook honors catalog/schema widgets.** Two real
+  bugs surfaced when running against a non-default catalog/schema:
+  `wikibricks.ops` reads `WIKIBRICKS_CATALOG` / `WIKIBRICKS_SCHEMA` at
+  import time, so the notebook now sets `os.environ` from widgets BEFORE
+  importing. `table_names` extended to all seven tables (was 5; missed
+  `pages_vs_source` and `promote_checkpoint`, raising IndexError on the
+  6th iteration).
+
 ## [0.1.5] - 2026-04-29
 
 ### Added
