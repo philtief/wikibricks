@@ -66,6 +66,8 @@ appends a row to `wiki_log` with an `op_type`. The useful ones to watch:
 | `promote_parse_fail` | Judge returned non-numeric text — prompt drift, investigate |
 | `vs_sync` / `vs_sync_fail` | `sync_index()` triggered a DELTA_SYNC refresh |
 | `verify_fix` | Deterministic link repair healed a broken edge |
+| `segregate` | An oversize page was split into a parent + N chunk children |
+| `segregate_skip` | An oversize page could not be split (single paragraph too large) |
 
 Before trusting a scheduled promote run, `scripts/diagnose_traces.py
 --window-days 7` reports trace volume, query-length percentiles, exact-match
@@ -271,9 +273,9 @@ Two external benchmarks, both honest:
 
 ```bash
 uv sync
-uv run pytest                       # 306 tests, no workspace needed
+uv run pytest                       # 349 tests, no workspace needed
 uv run ruff check src tests scripts
-uv build                            # → dist/wikibricks-0.1.4-py3-none-any.whl
+uv build                            # → dist/wikibricks-0.1.5-py3-none-any.whl
 ```
 
 Coding agents (Claude Code, Cursor, Cortex, Copilot CLI) should read
