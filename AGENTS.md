@@ -38,6 +38,45 @@ pyproject.toml             Package config — version lives here
 CHANGELOG.md               Keep-a-Changelog format, SemVer
 ```
 
+## Two repos: `wikibricks-dev` (private) vs `wikibricks` (public)
+
+This repo is the development home and ships **everything**, including the
+benchmark / evaluation suites used to validate `WikiClient.search` and the
+managed-MCP retrieval surface. The public repo at
+[philtief/wikibricks](https://github.com/philtief/wikibricks) is a curated
+mirror that ships only the library, app, deploy notebooks, and unit tests —
+**no benchmark code, results, or eval-only tests**.
+
+### Dev-only paths — DO NOT publish to public
+
+Anything matching one of these globs stays in `wikibricks-dev`. When syncing
+dev → public, exclude them. When adding new benchmark / eval material, place
+it under one of these prefixes so the cut stays mechanical.
+
+```
+scripts/build_hotpot_seed.py
+scripts/fetch_hotpot.py
+scripts/hotpot_*.py                  # hotpot_01_setup … hotpot_04_render
+scripts/build_twowiki_seed.py
+scripts/fetch_twowiki.py
+scripts/twowiki_*.py                 # twowiki_01_setup … twowiki_06_render, _quick_eval, _variants
+scripts/twowiki_batch_loop.sh
+src/wikibricks/seeds/hotpot/         # HotPotQA seed loader
+src/wikibricks/seeds/twowiki/        # 2WikiMultiHopQA seed loader
+tests/test_build_hotpot_seed.py
+tests/test_eval_metrics.py
+vendor/2wikimultihop_evaluate_v1.1.py
+docs/hotpotqa_evaluation.md
+docs/twowiki_evaluation.md
+```
+
+Everything outside this list is public-eligible. `scripts/diagnose_traces.py`,
+`scripts/seed_traces_fixture.py`, `scripts/smoke_segregate.py`, and
+`scripts/sdk_redeploy.py` are diagnostic / operational tools and ship to
+public. The standard unit-test suite (`tests/test_client.py`,
+`tests/test_curate_logic.py`, …) ships to public too — only the benchmark
+tests above are dev-only.
+
 ## Hard rules — do not violate
 
 1. **No LLM calls inside `src/wikibricks/`.** The library is a storage contract.
