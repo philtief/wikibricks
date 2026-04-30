@@ -21,6 +21,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`enabled_uc_functions` widget on `deploy_wiki_store`** — comma-separated
   list (default empty = all eight). Lets a deployment narrow the MCP tool
   surface without forking the notebook.
+- **`scripts/sdk_redeploy.py`** — direct-SDK redeploy that bypasses
+  Terraform, an escape hatch for `databricks bundle deploy` failing with
+  `openpgp: key expired` on some CLI versions. Workspace-agnostic via
+  required `WIKIBRICKS_CATALOG` / `WIKIBRICKS_SCHEMA` /
+  `WIKIBRICKS_WAREHOUSE_ID` env vars; optional
+  `WIKIBRICKS_ENABLED_UC_FUNCTIONS` mirrors the bundle variable of the
+  same name. Idempotent: schema → seven tables → managed `wheels` volume
+  + wheel upload → drop UC functions outside enabled set →
+  `CREATE OR REPLACE` enabled set → verify.
 
 ### Fixed
 
