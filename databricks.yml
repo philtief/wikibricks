@@ -48,6 +48,15 @@ variables:
       raise to 5.0 for strict-only-top-rated, or lower to 3.0 to promote
       anything that isn't actively bad.
     default: "4.0"
+  enabled_uc_functions:
+    description: >
+      Comma-separated subset of UC function names to deploy as the MCP
+      tool surface. Empty (default) deploys all 8: fn_wiki_search,
+      fn_wiki_read, fn_wiki_read_full, fn_wiki_history, fn_wiki_log,
+      fn_wiki_index, fn_wiki_schema, fn_wiki_write_help. Use a subset to
+      reduce tool-list noise for weaker models or to scope an agent to
+      read-only discovery (e.g. `fn_wiki_search,fn_wiki_read_full,fn_wiki_index`).
+    default: ""
 
 include:
   - resources/*.yml

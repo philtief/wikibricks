@@ -126,6 +126,26 @@ The `deploy_wiki_store` notebook creates the schema, Delta tables, Vector
 Search index, and UC functions. Subsequent `bundle deploy` calls push code
 changes only.
 
+**2b. (Optional) Choose the MCP tool surface.**
+
+By default `deploy_wiki_store` exposes all 8 UC functions as MCP tools.
+Some agents do better with a smaller, focused tool list — weaker models
+get distracted, and a read-only agent has no need for `fn_wiki_write_help`.
+Pass `enabled_uc_functions` to deploy a subset:
+
+```bash
+databricks bundle deploy --target dev \
+  --var="enabled_uc_functions=fn_wiki_search,fn_wiki_read_full,fn_wiki_index"
+databricks bundle run deploy_wiki_store --target dev
+```
+
+Available names: `fn_wiki_search`, `fn_wiki_read`, `fn_wiki_read_full`,
+`fn_wiki_history`, `fn_wiki_log`, `fn_wiki_index`, `fn_wiki_schema`,
+`fn_wiki_write_help`. Empty (the default) deploys all 8. Re-running with
+a different subset creates/replaces only the listed functions —
+previously deployed functions remain until you `DROP FUNCTION` them
+explicitly.
+
 **3. Point your agent at the MCP endpoint.**
 
 `https://<workspace>/api/2.0/mcp/functions/<catalog>/<schema>` — OAuth,

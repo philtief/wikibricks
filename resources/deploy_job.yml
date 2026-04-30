@@ -12,6 +12,7 @@ resources:
               warehouse_id: ${var.warehouse_id}
               vs_endpoint: ${var.vs_endpoint}
               seed_domain: ${var.seed_domain}
+              enabled_uc_functions: ${var.enabled_uc_functions}
           environment_key: serverless
       environments:
         - environment_key: serverless
