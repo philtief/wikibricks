@@ -34,7 +34,7 @@ problem and create a **new** commit — never `--amend` or `--no-verify`.
 1. **No LLM calls inside `src/wikibricks/`.** The library is a storage contract.
    All LLM work lives in `notebooks/promote_from_traces.py` or user code.
 2. **No FastMCP.** UC functions are the MCP surface via Databricks managed MCP.
-3. **No raw REST API calls.** Use `databricks.sdk.WorkspaceClient`.
+3. **No raw REST API calls.** Use `databricks.sdk.WorkspaceClient` everywhere.
 4. **No hardcoded workspace IDs.** `databricks.yml` uses generic defaults;
    workspace-specific values belong in `databricks.override.yml` (gitignored).
 5. **No destructive git without explicit confirmation.** No `git push --force`,

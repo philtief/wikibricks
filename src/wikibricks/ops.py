@@ -1,6 +1,7 @@
 """WikiBricks: Delta + Vector Search wiki store operations for AI agents."""
 
 import json
+import os
 from pathlib import Path
 
 from databricks.sdk.service.vectorsearch import (
@@ -10,8 +11,8 @@ from databricks.sdk.service.vectorsearch import (
     VectorIndexType,
 )
 
-CATALOG = "main"
-SCHEMA = "wiki"
+CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
+SCHEMA = os.environ.get("WIKIBRICKS_SCHEMA", "wiki")
 PAGES_TABLE = f"{CATALOG}.{SCHEMA}.pages"
 HISTORY_TABLE = f"{CATALOG}.{SCHEMA}.pages_history"
 LINKS_TABLE = f"{CATALOG}.{SCHEMA}.links"
@@ -31,19 +32,24 @@ def create_tables_sql():
     return [
         f"""
         CREATE TABLE IF NOT EXISTS {PAGES_TABLE} (
-            page_id      STRING        NOT NULL,
-            path         STRING        NOT NULL,
-            path_depth   INT           GENERATED ALWAYS AS (size(split(path, '/'))),
-            title        STRING        NOT NULL,
-            page_type    STRING        NOT NULL,
-            content      VARIANT       NOT NULL,
-            content_text STRING,
-            tags         ARRAY<STRING>,
-            source_ids   ARRAY<STRING>,
-            created_by   STRING        NOT NULL,
-            created_at   TIMESTAMP     DEFAULT current_timestamp(),
-            updated_at   TIMESTAMP     DEFAULT current_timestamp(),
-            version      INT           NOT NULL DEFAULT 1
+            page_id           STRING        NOT NULL,
+            path              STRING        NOT NULL,
+            path_depth        INT           GENERATED ALWAYS AS (size(split(path, '/'))),
+            title             STRING        NOT NULL,
+            page_type         STRING        NOT NULL,
+            content           VARIANT       NOT NULL,
+            content_text      STRING,
+            tags              ARRAY<STRING>,
+            source_ids        ARRAY<STRING>,
+            parent_id         STRING,
+            chunk_index       INT,
+            health_status     STRING        DEFAULT 'unknown',
+            health_score      DOUBLE,
+            last_health_check TIMESTAMP,
+            created_by        STRING        NOT NULL,
+            created_at        TIMESTAMP     DEFAULT current_timestamp(),
+            updated_at        TIMESTAMP     DEFAULT current_timestamp(),
+            version           INT           NOT NULL DEFAULT 1
         )
         USING DELTA
         TBLPROPERTIES (
@@ -53,17 +59,22 @@ def create_tables_sql():
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {HISTORY_TABLE} (
-            page_id      STRING        NOT NULL,
-            path         STRING        NOT NULL,
-            title        STRING        NOT NULL,
-            page_type    STRING        NOT NULL,
-            content      VARIANT       NOT NULL,
-            content_text STRING,
-            tags         ARRAY<STRING>,
-            created_by   STRING        NOT NULL,
-            created_at   TIMESTAMP     NOT NULL,
-            version      INT           NOT NULL,
-            archived_at  TIMESTAMP     DEFAULT current_timestamp()
+            page_id           STRING        NOT NULL,
+            path              STRING        NOT NULL,
+            title             STRING        NOT NULL,
+            page_type         STRING        NOT NULL,
+            content           VARIANT       NOT NULL,
+            content_text      STRING,
+            tags              ARRAY<STRING>,
+            parent_id         STRING,
+            chunk_index       INT,
+            health_status     STRING,
+            health_score      DOUBLE,
+            last_health_check TIMESTAMP,
+            created_by        STRING        NOT NULL,
+            created_at        TIMESTAMP     NOT NULL,
+            version           INT           NOT NULL,
+            archived_at       TIMESTAMP     DEFAULT current_timestamp()
         )
         USING DELTA
         TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
@@ -221,12 +232,35 @@ def create_vs_index_spec():
     }
 
 
-def create_uc_functions_sql(warehouse_id):
+UC_FUNCTION_NAMES = (
+    "fn_wiki_search",
+    "fn_wiki_read",
+    "fn_wiki_history",
+    "fn_wiki_log",
+    "fn_wiki_index",
+    "fn_wiki_schema",
+    "fn_wiki_write_help",
+    "fn_wiki_read_full",
+)
+
+
+def create_uc_functions_sql(warehouse_id, enabled=None):
     """Return SQL statements to create the wiki UC read functions.
 
-    Returns [fn_wiki_search, fn_wiki_read, fn_wiki_history].
-    Write is handled by a custom agent tool (UC functions can't do DML).
+    Each statement creates one MCP-exposed UC function. Returns the eight
+    statements in the canonical order
+    (fn_wiki_search, fn_wiki_read, fn_wiki_history, fn_wiki_log,
+    fn_wiki_index, fn_wiki_schema, fn_wiki_write_help, fn_wiki_read_full)
+    when `enabled=None`. Pass `enabled` (set/list of function names) to
+    deploy a subset — useful when a personal/embedded deployment only
+    wants the read paths exposed via managed MCP. Unknown names raise
+    ValueError so typos can't silently produce a partial deploy.
+    Write ops are not exposed here (UC functions can't do DML); see
+    `make_agent_tools` in client code.
     """
+    # vector_search() requires foldable INT for num_results (cannot reference
+    # a UDF parameter directly), so we fix the inner K and trim with
+    # ROW_NUMBER() in the outer query.
     fn_search = f"""
     CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_search(
         question STRING COMMENT 'Natural-language search query',
@@ -238,12 +272,16 @@ def create_uc_functions_sql(warehouse_id):
         SELECT to_json(collect_list(struct(
             page_id, path, title, page_type, content_text, tags, version, search_score
         )))
-        FROM vector_search(
-            index => '{VS_INDEX}',
-            query => question,
-            num_results => num_results,
-            query_type => 'HYBRID'
+        FROM (
+            SELECT *, ROW_NUMBER() OVER (ORDER BY search_score DESC) AS rn
+            FROM vector_search(
+                index => '{VS_INDEX}',
+                query_text => question,
+                num_results => 20,
+                query_type => 'HYBRID'
+            )
         )
+        WHERE rn <= num_results
     )
     """
 
@@ -260,6 +298,38 @@ def create_uc_functions_sql(warehouse_id):
         )))
         FROM {PAGES_TABLE}
         WHERE path = page_path
+    )
+    """
+
+    fn_read_full = f"""
+    CREATE OR REPLACE FUNCTION {CATALOG}.{SCHEMA}.fn_wiki_read_full(
+        page_path STRING COMMENT 'Path of the parent or standalone page'
+    )
+    RETURNS STRING
+    COMMENT 'Read a page plus all chunk contents in order. Use when a page may have been segregated by maintenance.'
+    RETURN (
+        WITH parent AS (
+            SELECT page_id, path, title, page_type, content, tags,
+                   created_by, created_at, updated_at, version
+            FROM {PAGES_TABLE}
+            WHERE path = page_path
+        ),
+        chunks AS (
+            SELECT c.chunk_index, c.content
+            FROM {PAGES_TABLE} c
+            JOIN parent p ON c.parent_id = p.page_id
+            ORDER BY c.chunk_index
+        )
+        SELECT to_json(struct(
+            (SELECT first(page_id) FROM parent) AS page_id,
+            (SELECT first(path) FROM parent) AS path,
+            (SELECT first(title) FROM parent) AS title,
+            (SELECT first(page_type) FROM parent) AS page_type,
+            (SELECT first(content) FROM parent) AS content,
+            (SELECT collect_list(content) FROM chunks) AS chunk_contents,
+            (SELECT first(tags) FROM parent) AS tags,
+            (SELECT first(version) FROM parent) AS version
+        ))
     )
     """
 
@@ -347,7 +417,53 @@ def create_uc_functions_sql(warehouse_id):
     RETURN ('{write_help}')
     """
 
-    return [fn_search, fn_read, fn_history, fn_log, fn_index, fn_schema, fn_write_help]
+    by_name = {
+        "fn_wiki_search": fn_search,
+        "fn_wiki_read": fn_read,
+        "fn_wiki_history": fn_history,
+        "fn_wiki_log": fn_log,
+        "fn_wiki_index": fn_index,
+        "fn_wiki_schema": fn_schema,
+        "fn_wiki_write_help": fn_write_help,
+        "fn_wiki_read_full": fn_read_full,
+    }
+    if enabled is None:
+        return [by_name[n] for n in UC_FUNCTION_NAMES]
+    requested = set(enabled)
+    unknown = requested - set(UC_FUNCTION_NAMES)
+    if unknown:
+        raise ValueError(
+            f"Unknown UC function name(s): {sorted(unknown)}. "
+            f"Valid names: {list(UC_FUNCTION_NAMES)}"
+        )
+    return [by_name[n] for n in UC_FUNCTION_NAMES if n in requested]
+
+
+def drop_uc_functions_sql(enabled=None):
+    """Return DROP FUNCTION statements for any UC function NOT in `enabled`.
+
+    Managed MCP exposes every UC function in `<catalog>.<schema>`, so a
+    subset deploy only takes effect on the agent's tool list once the
+    unlisted functions are dropped. `enabled=None` returns [] (no drops
+    — keep whatever is deployed). Pass the same set/list you pass to
+    `create_uc_functions_sql` to make the deployed surface match the
+    requested subset exactly. `DROP FUNCTION IF EXISTS` is idempotent.
+    Unknown names raise ValueError, matching `create_uc_functions_sql`.
+    """
+    if enabled is None:
+        return []
+    requested = set(enabled)
+    unknown = requested - set(UC_FUNCTION_NAMES)
+    if unknown:
+        raise ValueError(
+            f"Unknown UC function name(s): {sorted(unknown)}. "
+            f"Valid names: {list(UC_FUNCTION_NAMES)}"
+        )
+    return [
+        f"DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.{name}"
+        for name in UC_FUNCTION_NAMES
+        if name not in requested
+    ]
 
 
 def seed_pages(domain: str = "sample"):
@@ -460,7 +576,7 @@ def eval_mrr_multi(retrieved_paths, relevant_paths):
 
 
 def eval_supporting_fact_f1(retrieved_paths, relevant_paths):
-    """F1 over retrieved vs relevant paths. 1.0 when both sets are empty."""
+    """F1 over retrieved vs relevant - the [redacted benchmark] supporting-fact metric. 1.0 when both sets are empty."""
     retrieved = set(retrieved_paths)
     relevant = set(relevant_paths)
     if not retrieved and not relevant:

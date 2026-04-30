@@ -13,8 +13,10 @@ from wikibricks.ops import (
     SCHEMA,
     SOURCES_TABLE,
     SOURCES_VOLUME,
+    UC_FUNCTION_NAMES,
     VS_ENDPOINT,
     VS_INDEX,
+    drop_uc_functions_sql,
 )
 
 __all__ = [
@@ -29,7 +31,9 @@ __all__ = [
     "LOG_TABLE",
     "PROMOTE_CHECKPOINT_TABLE",
     "SOURCES_VOLUME",
+    "UC_FUNCTION_NAMES",
     "VS_INDEX",
     "VS_ENDPOINT",
     "EMBEDDING_MODEL",
+    "drop_uc_functions_sql",
 ]

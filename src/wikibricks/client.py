@@ -86,6 +86,8 @@ class WikiClient:
         created_by: str = "agent",
         tags: list[str] | None = None,
         source_ids: list[str] | None = None,
+        parent_id: str | None = None,
+        chunk_index: int | None = None,
     ) -> str:
         """Create or update a wiki page. Archives previous version to history.
 
@@ -97,6 +99,8 @@ class WikiClient:
             created_by: Who created this version.
             tags: Optional list of tags.
             source_ids: Optional list of source IDs to link provenance.
+            parent_id: For chunk children, the parent page's `page_id`.
+            chunk_index: For chunk children, 1-based position. `0` is also valid.
 
         Returns:
             Confirmation message.
@@ -108,6 +112,8 @@ class WikiClient:
         content_esc = self._escape(content_json)
         tags_sql = f"ARRAY({','.join(repr(t) for t in tags)})" if tags else "ARRAY()"
         src_sql = f"ARRAY({','.join(repr(s) for s in source_ids)})" if source_ids else "NULL"
+        parent_sql = f"'{self._escape(parent_id)}'" if parent_id else "NULL"
+        chunk_sql = str(chunk_index) if chunk_index is not None else "NULL"
 
         archive_sql = f"""
         INSERT INTO {HISTORY_TABLE}
@@ -131,18 +137,21 @@ class WikiClient:
                 PARSE_JSON('{content_esc}'):body::STRING),
             tags = {tags_sql},
             source_ids = {src_sql},
+            parent_id = {parent_sql},
+            chunk_index = {chunk_sql},
             created_by = '{created_by}',
             updated_at = current_timestamp(),
             version = target.version + 1
         WHEN NOT MATCHED THEN INSERT
             (page_id, path, title, page_type, content, content_text, tags,
-             source_ids, created_by, version)
+             source_ids, parent_id, chunk_index, created_by, version)
         VALUES (uuid(), '{path}', '{title_esc}', '{page_type}',
                 PARSE_JSON('{content_esc}'),
                 concat(
                     PARSE_JSON('{content_esc}'):summary::STRING, ' ',
                     PARSE_JSON('{content_esc}'):body::STRING),
-                {tags_sql}, {src_sql}, '{created_by}', 1)
+                {tags_sql}, {src_sql}, {parent_sql}, {chunk_sql},
+                '{created_by}', 1)
         """
 
         self._exec(archive_sql)

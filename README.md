@@ -38,15 +38,25 @@ the agent calling the wiki is the only LLM in the loop.
 ## The maintenance loop — what makes this a wiki and not a log
 
 Every deployment ships one Lakeflow Job (`wikibricks_curate`) that runs daily.
-Two tasks, both optional-to-edit:
+Three tasks, the last two optional-to-edit:
 
 1. **`curate`** — deterministic, LLM-free. Proposes new typed edges via Vector
    Search nearest-neighbor + exact-title matching, tagged with `confidence` +
    `origin ∈ {auto-vs, auto-title}`. Auto-commits anything above
    `auto_commit_threshold=0.85`; leaves the rest for the agent to decide on its
-   next call. Runs lint (orphans, stale pages, duplicates, broken links) and
-   deterministic link repair. This is the library contract.
-2. **`promote`** — opt-in, trace-driven. Mines agent session traces, clusters
+   next call. Runs lint (orphans, stale pages, duplicates, broken links),
+   deterministic link repair, and a Phase 4 health check that flags pages
+   `oversize` / `empty` / `ok`. This is the library contract.
+2. **`segregate`** — opt-in, LLM-driven. Picks up pages flagged
+   `health_status='oversize'` by curate's Phase 4 and splits each into a
+   parent (summary + Markdown ToC) plus N chunk children, joined by
+   `parent_id` + `chunk_index`. Deterministic chunking lives in
+   `src/wikibricks/segregate_logic.py`; the LLM (`${var.llm_model}`) is asked
+   only for a 1–2 sentence summary and one short title per chunk. Reassembly
+   is via `fn_wiki_read_full(parent_path)`. Drop the `segregate` task block
+   in `resources/wiki_curate_job.yml` to run fully LLM-free; curate stays
+   green on its own.
+3. **`promote`** — opt-in, trace-driven. Mines agent session traces, clusters
    recurring questions, has `databricks-claude-sonnet-4-5` synthesize one
    canonical answer per cluster, scores it with an LLM judge, and writes
    passing clusters to `promoted/<slug>` with `cites` edges back to the source
@@ -66,6 +76,8 @@ appends a row to `wiki_log` with an `op_type`. The useful ones to watch:
 | `promote_parse_fail` | Judge returned non-numeric text — prompt drift, investigate |
 | `vs_sync` / `vs_sync_fail` | `sync_index()` triggered a DELTA_SYNC refresh |
 | `verify_fix` | Deterministic link repair healed a broken edge |
+| `segregate` | An oversize page was split into a parent + N chunk children |
+| `segregate_skip` | An oversize page could not be split (single paragraph too large) |
 
 Before trusting a scheduled promote run, `scripts/diagnose_traces.py
 --window-days 7` reports trace volume, query-length percentiles, exact-match
@@ -114,6 +126,28 @@ The `deploy_wiki_store` notebook creates the schema, Delta tables, Vector
 Search index, and UC functions. Subsequent `bundle deploy` calls push code
 changes only.
 
+**2b. (Optional) Choose the MCP tool surface.**
+
+By default `deploy_wiki_store` exposes all 8 UC functions as MCP tools.
+Some agents do better with a smaller, focused tool list — weaker models
+get distracted, and a read-only agent has no need for `fn_wiki_write_help`.
+Pass `enabled_uc_functions` to deploy a subset:
+
+```bash
+databricks bundle deploy --target dev \
+  --var="enabled_uc_functions=fn_wiki_search,fn_wiki_read_full,fn_wiki_index"
+databricks bundle run deploy_wiki_store --target dev
+```
+
+Available names: `fn_wiki_search`, `fn_wiki_read`, `fn_wiki_read_full`,
+`fn_wiki_history`, `fn_wiki_log`, `fn_wiki_index`, `fn_wiki_schema`,
+`fn_wiki_write_help`. Empty (the default) deploys all 8. Re-running with
+a different non-empty subset both creates the listed functions and drops
+any previously deployed function not in the new set — managed MCP
+surfaces every UC function in the schema, so this keeps your agent's
+tool list in sync with the variable. Empty switches back to "keep
+whatever is deployed" (no drops).
+
 **3. Point your agent at the MCP endpoint.**
 
 `https://<workspace>/api/2.0/mcp/functions/<catalog>/<schema>` — OAuth,
@@ -148,7 +182,7 @@ first — the app fails fast with a clear error if they're missing.
 ### Customizing content
 
 The shipped `sample` seed loads 5 meta-pages that describe WikiBricks itself —
-useful as a smoke test, not a real wiki. Two options to seed real content:
+useful as a smoke test, not a real wiki. Three options to seed real content:
 
 1. **Custom JSONL.** Set `seed_domain=custom` in the override file and export
    `WIKIBRICKS_CUSTOM_PAGES=/path/to/your/pages.jsonl` before running
@@ -207,13 +241,14 @@ the library contract is identical.
 
 ## MCP tools
 
-Seven UC functions auto-exposed as MCP tools — agents discover them on
+Eight UC functions auto-exposed as MCP tools — agents discover them on
 connect.
 
 | Tool | Description |
 |---|---|
 | `fn_wiki_search(question, num_results)` | HYBRID Vector Search over `pages` |
 | `fn_wiki_read(page_path)` | Read a page by path |
+| `fn_wiki_read_full(parent_path)` | Read a parent + all chunk children, ordered by `chunk_index` |
 | `fn_wiki_history(page_path)` | Full version history |
 | `fn_wiki_log(num_entries)` | Recent operation log |
 | `fn_wiki_index()` | Page catalog |
@@ -255,13 +290,15 @@ agent decides the answer is worth keeping.
 
 ```bash
 uv sync
-uv run pytest                       # no workspace needed
+uv run pytest                       # 332 tests, no workspace needed
 uv run ruff check src tests scripts
-uv build                            # → dist/wikibricks-*.whl
+uv build                            # → dist/wikibricks-0.1.5-py3-none-any.whl
 ```
 
-Coding agents should read [`AGENTS.md`](AGENTS.md) for repo conventions,
-hard rules, and the release checklist.
+Coding agents (Claude Code, Cursor, Cortex, Copilot CLI) should read
+[`AGENTS.md`](AGENTS.md) for repo conventions, hard rules, release
+checklist, and known-wrong patterns. Claude Code picks it up via the
+`CLAUDE.md` symlink automatically.
 
 ## What this is not
 

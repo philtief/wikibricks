@@ -16,7 +16,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.1.4-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.1.5-py3-none-any.whl
 # MAGIC # ^ Update path to where the wheel lives in your workspace.
 # MAGIC %restart_python
 
@@ -29,7 +29,13 @@ from datetime import datetime, timedelta, timezone
 from databricks.sdk import WorkspaceClient
 
 from wikibricks import WikiClient
-from wikibricks.curate_logic import build_curate_summary, partition_by_confidence
+from wikibricks.curate_logic import (
+    build_curate_summary,
+    build_health_summary,
+    classify_page_health,
+    find_duplicate_paths,
+    partition_by_confidence,
+)
 from wikibricks.ops import (
     LOG_TABLE,
     PAGES_TABLE,
@@ -173,10 +179,58 @@ else:
 
 # COMMAND ----------
 
+# MAGIC %md ## Phase 4: Health — classify pages and write back status
+# MAGIC
+# MAGIC Deterministic checks only (size, empty, duplicates). LLM-based coherence
+# MAGIC and segregation lives in a v2 phase the agent can opt into. Pages flagged
+# MAGIC `oversize` are candidates for the future split-into-parent+chunks step.
+
+# COMMAND ----------
+
+pages_for_health = run_sql(
+    f"SELECT id, path, body FROM {PAGES_TABLE} "
+    f"WHERE path NOT LIKE '_meta/%' "
+    f"ORDER BY updated_at DESC LIMIT {MAX_PAGES_PER_RUN}"
+)
+health_by_status: dict[str, list[str]] = {}
+for row in pages_for_health:
+    status, score = classify_page_health(row)
+    health_by_status.setdefault(status, []).append(row["id"])
+
+duplicates = find_duplicate_paths(pages_for_health)
+
+# Batch one UPDATE per status bucket — far fewer round-trips than per-page.
+for status, ids in health_by_status.items():
+    if not ids:
+        continue
+    score = {"ok": 1.0, "oversize": 0.3, "empty": 0.0}.get(status, 0.5)
+    id_list = ", ".join(f"'{i}'" for i in ids)
+    w.statement_execution.execute_statement(
+        warehouse_id=WAREHOUSE_ID,
+        statement=(
+            f"UPDATE {PAGES_TABLE} "
+            f"SET health_status = '{status}', health_score = {score}, "
+            f"last_health_check = current_timestamp() "
+            f"WHERE id IN ({id_list})"
+        ),
+        wait_timeout="30s",
+    )
+
+by_status_count = {s: len(ids) for s, ids in health_by_status.items()}
+print(f"health: checked={len(pages_for_health)} by_status={by_status_count} "
+      f"duplicates={len(duplicates)}")
+
+# COMMAND ----------
+
 # MAGIC %md ## Summary
 
 # COMMAND ----------
 
+health = build_health_summary(
+    pages_checked=len(pages_for_health),
+    by_status=by_status_count,
+    duplicates=len(duplicates),
+)
 summary = build_curate_summary(
     paths_scanned=len(paths),
     edges_proposed=proposed_total,
@@ -185,6 +239,7 @@ summary = build_curate_summary(
     auto_commit_threshold=AUTO_COMMIT_THRESHOLD,
     lint_issues=issues,
     broken_links_deleted=deleted if REPAIR_BROKEN_LINKS else None,
+    health=health,
 )
 summary["timestamp"] = datetime.now(timezone.utc).isoformat()
 print(json.dumps(summary, indent=2))

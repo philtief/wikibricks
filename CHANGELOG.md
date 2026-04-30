@@ -7,6 +7,88 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`create_uc_functions_sql(..., enabled=...)`** — opt-in subset deploy
+  for the eight UC functions. `enabled=None` (the default) keeps the
+  existing behavior (deploy all eight); pass a set or list of names to
+  deploy only those, e.g. `{"fn_wiki_search", "fn_wiki_read_full"}`.
+  Unknown names raise `ValueError` so a typo can't silently produce a
+  partial deploy. The library still ships every function — this is
+  purely about which surface the managed-MCP endpoint exposes.
+- **`UC_FUNCTION_NAMES`** — public tuple of the eight names, re-exported
+  from `wikibricks` so callers can reference them without string typos.
+- **`enabled_uc_functions` widget on `deploy_wiki_store`** — comma-separated
+  list (default empty = all eight). Lets a deployment narrow the MCP tool
+  surface without forking the notebook.
+- **`scripts/sdk_redeploy.py`** — direct-SDK redeploy that bypasses
+  Terraform, an escape hatch for `databricks bundle deploy` failing with
+  `openpgp: key expired` on some CLI versions. Workspace-agnostic via
+  required `WIKIBRICKS_CATALOG` / `WIKIBRICKS_SCHEMA` /
+  `WIKIBRICKS_WAREHOUSE_ID` env vars; optional
+  `WIKIBRICKS_ENABLED_UC_FUNCTIONS` mirrors the bundle variable of the
+  same name. Idempotent: schema → seven tables → managed `wheels` volume
+  + wheel upload → drop UC functions outside enabled set →
+  `CREATE OR REPLACE` enabled set → verify.
+
+### Fixed
+
+- **`fn_wiki_search` SQL UDF compatible with current `vector_search()`
+  TVF.** Two runtime errors blocked the function from being created:
+  `AI_SEARCH_HYBRID_QUERY_PARAM_DEPRECATION_ERROR` (HYBRID mode now requires
+  `query_text =>` instead of `query =>`) and `NON_FOLDABLE_ARGUMENT` (UDF
+  parameters can't be passed straight through to `num_results =>`). The
+  inner `num_results` is now fixed at 20; the outer query trims to the
+  caller's K via `ROW_NUMBER()`.
+- **`deploy_wiki_store` notebook honors catalog/schema widgets.** Two real
+  bugs surfaced when running against a non-default catalog/schema:
+  `wikibricks.ops` reads `WIKIBRICKS_CATALOG` / `WIKIBRICKS_SCHEMA` at
+  import time, so the notebook now sets `os.environ` from widgets BEFORE
+  importing. `table_names` extended to all seven tables (was 5; missed
+  `pages_vs_source` and `promote_checkpoint`, raising IndexError on the
+  6th iteration).
+
+## [0.1.5] - 2026-04-29
+
+### Added
+
+- **Page segregation for oversize pages.** Long pages now have a first-class
+  parent/child split path. `wiki.pages` and `wiki.pages_history` gain
+  `parent_id`, `chunk_index`, `health_status`, `health_score`, and
+  `last_health_check` columns. The curate job's new Phase 4 health check
+  classifies each page as `ok` / `empty` / `oversize` (default threshold
+  50KB) and writes the verdict back via one batched UPDATE per status
+  bucket. The new opt-in `wiki_segregate` notebook reads pages flagged
+  `oversize`, asks the chat endpoint for a 1-2 sentence summary plus one
+  title per chunk, then writes a parent (summary + Markdown ToC) and N
+  chunk children joined by `parent_id`/`chunk_index`. Deterministic
+  chunking and ToC construction live in `wikibricks.segregate_logic` and
+  are unit-tested; the LLM call lives in the notebook only, per the
+  AGENTS.md library-LLM-free rule.
+- **`fn_wiki_read_full` UC function.** Reassembles a parent page with its
+  chunks in `chunk_index` order, returning a single document. Exposed via
+  managed MCP so agents reading a segregated page see the same content as
+  before splitting.
+- **`WikiClient.write_page(parent_id=..., chunk_index=...)`.** Two new
+  optional kwargs let callers (and the segregate notebook) write chunk
+  children that link to their parent and order deterministically.
+- **`wikibricks.curate_logic.classify_page_health` /
+  `find_duplicate_paths` / `build_health_summary`** — pure helpers for the
+  curate health phase, with 15 new unit tests.
+- **`wikibricks.segregate_logic.chunk_at_boundaries` / `child_path` /
+  `child_title` / `build_parent_body`** — pure helpers for the split flow,
+  with 14 new unit tests.
+- **`wikibricks.make_agent_tools(warehouse_id)`** — factory that returns
+  plain Python callables for the two write operations UC functions cannot
+  perform: `wiki_write_page` and `wiki_promote_answer`. Register with any
+  agent framework (Databricks Agent Framework, LangChain, LlamaIndex, a
+  custom MCP server) to give agents direct promote-to-memory capability
+  without routing through the curate job's trace-driven promote path.
+- **`segregate` / `segregate_skip` `wiki_log` op_types.** Each split run
+  appends a `segregate` row per parent (with chunk count + chunk titles)
+  and a `segregate_skip` row when the chunker can't split a single
+  oversize paragraph.
+
 ### Changed
 
 - **`fn_wiki_search` now uses Vector Search.** The UC function previously
@@ -18,15 +100,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   relevance with their full `content_text`. Signature changed from
   `(question, mode)` to `(question, num_results INT DEFAULT 5)` — agents
   that hard-coded `mode='HYBRID'` must drop the argument.
-
-### Added
-
-- **`wikibricks.make_agent_tools(warehouse_id)`** — factory that returns
-  plain Python callables for the two write operations UC functions cannot
-  perform: `wiki_write_page` and `wiki_promote_answer`. Register with any
-  agent framework (Databricks Agent Framework, LangChain, LlamaIndex, a
-  custom MCP server) to give agents direct promote-to-memory capability
-  without routing through the curate job's trace-driven promote path.
+- **`wikibricks.ops.CATALOG` / `SCHEMA` are env-var driven.**
+  `WIKIBRICKS_CATALOG` and `WIKIBRICKS_SCHEMA` retarget the library
+  defaults from `main.wiki` without editing source — useful for forks and
+  per-workspace deployments.
 
 ## [0.1.4] - 2026-04-23
 
@@ -145,10 +222,11 @@ Databricks.
   stale pages, duplicates, and broken links; writes issues to `log`.
 - **Observability dashboard** (`resources/observability_dashboard.yml`) -
   pages, writes, reads, and lint findings over time.
-- **Unit tests** (`tests/`), no Databricks connectivity required.
+- **220 unit tests** (`tests/`), no Databricks connectivity required.
 - **Documentation**: `README.md`, `docs/img/architecture.{mmd,svg,png}`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.1.4...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.1.5...HEAD
+[0.1.5]: https://github.com/philtief/wikibricks/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/philtief/wikibricks/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/philtief/wikibricks/compare/v0.1.0...v0.1.3
 [0.1.0]: https://github.com/philtief/wikibricks/releases/tag/v0.1.0

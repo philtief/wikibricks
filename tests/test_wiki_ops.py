@@ -1,5 +1,8 @@
 """Tests for WikiBricks wiki_ops module."""
 
+import importlib
+import os
+
 import pytest
 
 from wikibricks.ops import (
@@ -23,6 +26,7 @@ from wikibricks.ops import (
     create_uc_functions_sql,
     create_vs_index_spec,
     delete_broken_links_sql,
+    drop_uc_functions_sql,
     duplicate_paths_sql,
     get_schema,
     graph_neighbors_sql,
@@ -33,9 +37,10 @@ from wikibricks.ops import (
 
 
 class TestConstants:
-    def test_catalog_and_schema(self):
-        assert CATALOG == "main"
-        assert SCHEMA == "wiki"
+    def test_catalog_and_schema_defaults(self):
+        """Default to main.wiki when env vars unset (backward compat)."""
+        assert CATALOG == os.environ.get("WIKIBRICKS_CATALOG", "main")
+        assert SCHEMA == os.environ.get("WIKIBRICKS_SCHEMA", "wiki")
 
     def test_table_names_follow_three_level_namespace(self):
         assert PAGES_TABLE == f"{CATALOG}.{SCHEMA}.pages"
@@ -49,6 +54,30 @@ class TestConstants:
 
     def test_vs_index_name(self):
         assert VS_INDEX == f"{CATALOG}.{SCHEMA}.pages_index"
+
+
+class TestEnvOverride:
+    """Env-var override of catalog/schema for personal-wikibricks-dev fork."""
+
+    def test_env_vars_override_catalog_and_schema(self, monkeypatch):
+        """Setting WIKIBRICKS_CATALOG / WIKIBRICKS_SCHEMA before import retargets all tables."""
+        monkeypatch.setenv("WIKIBRICKS_CATALOG", "agent_marketplace_catalog")
+        monkeypatch.setenv("WIKIBRICKS_SCHEMA", "philipp_local")
+        import wikibricks.ops as _ops
+        importlib.reload(_ops)
+        try:
+            assert _ops.CATALOG == "agent_marketplace_catalog"
+            assert _ops.SCHEMA == "philipp_local"
+            assert _ops.PAGES_TABLE == "agent_marketplace_catalog.philipp_local.pages"
+            assert _ops.HISTORY_TABLE == "agent_marketplace_catalog.philipp_local.pages_history"
+            assert _ops.LINKS_TABLE == "agent_marketplace_catalog.philipp_local.links"
+            assert _ops.LOG_TABLE == "agent_marketplace_catalog.philipp_local.wiki_log"
+            assert _ops.VS_INDEX == "agent_marketplace_catalog.philipp_local.pages_index"
+            assert _ops.SOURCES_VOLUME == "/Volumes/agent_marketplace_catalog/philipp_local/sources"
+        finally:
+            monkeypatch.delenv("WIKIBRICKS_CATALOG", raising=False)
+            monkeypatch.delenv("WIKIBRICKS_SCHEMA", raising=False)
+            importlib.reload(_ops)
 
 
 class TestCreateTablesSql:
@@ -104,6 +133,25 @@ class TestCreateTablesSql:
         """Current table should not have is_current - every row IS current."""
         stmts = create_tables_sql()
         assert "is_current" not in stmts[0].lower()
+
+    def test_pages_table_has_chunk_columns(self):
+        """parent_id + chunk_index let maintenance segregate oversized pages into linked chunks."""
+        pages_sql = create_tables_sql()[0]
+        assert "parent_id" in pages_sql
+        assert "chunk_index" in pages_sql
+
+    def test_pages_table_has_health_columns(self):
+        """Maintenance writes health verdicts back to the page row."""
+        pages_sql = create_tables_sql()[0]
+        assert "health_status" in pages_sql
+        assert "health_score" in pages_sql
+        assert "last_health_check" in pages_sql
+
+    def test_history_table_has_chunk_and_health_columns(self):
+        """History captures the same chunk/health fields so versioning is faithful."""
+        history_sql = create_tables_sql()[1]
+        for col in ("parent_id", "chunk_index", "health_status", "health_score", "last_health_check"):
+            assert col in history_sql, f"missing {col} in history DDL"
 
     def test_history_table_has_archived_at(self):
         stmts = create_tables_sql()
@@ -271,9 +319,20 @@ class TestCreateVsIndexSpec:
 
 
 class TestCreateUcFunctionsSql:
-    def test_returns_seven_functions(self):
+    def test_returns_eight_functions(self):
+        """fn_wiki_read_full added so MCP can reassemble parent + chunk pages."""
         stmts = create_uc_functions_sql("warehouse-id-123")
-        assert len(stmts) == 7
+        assert len(stmts) == 8
+
+    def test_fn_wiki_read_full_reassembles_chunks(self):
+        stmts = create_uc_functions_sql("wh-123")
+        full_fn = next(s for s in stmts if "fn_wiki_read_full" in s)
+        assert "CREATE OR REPLACE FUNCTION" in full_fn
+        assert "page_path STRING" in full_fn
+        assert "parent_id" in full_fn
+        assert "chunk_index" in full_fn
+        # Should order chunks by chunk_index
+        assert "ORDER BY" in full_fn
 
     def test_fn_wiki_search(self):
         stmts = create_uc_functions_sql("wh-123")
@@ -286,6 +345,16 @@ class TestCreateUcFunctionsSql:
         assert "vector_search" in search_fn
         assert "pages_index" in search_fn
         assert "query_type => 'HYBRID'" in search_fn
+        # AI_SEARCH_HYBRID_QUERY_PARAM_DEPRECATION_ERROR: HYBRID mode requires
+        # query_text =>, not query =>. Locking this in so the runtime error
+        # does not regress.
+        assert "query_text =>" in search_fn
+        assert "query =>" not in search_fn
+        # NON_FOLDABLE_ARGUMENT: vector_search()'s num_results must be a
+        # constant. Inner num_results is fixed; outer ROW_NUMBER() filter
+        # honors the caller's parameter.
+        assert "ROW_NUMBER()" in search_fn
+        assert "rn <= num_results" in search_fn
         assert "LIKE concat" not in search_fn
 
     def test_fn_wiki_read(self):
@@ -351,6 +420,115 @@ class TestCreateUcFunctionsSql:
         assert "fn_wiki_write_help" in help_fn
         assert "WikiClient" in help_fn
         assert "write_page" in help_fn
+
+
+class TestCreateUcFunctionsSqlEnabled:
+    """The `enabled` kwarg lets a deployment expose a subset of UC functions
+    via managed MCP without removing any code from the library."""
+
+    def test_default_returns_all_eight(self):
+        """Backward-compat: enabled=None deploys every function."""
+        stmts = create_uc_functions_sql("wh-123")
+        assert len(stmts) == 8
+
+    def test_subset_returns_only_named_functions(self):
+        stmts = create_uc_functions_sql(
+            "wh-123",
+            enabled={"fn_wiki_search", "fn_wiki_read_full"},
+        )
+        assert len(stmts) == 2
+        joined = "\n".join(stmts)
+        assert "fn_wiki_search" in joined
+        assert "fn_wiki_read_full" in joined
+        assert "fn_wiki_history" not in joined
+        assert "fn_wiki_log" not in joined
+
+    def test_subset_with_single_function(self):
+        stmts = create_uc_functions_sql("wh-123", enabled={"fn_wiki_search"})
+        assert len(stmts) == 1
+        assert "fn_wiki_search" in stmts[0]
+
+    def test_empty_enabled_returns_no_statements(self):
+        """Caller explicitly opted out of every function."""
+        stmts = create_uc_functions_sql("wh-123", enabled=set())
+        assert stmts == []
+
+    def test_unknown_function_name_raises(self):
+        """Typos should fail loudly so a partial deployment is impossible."""
+        with pytest.raises(ValueError, match="fn_does_not_exist"):
+            create_uc_functions_sql("wh-123", enabled={"fn_does_not_exist"})
+
+    def test_unknown_alongside_known_still_raises(self):
+        with pytest.raises(ValueError, match="fn_typo"):
+            create_uc_functions_sql(
+                "wh-123",
+                enabled={"fn_wiki_search", "fn_typo"},
+            )
+
+    def test_list_input_also_accepted(self):
+        """A list is friendlier than a set when reading from a comma-separated widget."""
+        stmts = create_uc_functions_sql(
+            "wh-123",
+            enabled=["fn_wiki_search", "fn_wiki_read_full"],
+        )
+        assert len(stmts) == 2
+
+
+class TestDropUcFunctionsSql:
+    """`drop_uc_functions_sql` makes `enabled_uc_functions` a true tool-surface
+    knob: managed MCP exposes every UC function in the schema, so the unlisted
+    ones must be dropped for the agent's tool list to actually shrink."""
+
+    def test_default_returns_no_drops(self):
+        """enabled=None means 'keep whatever is deployed' — no destructive ops."""
+        assert drop_uc_functions_sql() == []
+        assert drop_uc_functions_sql(enabled=None) == []
+
+    def test_subset_drops_complement(self):
+        """Asked to keep 2 → drop the other 6."""
+        stmts = drop_uc_functions_sql(
+            enabled={"fn_wiki_search", "fn_wiki_read_full"}
+        )
+        assert len(stmts) == 6
+        joined = "\n".join(stmts)
+        for kept in ("fn_wiki_search", "fn_wiki_read_full"):
+            assert kept not in joined
+        for dropped in (
+            "fn_wiki_read",
+            "fn_wiki_history",
+            "fn_wiki_log",
+            "fn_wiki_index",
+            "fn_wiki_schema",
+            "fn_wiki_write_help",
+        ):
+            assert dropped in joined
+
+    def test_full_set_returns_no_drops(self):
+        """Asked to keep all 8 → no drops."""
+        from wikibricks.ops import UC_FUNCTION_NAMES
+        assert drop_uc_functions_sql(enabled=set(UC_FUNCTION_NAMES)) == []
+
+    def test_each_drop_uses_if_exists(self):
+        """Idempotent: dropping a function that's already gone must not error."""
+        stmts = drop_uc_functions_sql(enabled={"fn_wiki_search"})
+        for s in stmts:
+            assert "DROP FUNCTION IF EXISTS" in s
+
+    def test_each_drop_is_fully_qualified(self):
+        """Three-level namespace, matching CREATE statements."""
+        stmts = drop_uc_functions_sql(enabled={"fn_wiki_search"})
+        for s in stmts:
+            assert f"{CATALOG}.{SCHEMA}." in s
+
+    def test_unknown_function_name_raises(self):
+        with pytest.raises(ValueError, match="fn_typo"):
+            drop_uc_functions_sql(enabled={"fn_typo"})
+
+    def test_list_input_also_accepted(self):
+        stmts = drop_uc_functions_sql(
+            enabled=["fn_wiki_search", "fn_wiki_read_full"]
+        )
+        assert len(stmts) == 6
 
 
 class TestAddLinkSql:
