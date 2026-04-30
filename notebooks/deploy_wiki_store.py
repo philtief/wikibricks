@@ -48,6 +48,7 @@ from wikibricks.ops import (  # noqa: E402
     create_tables_sql,
     create_uc_functions_sql,
     create_vs_index_spec,
+    drop_uc_functions_sql,
     seed_pages,
     write_page_sql,
 )
@@ -134,6 +135,14 @@ except Exception:
 
 _enabled = [n.strip() for n in ENABLED_UC_FUNCTIONS.split(",") if n.strip()] or None
 print(f"UC functions to deploy: {_enabled or 'all 8'}")
+# Drop functions NOT in the enabled set so managed MCP only exposes the
+# requested subset. No-op when _enabled is None (keep all deployed).
+for stmt in drop_uc_functions_sql(enabled=_enabled):
+    result = w.statement_execution.execute_statement(
+        warehouse_id=WAREHOUSE_ID,
+        statement=stmt,
+    )
+    print(f"Drop UC function: {result.status.state} :: {stmt.strip().split()[-1]}")
 for stmt in create_uc_functions_sql(WAREHOUSE_ID, enabled=_enabled):
     result = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,

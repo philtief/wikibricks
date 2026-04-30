@@ -142,9 +142,11 @@ databricks bundle run deploy_wiki_store --target dev
 Available names: `fn_wiki_search`, `fn_wiki_read`, `fn_wiki_read_full`,
 `fn_wiki_history`, `fn_wiki_log`, `fn_wiki_index`, `fn_wiki_schema`,
 `fn_wiki_write_help`. Empty (the default) deploys all 8. Re-running with
-a different subset creates/replaces only the listed functions —
-previously deployed functions remain until you `DROP FUNCTION` them
-explicitly.
+a different non-empty subset both creates the listed functions and drops
+any previously deployed function not in the new set — managed MCP
+surfaces every UC function in the schema, so this keeps your agent's
+tool list in sync with the variable. Empty switches back to "keep
+whatever is deployed" (no drops).
 
 **3. Point your agent at the MCP endpoint.**
 

@@ -439,6 +439,33 @@ def create_uc_functions_sql(warehouse_id, enabled=None):
     return [by_name[n] for n in UC_FUNCTION_NAMES if n in requested]
 
 
+def drop_uc_functions_sql(enabled=None):
+    """Return DROP FUNCTION statements for any UC function NOT in `enabled`.
+
+    Managed MCP exposes every UC function in `<catalog>.<schema>`, so a
+    subset deploy only takes effect on the agent's tool list once the
+    unlisted functions are dropped. `enabled=None` returns [] (no drops
+    — keep whatever is deployed). Pass the same set/list you pass to
+    `create_uc_functions_sql` to make the deployed surface match the
+    requested subset exactly. `DROP FUNCTION IF EXISTS` is idempotent.
+    Unknown names raise ValueError, matching `create_uc_functions_sql`.
+    """
+    if enabled is None:
+        return []
+    requested = set(enabled)
+    unknown = requested - set(UC_FUNCTION_NAMES)
+    if unknown:
+        raise ValueError(
+            f"Unknown UC function name(s): {sorted(unknown)}. "
+            f"Valid names: {list(UC_FUNCTION_NAMES)}"
+        )
+    return [
+        f"DROP FUNCTION IF EXISTS {CATALOG}.{SCHEMA}.{name}"
+        for name in UC_FUNCTION_NAMES
+        if name not in requested
+    ]
+
+
 def seed_pages(domain: str = "sample"):
     """Return seed wiki pages for the given domain (sample | hotpot | custom | none)."""
     from wikibricks import seeds

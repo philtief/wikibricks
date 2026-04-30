@@ -16,6 +16,7 @@ from wikibricks.ops import (
     UC_FUNCTION_NAMES,
     VS_ENDPOINT,
     VS_INDEX,
+    drop_uc_functions_sql,
 )
 
 __all__ = [
@@ -34,4 +35,5 @@ __all__ = [
     "VS_INDEX",
     "VS_ENDPOINT",
     "EMBEDDING_MODEL",
+    "drop_uc_functions_sql",
 ]

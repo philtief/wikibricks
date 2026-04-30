@@ -26,6 +26,7 @@ from wikibricks.ops import (
     create_uc_functions_sql,
     create_vs_index_spec,
     delete_broken_links_sql,
+    drop_uc_functions_sql,
     duplicate_paths_sql,
     get_schema,
     graph_neighbors_sql,
@@ -471,6 +472,63 @@ class TestCreateUcFunctionsSqlEnabled:
             enabled=["fn_wiki_search", "fn_wiki_read_full"],
         )
         assert len(stmts) == 2
+
+
+class TestDropUcFunctionsSql:
+    """`drop_uc_functions_sql` makes `enabled_uc_functions` a true tool-surface
+    knob: managed MCP exposes every UC function in the schema, so the unlisted
+    ones must be dropped for the agent's tool list to actually shrink."""
+
+    def test_default_returns_no_drops(self):
+        """enabled=None means 'keep whatever is deployed' — no destructive ops."""
+        assert drop_uc_functions_sql() == []
+        assert drop_uc_functions_sql(enabled=None) == []
+
+    def test_subset_drops_complement(self):
+        """Asked to keep 2 → drop the other 6."""
+        stmts = drop_uc_functions_sql(
+            enabled={"fn_wiki_search", "fn_wiki_read_full"}
+        )
+        assert len(stmts) == 6
+        joined = "\n".join(stmts)
+        for kept in ("fn_wiki_search", "fn_wiki_read_full"):
+            assert kept not in joined
+        for dropped in (
+            "fn_wiki_read",
+            "fn_wiki_history",
+            "fn_wiki_log",
+            "fn_wiki_index",
+            "fn_wiki_schema",
+            "fn_wiki_write_help",
+        ):
+            assert dropped in joined
+
+    def test_full_set_returns_no_drops(self):
+        """Asked to keep all 8 → no drops."""
+        from wikibricks.ops import UC_FUNCTION_NAMES
+        assert drop_uc_functions_sql(enabled=set(UC_FUNCTION_NAMES)) == []
+
+    def test_each_drop_uses_if_exists(self):
+        """Idempotent: dropping a function that's already gone must not error."""
+        stmts = drop_uc_functions_sql(enabled={"fn_wiki_search"})
+        for s in stmts:
+            assert "DROP FUNCTION IF EXISTS" in s
+
+    def test_each_drop_is_fully_qualified(self):
+        """Three-level namespace, matching CREATE statements."""
+        stmts = drop_uc_functions_sql(enabled={"fn_wiki_search"})
+        for s in stmts:
+            assert f"{CATALOG}.{SCHEMA}." in s
+
+    def test_unknown_function_name_raises(self):
+        with pytest.raises(ValueError, match="fn_typo"):
+            drop_uc_functions_sql(enabled={"fn_typo"})
+
+    def test_list_input_also_accepted(self):
+        stmts = drop_uc_functions_sql(
+            enabled=["fn_wiki_search", "fn_wiki_read_full"]
+        )
+        assert len(stmts) == 6
 
 
 class TestAddLinkSql:
