@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **`create_uc_functions_sql(..., enabled=...)`** — opt-in subset deploy
+  for the eight UC functions. `enabled=None` (the default) keeps the
+  existing behavior (deploy all eight); pass a set or list of names to
+  deploy only those, e.g. `{"fn_wiki_search", "fn_wiki_read_full"}`.
+  Unknown names raise `ValueError` so a typo can't silently produce a
+  partial deploy. The library still ships every function — this is
+  purely about which surface the managed-MCP endpoint exposes.
+- **`UC_FUNCTION_NAMES`** — public tuple of the eight names, re-exported
+  from `wikibricks` so callers can reference them without string typos.
+- **`enabled_uc_functions` widget on `deploy_wiki_store`** — comma-separated
+  list (default empty = all eight). Lets a deployment narrow the MCP tool
+  surface without forking the notebook.
+
 ### Fixed
 
 - **`fn_wiki_search` SQL UDF compatible with current `vector_search()`

@@ -33,6 +33,10 @@ os.environ["WIKIBRICKS_CATALOG"] = _param("catalog", "main")
 os.environ["WIKIBRICKS_SCHEMA"] = _param("schema", "wiki")
 WAREHOUSE_ID = _param("warehouse_id", "")
 SEED_DOMAIN = _param("seed_domain", "sample")
+# Comma-separated UC function names to deploy. Empty = all 8.
+# Use to expose a subset via managed MCP, e.g.:
+#   "fn_wiki_search,fn_wiki_read_full,fn_wiki_index"
+ENABLED_UC_FUNCTIONS = _param("enabled_uc_functions", "")
 
 from databricks.sdk import WorkspaceClient  # noqa: E402
 from databricks.sdk.service.vectorsearch import EndpointType  # noqa: E402
@@ -128,7 +132,9 @@ except Exception:
 
 # COMMAND ----------
 
-for stmt in create_uc_functions_sql(WAREHOUSE_ID):
+_enabled = [n.strip() for n in ENABLED_UC_FUNCTIONS.split(",") if n.strip()] or None
+print(f"UC functions to deploy: {_enabled or 'all 8'}")
+for stmt in create_uc_functions_sql(WAREHOUSE_ID, enabled=_enabled):
     result = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,
         statement=stmt,

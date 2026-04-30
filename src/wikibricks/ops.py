@@ -232,11 +232,31 @@ def create_vs_index_spec():
     }
 
 
-def create_uc_functions_sql(warehouse_id):
+UC_FUNCTION_NAMES = (
+    "fn_wiki_search",
+    "fn_wiki_read",
+    "fn_wiki_history",
+    "fn_wiki_log",
+    "fn_wiki_index",
+    "fn_wiki_schema",
+    "fn_wiki_write_help",
+    "fn_wiki_read_full",
+)
+
+
+def create_uc_functions_sql(warehouse_id, enabled=None):
     """Return SQL statements to create the wiki UC read functions.
 
-    Returns [fn_wiki_search, fn_wiki_read, fn_wiki_history].
-    Write is handled by a custom agent tool (UC functions can't do DML).
+    Each statement creates one MCP-exposed UC function. Returns the eight
+    statements in the canonical order
+    (fn_wiki_search, fn_wiki_read, fn_wiki_history, fn_wiki_log,
+    fn_wiki_index, fn_wiki_schema, fn_wiki_write_help, fn_wiki_read_full)
+    when `enabled=None`. Pass `enabled` (set/list of function names) to
+    deploy a subset — useful when a personal/embedded deployment only
+    wants the read paths exposed via managed MCP. Unknown names raise
+    ValueError so typos can't silently produce a partial deploy.
+    Write ops are not exposed here (UC functions can't do DML); see
+    `make_agent_tools` in client code.
     """
     # vector_search() requires foldable INT for num_results (cannot reference
     # a UDF parameter directly), so we fix the inner K and trim with
@@ -397,7 +417,26 @@ def create_uc_functions_sql(warehouse_id):
     RETURN ('{write_help}')
     """
 
-    return [fn_search, fn_read, fn_history, fn_log, fn_index, fn_schema, fn_write_help, fn_read_full]
+    by_name = {
+        "fn_wiki_search": fn_search,
+        "fn_wiki_read": fn_read,
+        "fn_wiki_history": fn_history,
+        "fn_wiki_log": fn_log,
+        "fn_wiki_index": fn_index,
+        "fn_wiki_schema": fn_schema,
+        "fn_wiki_write_help": fn_write_help,
+        "fn_wiki_read_full": fn_read_full,
+    }
+    if enabled is None:
+        return [by_name[n] for n in UC_FUNCTION_NAMES]
+    requested = set(enabled)
+    unknown = requested - set(UC_FUNCTION_NAMES)
+    if unknown:
+        raise ValueError(
+            f"Unknown UC function name(s): {sorted(unknown)}. "
+            f"Valid names: {list(UC_FUNCTION_NAMES)}"
+        )
+    return [by_name[n] for n in UC_FUNCTION_NAMES if n in requested]
 
 
 def seed_pages(domain: str = "sample"):

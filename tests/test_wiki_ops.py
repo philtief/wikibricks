@@ -421,6 +421,58 @@ class TestCreateUcFunctionsSql:
         assert "write_page" in help_fn
 
 
+class TestCreateUcFunctionsSqlEnabled:
+    """The `enabled` kwarg lets a deployment expose a subset of UC functions
+    via managed MCP without removing any code from the library."""
+
+    def test_default_returns_all_eight(self):
+        """Backward-compat: enabled=None deploys every function."""
+        stmts = create_uc_functions_sql("wh-123")
+        assert len(stmts) == 8
+
+    def test_subset_returns_only_named_functions(self):
+        stmts = create_uc_functions_sql(
+            "wh-123",
+            enabled={"fn_wiki_search", "fn_wiki_read_full"},
+        )
+        assert len(stmts) == 2
+        joined = "\n".join(stmts)
+        assert "fn_wiki_search" in joined
+        assert "fn_wiki_read_full" in joined
+        assert "fn_wiki_history" not in joined
+        assert "fn_wiki_log" not in joined
+
+    def test_subset_with_single_function(self):
+        stmts = create_uc_functions_sql("wh-123", enabled={"fn_wiki_search"})
+        assert len(stmts) == 1
+        assert "fn_wiki_search" in stmts[0]
+
+    def test_empty_enabled_returns_no_statements(self):
+        """Caller explicitly opted out of every function."""
+        stmts = create_uc_functions_sql("wh-123", enabled=set())
+        assert stmts == []
+
+    def test_unknown_function_name_raises(self):
+        """Typos should fail loudly so a partial deployment is impossible."""
+        with pytest.raises(ValueError, match="fn_does_not_exist"):
+            create_uc_functions_sql("wh-123", enabled={"fn_does_not_exist"})
+
+    def test_unknown_alongside_known_still_raises(self):
+        with pytest.raises(ValueError, match="fn_typo"):
+            create_uc_functions_sql(
+                "wh-123",
+                enabled={"fn_wiki_search", "fn_typo"},
+            )
+
+    def test_list_input_also_accepted(self):
+        """A list is friendlier than a set when reading from a comma-separated widget."""
+        stmts = create_uc_functions_sql(
+            "wh-123",
+            enabled=["fn_wiki_search", "fn_wiki_read_full"],
+        )
+        assert len(stmts) == 2
+
+
 class TestAddLinkSql:
     def test_uses_merge_for_idempotency(self):
         sql = add_link_sql("page-1", "page-2", "related")
