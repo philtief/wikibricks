@@ -306,13 +306,25 @@ Three console scripts get wired up:
 | `wiki-target` | Switch which configured wiki the hooks record into. Persists in `~/.wikibricks/active-target`. `WIKIBRICKS_TARGET=<name>` env var beats the file. |
 | `wikibricks-mcp` | Stdio MCP server registered with Claude Code. Five tools (`wiki_search`, `wiki_read_full`, `wiki_index`, `wiki_write_page`, `wiki_promote_answer`) talking directly to `WikiClient`. UC functions stay deployed for managed-MCP consumers — this is a separate consumer-side surface. |
 
+The five MCP tools and their arguments (advertised at runtime by
+`get_tool_schemas()` in `src/wikibricks_recorder/wiki_mcp.py`):
+
+| Tool | Required | Optional |
+|---|---|---|
+| `wiki_search` | `query` | `k` (default 5, range 1-20) |
+| `wiki_read_full` | `path` | — |
+| `wiki_index` | — | `prefix` |
+| `wiki_write_page` | `path`, `title`, `summary`, `body` | `page_type` (default `concept`), `tags` |
+| `wiki_promote_answer` | `question`, `answer` | `source_paths` |
+
 ### Quick install
 
-After `wiki-init`, sed the bundled template to your clone path and merge
-the `hooks` block into `~/.claude/settings.json`:
+After `wiki-init`, install the five Claude Code hooks into
+`~/.claude/settings.json`. The CLI handles the merge and backs up any
+existing file:
 
 ```bash
-sed "s|/PATH/TO/wikibricks-dev|$(pwd)|g" examples/claude-settings.json
+wiki-init --install-hooks
 ```
 
 Then register the MCP server (run from your `wikibricks-dev` clone):
@@ -320,6 +332,13 @@ Then register the MCP server (run from your `wikibricks-dev` clone):
 ```bash
 claude mcp add wiki --scope user -- \
   uvx --from "wikibricks[recorder] @ file://$(pwd)" wikibricks-mcp
+```
+
+If you would rather hand-merge, the bundled template at
+`examples/claude-settings.json` can be sed-substituted instead:
+
+```bash
+sed "s|/PATH/TO/wikibricks-dev|$(pwd)|g" examples/claude-settings.json
 ```
 
 ### Per-task wiki switching

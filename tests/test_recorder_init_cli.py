@@ -7,6 +7,7 @@ injectable via a `reader` callable so no real stdin/stdout is touched.
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 
 import pytest
@@ -395,3 +396,121 @@ class TestGitEmail:
 
         monkeypatch.setattr("subprocess.run", fake_run)
         assert init_cli._git_email() is None
+
+
+# ---------------------------------------------------------------------------
+# --install-hooks — merge into ~/.claude/settings.json
+# ---------------------------------------------------------------------------
+
+
+class TestInstallHooks:
+    def test_creates_settings_when_missing(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        out = io.StringIO()
+        rc = init_cli.install_hooks(
+            settings_path=settings,
+            python_path="/clone/.venv/bin/python",
+            out=out,
+            now_iso="20260503T200000Z",
+        )
+        assert rc == 0
+        data = json.loads(settings.read_text())
+        for event in (
+            "SessionStart",
+            "UserPromptSubmit",
+            "PostToolUse",
+            "Stop",
+            "SessionEnd",
+        ):
+            entries = data["hooks"][event]
+            assert len(entries) == 1
+            cmd = entries[0]["hooks"][0]["command"]
+            assert cmd == "/clone/.venv/bin/python -m wikibricks_recorder.hooks"
+        assert data["hooks"]["SessionStart"][0]["hooks"][0]["timeout"] == 5
+        assert data["hooks"]["PostToolUse"][0]["hooks"][0]["timeout"] == 10
+        assert data["hooks"]["Stop"][0]["hooks"][0]["timeout"] == 30
+
+    def test_merges_with_existing_hooks(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        existing = {
+            "model": "opus",
+            "hooks": {
+                "SessionStart": [
+                    {
+                        "matcher": "",
+                        "hooks": [
+                            {"type": "command", "command": "/other/hook.sh", "timeout": 5}
+                        ],
+                    }
+                ]
+            },
+        }
+        settings.write_text(json.dumps(existing))
+        out = io.StringIO()
+        rc = init_cli.install_hooks(
+            settings_path=settings,
+            python_path="/clone/.venv/bin/python",
+            out=out,
+            now_iso="20260503T200000Z",
+        )
+        assert rc == 0
+        data = json.loads(settings.read_text())
+        assert data["model"] == "opus"
+        session_start = data["hooks"]["SessionStart"]
+        assert len(session_start) == 2
+        commands = [e["hooks"][0]["command"] for e in session_start]
+        assert "/other/hook.sh" in commands
+        assert any("wikibricks_recorder.hooks" in c for c in commands)
+
+    def test_backs_up_existing_settings(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        settings.write_text('{"hooks": {}}')
+        out = io.StringIO()
+        rc = init_cli.install_hooks(
+            settings_path=settings,
+            python_path="/p/python",
+            out=out,
+            now_iso="20260503T200000Z",
+        )
+        assert rc == 0
+        backups = list(tmp_path.glob("settings.json.bak-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text() == '{"hooks": {}}'
+
+    def test_skips_when_already_installed(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        out = io.StringIO()
+        init_cli.install_hooks(
+            settings_path=settings,
+            python_path="/p/python",
+            out=out,
+            now_iso="20260503T200000Z",
+        )
+        first = json.loads(settings.read_text())
+        out2 = io.StringIO()
+        rc = init_cli.install_hooks(
+            settings_path=settings,
+            python_path="/p/python",
+            out=out2,
+            now_iso="20260503T210000Z",
+        )
+        assert rc == 0
+        second = json.loads(settings.read_text())
+        for event in first["hooks"]:
+            assert len(first["hooks"][event]) == len(second["hooks"][event])
+        assert "skipped" in out2.getvalue().lower() or "already" in out2.getvalue().lower()
+
+    def test_run_dispatches_install_hooks(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        out = io.StringIO()
+        rc = init_cli.run(
+            ["--install-hooks", "--python", "/p/python", "--settings", str(settings)],
+            reader=make_reader([]),
+            out=out,
+            config_path=tmp_path / "rc.toml",
+            cwd=tmp_path,
+        )
+        assert rc == 0
+        data = json.loads(settings.read_text())
+        cmd = data["hooks"]["SessionStart"][0]["hooks"][0]["command"]
+        assert cmd == "/p/python -m wikibricks_recorder.hooks"

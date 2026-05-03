@@ -21,9 +21,11 @@ into testable functions; `main()` is the thin CLI entrypoint.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import sys
 import tomllib
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, TextIO
 
@@ -31,6 +33,14 @@ from wikibricks_recorder import config as recorder_config
 from wikibricks_recorder.config import CONFIG_FILE
 
 TEAM_CONFIG_FILENAME = "wikibricks-team.toml"
+
+HOOK_EVENT_TIMEOUTS = {
+    "SessionStart": 5,
+    "UserPromptSubmit": 5,
+    "PostToolUse": 10,
+    "Stop": 30,
+    "SessionEnd": 30,
+}
 
 # Schema name validation: lowercase + digits + underscore only; UC convention.
 _SCHEMA_RE = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -199,10 +209,11 @@ def run_personal(
     print(f"\nWrote [wikis.personal] to {config_path}", file=out)
     print("Active target: personal", file=out)
     print(
-        "\nNext steps:\n"
-        "  cd <your wikibricks-dev clone> && uv sync --extra recorder\n"
-        "  claude mcp add wiki --scope user -- uvx --from "
-        "<your wikibricks-dev clone> '.[recorder]' wikibricks-mcp",
+        "\nNext steps (run from your wikibricks-dev clone):\n"
+        "  uv sync --extra recorder\n"
+        "  wiki-init --install-hooks\n"
+        '  claude mcp add wiki --scope user -- \\\n'
+        '    uvx --from "wikibricks[recorder] @ file://$(pwd)" wikibricks-mcp',
         file=out,
     )
     return 0
@@ -343,6 +354,66 @@ def run_team_join(
     return 0
 
 
+def install_hooks(
+    *,
+    settings_path: Path,
+    python_path: str,
+    out: TextIO,
+    now_iso: str | None = None,
+) -> int:
+    """Merge the recorder's five hook commands into a Claude Code settings.json.
+
+    Existing entries are preserved; the file is backed up first.
+    """
+    cmd = f"{python_path} -m wikibricks_recorder.hooks"
+    new_block = {
+        event: [{
+            "matcher": "",
+            "hooks": [{"type": "command", "command": cmd, "timeout": timeout}],
+        }]
+        for event, timeout in HOOK_EVENT_TIMEOUTS.items()
+    }
+
+    if settings_path.exists():
+        raw = settings_path.read_text()
+        try:
+            existing = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            print(f"error: cannot parse {settings_path}: {exc}", file=out)
+            return 2
+        ts = now_iso or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+        backup = settings_path.with_name(f"{settings_path.name}.bak-{ts}")
+        backup.write_text(raw)
+        print(f"Backed up existing settings to {backup}", file=out)
+    else:
+        existing = {}
+
+    hooks = existing.setdefault("hooks", {})
+    added: list[str] = []
+    skipped: list[str] = []
+    for event, entries in new_block.items():
+        bucket = hooks.setdefault(event, [])
+        already = any(
+            any(h.get("command") == cmd for h in entry.get("hooks", []))
+            for entry in bucket
+        )
+        if already:
+            skipped.append(event)
+        else:
+            bucket.extend(entries)
+            added.append(event)
+
+    settings_path.parent.mkdir(parents=True, exist_ok=True)
+    settings_path.write_text(json.dumps(existing, indent=2) + "\n")
+
+    print(f"Updated {settings_path}", file=out)
+    if added:
+        print(f"  Added: {', '.join(added)}", file=out)
+    if skipped:
+        print(f"  Already present (skipped): {', '.join(skipped)}", file=out)
+    return 0
+
+
 def run(
     args: list[str] | None = None,
     *,
@@ -358,12 +429,38 @@ def run(
         metavar="TEAM_CONFIG",
         help="Join an existing team — path to a wikibricks-team.toml.",
     )
+    parser.add_argument(
+        "--install-hooks",
+        action="store_true",
+        help="Merge the five recorder hooks into ~/.claude/settings.json (backed up first).",
+    )
+    parser.add_argument(
+        "--python",
+        metavar="PATH",
+        help="Python executable for hook commands (default: sys.executable).",
+    )
+    parser.add_argument(
+        "--settings",
+        metavar="PATH",
+        help="Claude Code settings.json path (default: ~/.claude/settings.json).",
+    )
     ns = parser.parse_args(args)
 
     reader = reader or input
     out = out or sys.stdout
     config_path = config_path or CONFIG_FILE
     cwd = cwd or Path.cwd()
+
+    if ns.install_hooks:
+        settings_path = (
+            Path(ns.settings) if ns.settings else Path.home() / ".claude" / "settings.json"
+        )
+        python_path = ns.python or sys.executable
+        return install_hooks(
+            settings_path=settings_path,
+            python_path=python_path,
+            out=out,
+        )
 
     if ns.join:
         return run_team_join(

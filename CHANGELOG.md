@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `wiki-init --install-hooks` — auto-merge the five recorder hooks into
+  `~/.claude/settings.json` (existing entries preserved, file backed up
+  first). Replaces the manual `sed examples/claude-settings.json` step.
+  Honors `--python` and `--settings` for non-default paths.
+- README "Recorder" section now lists every MCP tool's required and
+  optional arguments, sourced from `wiki_mcp.py::get_tool_schemas()`.
+
+### Fixed
+
+- `wiki-init` personal-flow Next-steps message: replaced the broken
+  `uvx --from . '.[recorder]'` invocation with the correct
+  `uvx --from "wikibricks[recorder] @ file://$(pwd)"` form, and pointed
+  users at the new `--install-hooks` flag.
+
 ## [0.2.0] - 2026-05-03
 
 ### Added
