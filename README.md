@@ -312,13 +312,14 @@ After `wiki-init`, sed the bundled template to your clone path and merge
 the `hooks` block into `~/.claude/settings.json`:
 
 ```bash
-sed "s|/PATH/TO/wikibricks-recorder|$(pwd)|g" examples/claude-settings.json
+sed "s|/PATH/TO/wikibricks-dev|$(pwd)|g" examples/claude-settings.json
 ```
 
-Then register the MCP server:
+Then register the MCP server (run from your `wikibricks-dev` clone):
 
 ```bash
-claude mcp add wiki --scope user -- uvx --from . '.[recorder]' wikibricks-mcp
+claude mcp add wiki --scope user -- \
+  uvx --from "wikibricks[recorder] @ file://$(pwd)" wikibricks-mcp
 ```
 
 ### Per-task wiki switching
