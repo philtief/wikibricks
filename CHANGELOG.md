@@ -7,8 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-05-03
+
 ### Added
 
+- **`wikibricks_recorder` package** — optional Claude Code → wiki bridge
+  shipped alongside the library. Install with `pip install wikibricks[recorder]`.
+  Three console scripts are wired in `pyproject.toml`:
+  - `wiki-init` — interactive setup that writes `~/.wikibricks-recorder.toml`
+    with a `[wikis.<name>]` section per wiki. Three flows: personal,
+    team-create (emits a non-secret `wikibricks-team.toml` for sharing +
+    GRANT SQL for the owner), team-join (consumes the shared toml + your
+    own CLI profile).
+  - `wiki-target` — switch which configured wiki the hooks write to.
+    Persists the choice in `~/.wikibricks/active-target`. `WIKIBRICKS_TARGET`
+    env var beats the file for one-shot overrides.
+  - `wikibricks-mcp` — stdio MCP server registered with Claude Code via
+    `claude mcp add`. Five tools (3 read, 2 write) talking directly to
+    `WikiClient`. The library's UC functions stay deployed for managed-MCP
+    consumers; this is a separate consumer-side surface.
+- **Multi-wiki TOML format.** `~/.wikibricks-recorder.toml` now supports
+  multiple `[wikis.<name>]` sections (e.g. `[wikis.personal]` next to
+  `[wikis.team-platform]`). The legacy `[recorder]` single-section format
+  is still read for back-compat.
+- **`examples/claude-settings.json`** — copy-pasteable hook template with
+  a `/PATH/TO/wikibricks-recorder` placeholder so new users `sed` it to
+  their checkout and merge into `~/.claude/settings.json` instead of
+  hand-crafting five identical hook entries.
 - **`create_uc_functions_sql(..., enabled=...)`** — opt-in subset deploy
   for the eight UC functions. `enabled=None` (the default) keeps the
   existing behavior (deploy all eight); pass a set or list of names to
@@ -30,6 +55,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same name. Idempotent: schema → seven tables → managed `wheels` volume
   + wheel upload → drop UC functions outside enabled set →
   `CREATE OR REPLACE` enabled set → verify.
+
+### Changed
+
+- **AGENTS.md hard rules 1 + 2 scoped to the library.** "No LLM in `src/`"
+  and "no bespoke MCP server" now explicitly bind only the `src/wikibricks/`
+  package. `src/wikibricks_recorder/` is consumer-side tooling and ships its
+  own stdio MCP server because UC functions cannot do DML.
 
 ### Fixed
 
@@ -257,7 +289,8 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/philtief/wikibricks/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/philtief/wikibricks/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/philtief/wikibricks/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/philtief/wikibricks/compare/v0.1.0...v0.1.3

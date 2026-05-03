@@ -289,6 +289,55 @@ to every resolved source, and logs an `op_type=promote` row — same rows
 the nightly `promote` job would produce, just written the moment the
 agent decides the answer is worth keeping.
 
+## Recorder — auto-record Claude Code sessions to your wiki
+
+Optional consumer-side package that turns every Claude Code session into a
+wiki page. Install with the `recorder` extra:
+
+```bash
+uv pip install -e ".[recorder]"
+```
+
+Three console scripts get wired up:
+
+| Script | Purpose |
+|---|---|
+| `wiki-init` | Interactive setup: writes `~/.wikibricks-recorder.toml` with one or more `[wikis.<name>]` sections. Three flows: personal, team-create (emits a non-secret `wikibricks-team.toml` to share), team-join (consumes the shared toml + your own CLI profile). |
+| `wiki-target` | Switch which configured wiki the hooks record into. Persists in `~/.wikibricks/active-target`. `WIKIBRICKS_TARGET=<name>` env var beats the file. |
+| `wikibricks-mcp` | Stdio MCP server registered with Claude Code. Five tools (`wiki_search`, `wiki_read_full`, `wiki_index`, `wiki_write_page`, `wiki_promote_answer`) talking directly to `WikiClient`. UC functions stay deployed for managed-MCP consumers — this is a separate consumer-side surface. |
+
+### Quick install
+
+After `wiki-init`, sed the bundled template to your clone path and merge
+the `hooks` block into `~/.claude/settings.json`:
+
+```bash
+sed "s|/PATH/TO/wikibricks-recorder|$(pwd)|g" examples/claude-settings.json
+```
+
+Then register the MCP server:
+
+```bash
+claude mcp add wiki --scope user -- uvx --from . '.[recorder]' wikibricks-mcp
+```
+
+### Per-task wiki switching
+
+```bash
+wiki-target                    # list configured wikis (* marks active)
+wiki-target team-platform      # switch
+claude                         # this session records to team-platform
+wiki-target personal           # back to personal
+WIKIBRICKS_TARGET=team-platform claude   # one-shot env override
+```
+
+The recorder writes one page per session to
+`sessions/<user_id>/YYYY/MM/DD/<sid>` in the active wiki's schema. For team
+wikis, sessions are partitioned by `user_id` so shared schemas don't
+collide. **Hard rule:** the library (`src/wikibricks/`) stays LLM-free; the
+recorder is consumer-side, allowed to interact with LLMs (today it
+doesn't), and is structurally separate from the storage contract.
+
 ## Evaluation
 
 Two external benchmarks, both honest:
@@ -305,10 +354,11 @@ Two external benchmarks, both honest:
 ## Development
 
 ```bash
-uv sync
-uv run pytest                       # 349 tests, no workspace needed
+uv sync                             # core library
+uv sync --extra recorder            # add the optional recorder package
+uv run pytest                       # 453 tests, no workspace needed
 uv run ruff check src tests scripts
-uv build                            # → dist/wikibricks-0.1.5-py3-none-any.whl
+uv build                            # → dist/wikibricks-0.2.0-py3-none-any.whl
 ```
 
 Coding agents (Claude Code, Cursor, Cortex, Copilot CLI) should read
