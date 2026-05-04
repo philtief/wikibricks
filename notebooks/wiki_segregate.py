@@ -162,30 +162,34 @@ for page in oversize:
     summary, titles = llm_summary_and_titles(page["title"], body, len(chunks))
 
     toc = []
+    chunk_writes: list[dict] = []
     for idx, (chunk_body, chunk_t) in enumerate(zip(chunks, titles), start=1):
         cp = child_path(page["path"], idx)
         ct = child_title(page["title"], chunk_t)
-        wiki.write_page(
-            path=cp,
-            title=ct,
-            content_json={"summary": chunk_t, "body": chunk_body},
-            page_type="chunk",
-            created_by="segregate",
-            tags=["chunk"],
-            parent_id=page["page_id"],
-            chunk_index=idx,
-        )
+        chunk_writes.append({
+            "path": cp,
+            "title": ct,
+            "content": {"summary": chunk_t, "body": chunk_body},
+            "page_type": "chunk",
+            "created_by": "segregate",
+            "tags": ["chunk"],
+            "parent_id": page["page_id"],
+            "chunk_index": idx,
+        })
         toc.append({"path": cp, "title": ct})
 
     parent_body = build_parent_body(summary=summary, toc=toc)
-    wiki.write_page(
-        path=page["path"],
-        title=page["title"],
-        content_json={"summary": summary, "body": parent_body},
-        page_type=page.get("page_type") or "concept",
-        created_by="segregate",
-        tags=list(page.get("tags") or []),
-    )
+    parent_write = {
+        "path": page["path"],
+        "title": page["title"],
+        "content": {"summary": summary, "body": parent_body},
+        "page_type": page.get("page_type") or "concept",
+        "created_by": "segregate",
+        "tags": list(page.get("tags") or []),
+    }
+    # One batched call instead of len(chunks)+1 sequential write_page calls
+    # — collapses 4*(N+1) SQL round-trips into 4 (see WikiClient.write_pages).
+    wiki.write_pages(chunk_writes + [parent_write])
 
     # Mark the parent healthy so curate doesn't keep re-flagging it.
     w.statement_execution.execute_statement(

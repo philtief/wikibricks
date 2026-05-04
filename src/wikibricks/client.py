@@ -160,6 +160,163 @@ class WikiClient:
         self._log("write", path=path)
         return f"Wrote wiki page: {path}"
 
+    def write_pages(self, pages: list[dict]) -> int:
+        """Batched write_page — collapses N pages into 4 SQL statements total.
+
+        For each page in `pages`, the dict supports the same fields as
+        `write_page` keyword args: path, title, content (str or dict with
+        summary+body), page_type, created_by, tags, source_ids, parent_id,
+        chunk_index. Falls back to the same defaults as `write_page` for
+        missing fields.
+
+        Statement plan (vs. N × 4 = 4N statements when looping write_page):
+          1. INSERT INTO pages_history ... SELECT ... FROM pages WHERE path IN (...)
+          2. MERGE INTO pages USING (UNION ALL of N source rows)
+          3. MERGE INTO pages_vs_source FROM pages WHERE path IN (...)
+          4. INSERT INTO wiki_log (UNION ALL of N rows)
+
+        Returns the number of pages written.
+
+        Used by segregate (parent + N chunk children per oversize page) and
+        bulk_write_pages. For the agent-marketplace wiki at 27 oversize pages
+        × ~5 chunks each, this is the difference between ~33 min of write
+        round-trips and ~1 min.
+        """
+        if not pages:
+            return 0
+
+        rows: list[dict] = []
+        for p in pages:
+            content = p.get("content") if "content" in p else p.get("content_json")
+            if isinstance(content, dict):
+                content = json.dumps(content)
+            if not p.get("path") or not p.get("title") or content is None:
+                continue
+            rows.append({
+                "path": p["path"],
+                "title": p["title"],
+                "page_type": p.get("page_type", "concept"),
+                "content": content,
+                "tags": p.get("tags") or [],
+                "source_ids": p.get("source_ids"),
+                "parent_id": p.get("parent_id"),
+                "chunk_index": p.get("chunk_index"),
+                "created_by": p.get("created_by", "agent"),
+            })
+        if not rows:
+            return 0
+
+        def _row_select(r: dict, with_aliases: bool) -> str:
+            path = self._escape(r["path"])
+            title = self._escape(r["title"])
+            content = self._escape(r["content"])
+            page_type = r["page_type"]
+            tags = r["tags"]
+            tags_sql = (
+                f"ARRAY({','.join(repr(t) for t in tags)})"
+                if tags else "CAST(ARRAY() AS ARRAY<STRING>)"
+            )
+            sids = r["source_ids"]
+            sids_sql = (
+                f"ARRAY({','.join(repr(s) for s in sids)})"
+                if sids else "CAST(NULL AS ARRAY<STRING>)"
+            )
+            parent_sql = (
+                f"'{self._escape(r['parent_id'])}'"
+                if r["parent_id"] else "CAST(NULL AS STRING)"
+            )
+            chunk_sql = (
+                str(r["chunk_index"])
+                if r["chunk_index"] is not None else "CAST(NULL AS INT)"
+            )
+            created_by = self._escape(r["created_by"])
+            cols = (
+                f"'{path}', '{title}', '{page_type}', '{content}', "
+                f"{tags_sql}, {sids_sql}, {parent_sql}, {chunk_sql}, '{created_by}'"
+            )
+            if with_aliases:
+                return (
+                    f"SELECT '{path}' AS path, '{title}' AS title, "
+                    f"'{page_type}' AS page_type, '{content}' AS content_json, "
+                    f"{tags_sql} AS tags, {sids_sql} AS source_ids, "
+                    f"{parent_sql} AS parent_id, {chunk_sql} AS chunk_index, "
+                    f"'{created_by}' AS created_by"
+                )
+            return f"SELECT {cols}"
+
+        source_sql = " UNION ALL ".join(
+            _row_select(r, with_aliases=(i == 0)) for i, r in enumerate(rows)
+        )
+        paths_in = ", ".join(f"'{self._escape(r['path'])}'" for r in rows)
+
+        # 1. Archive existing rows for these paths into history.
+        self._exec(
+            f"INSERT INTO {HISTORY_TABLE} "
+            f"(page_id, path, title, page_type, content, content_text, tags, "
+            f"created_by, created_at, version) "
+            f"SELECT page_id, path, title, page_type, content, content_text, tags, "
+            f"created_by, created_at, version "
+            f"FROM {PAGES_TABLE} WHERE path IN ({paths_in})"
+        )
+
+        # 2. MERGE INTO pages — one statement covering all rows.
+        self._exec(
+            f"MERGE INTO {PAGES_TABLE} AS target "
+            f"USING ({source_sql}) AS source "
+            f"ON target.path = source.path "
+            f"WHEN MATCHED THEN UPDATE SET "
+            f"  title = source.title, "
+            f"  page_type = source.page_type, "
+            f"  content = PARSE_JSON(source.content_json), "
+            f"  content_text = concat("
+            f"    PARSE_JSON(source.content_json):summary::STRING, ' ', "
+            f"    PARSE_JSON(source.content_json):body::STRING), "
+            f"  tags = source.tags, "
+            f"  source_ids = source.source_ids, "
+            f"  parent_id = source.parent_id, "
+            f"  chunk_index = source.chunk_index, "
+            f"  created_by = source.created_by, "
+            f"  updated_at = current_timestamp(), "
+            f"  version = target.version + 1 "
+            f"WHEN NOT MATCHED THEN INSERT "
+            f"  (page_id, path, title, page_type, content, content_text, tags, "
+            f"   source_ids, parent_id, chunk_index, created_by, version) "
+            f"VALUES (uuid(), source.path, source.title, source.page_type, "
+            f"  PARSE_JSON(source.content_json), "
+            f"  concat("
+            f"    PARSE_JSON(source.content_json):summary::STRING, ' ', "
+            f"    PARSE_JSON(source.content_json):body::STRING), "
+            f"  source.tags, source.source_ids, source.parent_id, "
+            f"  source.chunk_index, source.created_by, 1)"
+        )
+
+        # 3. Sync pages_vs_source for all touched paths in one MERGE.
+        self._exec(
+            f"MERGE INTO {PAGES_VS_SOURCE_TABLE} AS target "
+            f"USING (SELECT page_id, path, title, page_type, content_text, tags, version "
+            f"FROM {PAGES_TABLE} WHERE path IN ({paths_in})) AS source "
+            f"ON target.path = source.path "
+            f"WHEN MATCHED THEN UPDATE SET * "
+            f"WHEN NOT MATCHED THEN INSERT *"
+        )
+
+        # 4. Single multi-row INSERT INTO wiki_log (uuid() must live in SELECT,
+        # not VALUES, on a SQL warehouse — see _log() docstring).
+        log_select = " UNION ALL ".join(
+            (f"SELECT uuid() AS log_id, 'write' AS op_type, "
+             f"'{self._escape(r['path'])}' AS path") if i == 0 else
+            f"SELECT uuid(), 'write', '{self._escape(r['path'])}'"
+            for i, r in enumerate(rows)
+        )
+        try:
+            self._exec(
+                f"INSERT INTO {LOG_TABLE} (log_id, op_type, path) {log_select}"
+            )
+        except Exception:
+            pass
+
+        return len(rows)
+
     def _sync_vs_source(self, path: str) -> None:
         """Mirror a single page into the VS-source projection table.
 
@@ -344,20 +501,18 @@ class WikiClient:
         if dry_run:
             return {"written": 0, "would_write": len(pages), "source_tag": source_tag}
 
-        written = 0
-        for page in pages:
-            content = page["content"]
-            if isinstance(content, dict):
-                content = json.dumps(content)
-            self.write_page(
-                path=page["path"],
-                title=page["title"],
-                content_json=content,
-                page_type=page.get("page_type", "concept"),
-                created_by=page.get("created_by", "bulk-import"),
-                tags=page.get("tags") or [],
-            )
-            written += 1
+        normalized = [
+            {
+                "path": p["path"],
+                "title": p["title"],
+                "content": p["content"],
+                "page_type": p.get("page_type", "concept"),
+                "created_by": p.get("created_by", "bulk-import"),
+                "tags": p.get("tags") or [],
+            }
+            for p in pages
+        ]
+        written = self.write_pages(normalized)
 
         details = f"bulk_import count={written} source={source_tag or 'unset'}"
         self._log("bulk_import", details=details)
