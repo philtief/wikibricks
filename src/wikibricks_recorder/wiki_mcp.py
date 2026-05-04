@@ -15,7 +15,8 @@ Tools (mirror the deployed UC subset on reads):
 
 Register::
 
-    claude mcp add wiki -- uvx --from . wikibricks-mcp
+    claude mcp add wiki --scope user -- \
+      uvx --from "wikibricks[recorder] @ file:///abs/path/to/wikibricks-dev" wikibricks-mcp
 
 Auth uses the local Databricks profile. Workspace target + user_id resolved
 at startup via `config.load_config()` — env var, ~/.wikibricks-recorder.toml,

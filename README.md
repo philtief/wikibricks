@@ -319,13 +319,22 @@ The five MCP tools and their arguments (advertised at runtime by
 
 ### Quick install
 
-After `wiki-init`, install the five Claude Code hooks into
-`~/.claude/settings.json`. The CLI handles the merge and backs up any
-existing file:
+After `wiki-init`, install the five Claude Code hooks into a Claude Code
+settings file. The CLI merges with any existing entries and backs up the
+file before writing.
 
 ```bash
-wiki-init --install-hooks
+wiki-init --install-hooks                       # user scope (default)
+wiki-init --install-hooks --scope project       # team-shared, ./.claude/settings.json
+wiki-init --install-hooks --scope local         # personal-per-project, ./.claude/settings.local.json
+wiki-init --install-hooks --settings PATH       # explicit path (escape hatch)
 ```
+
+| Scope | Path | When to use |
+|---|---|---|
+| `user` | `~/.claude/settings.json` | Personal recorder for all projects (default) |
+| `project` | `./.claude/settings.json` | Team-shared hooks; commit to git |
+| `local` | `./.claude/settings.local.json` | Personal overrides for one project; gitignored |
 
 Then register the MCP server (run from your `wikibricks-dev` clone):
 

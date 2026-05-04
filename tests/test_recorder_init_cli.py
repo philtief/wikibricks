@@ -514,3 +514,82 @@ class TestInstallHooks:
         data = json.loads(settings.read_text())
         cmd = data["hooks"]["SessionStart"][0]["hooks"][0]["command"]
         assert cmd == "/p/python -m wikibricks_recorder.hooks"
+
+    def test_scope_user_resolves_to_home_settings(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        out = io.StringIO()
+        rc = init_cli.run(
+            ["--install-hooks", "--scope", "user", "--python", "/p/python"],
+            reader=make_reader([]),
+            out=out,
+            config_path=tmp_path / "rc.toml",
+            cwd=tmp_path / "project",
+        )
+        assert rc == 0
+        target = tmp_path / ".claude" / "settings.json"
+        assert target.exists()
+        data = json.loads(target.read_text())
+        assert "SessionStart" in data["hooks"]
+
+    def test_scope_project_resolves_to_cwd_dot_claude(self, tmp_path):
+        cwd = tmp_path / "project"
+        cwd.mkdir()
+        out = io.StringIO()
+        rc = init_cli.run(
+            ["--install-hooks", "--scope", "project", "--python", "/p/python"],
+            reader=make_reader([]),
+            out=out,
+            config_path=tmp_path / "rc.toml",
+            cwd=cwd,
+        )
+        assert rc == 0
+        target = cwd / ".claude" / "settings.json"
+        assert target.exists()
+        data = json.loads(target.read_text())
+        assert "SessionStart" in data["hooks"]
+
+    def test_scope_local_resolves_to_cwd_local_settings(self, tmp_path):
+        cwd = tmp_path / "project"
+        cwd.mkdir()
+        out = io.StringIO()
+        rc = init_cli.run(
+            ["--install-hooks", "--scope", "local", "--python", "/p/python"],
+            reader=make_reader([]),
+            out=out,
+            config_path=tmp_path / "rc.toml",
+            cwd=cwd,
+        )
+        assert rc == 0
+        target = cwd / ".claude" / "settings.local.json"
+        assert target.exists()
+
+    def test_scope_default_is_user(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(Path, "home", lambda: tmp_path)
+        out = io.StringIO()
+        rc = init_cli.run(
+            ["--install-hooks", "--python", "/p/python"],
+            reader=make_reader([]),
+            out=out,
+            config_path=tmp_path / "rc.toml",
+            cwd=tmp_path / "project",
+        )
+        assert rc == 0
+        assert (tmp_path / ".claude" / "settings.json").exists()
+
+    def test_scope_and_settings_flags_conflict(self, tmp_path, capsys):
+        with pytest.raises(SystemExit):
+            init_cli.run(
+                [
+                    "--install-hooks",
+                    "--scope",
+                    "user",
+                    "--settings",
+                    str(tmp_path / "x.json"),
+                ],
+                reader=make_reader([]),
+                out=io.StringIO(),
+                config_path=tmp_path / "rc.toml",
+                cwd=tmp_path,
+            )
+        err = capsys.readouterr().err
+        assert "not allowed with" in err or "argument" in err

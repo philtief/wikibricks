@@ -48,6 +48,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   first). Replaces the manual `sed examples/claude-settings.json` step.
   Honors `--python` and `--settings` for non-default paths. Marked
   legacy in 0.3.0 — recommended install path is now the plugin.
+- `wiki-init --install-hooks --scope {user,project,local}` — match the
+  `claude mcp add` UX. `user` (default) writes to `~/.claude/settings.json`;
+  `project` writes to `./.claude/settings.json` (team-shared, commit to
+  git); `local` writes to `./.claude/settings.local.json` (personal-per-
+  project, gitignored). `--scope` and `--settings` are mutually exclusive.
 - README "Recorder" section now lists every MCP tool's required and
   optional arguments, sourced from `wiki_mcp.py::get_tool_schemas()`.
 
@@ -57,6 +62,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `uvx --from . '.[recorder]'` invocation with the correct
   `uvx --from "wikibricks[recorder] @ file://$(pwd)"` form, and pointed
   users at the new `--install-hooks` flag.
+- `wiki_mcp.py` module docstring: updated the stale
+  `claude mcp add wiki -- uvx --from . wikibricks-mcp` example to the
+  working PEP 508 form (`--scope user`, absolute `file://` URL).
 
 ## [0.2.0] - 2026-05-03
 

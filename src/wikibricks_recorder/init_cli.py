@@ -354,6 +354,20 @@ def run_team_join(
     return 0
 
 
+def _resolve_settings_path(
+    settings: str | None, scope: str | None, cwd: Path
+) -> Path:
+    """Map --settings / --scope to a concrete settings.json path."""
+    if settings:
+        return Path(settings)
+    scope = scope or "user"
+    if scope == "user":
+        return Path.home() / ".claude" / "settings.json"
+    if scope == "project":
+        return cwd / ".claude" / "settings.json"
+    return cwd / ".claude" / "settings.local.json"
+
+
 def install_hooks(
     *,
     settings_path: Path,
@@ -439,10 +453,19 @@ def run(
         metavar="PATH",
         help="Python executable for hook commands (default: sys.executable).",
     )
-    parser.add_argument(
+    location = parser.add_mutually_exclusive_group()
+    location.add_argument(
+        "--scope",
+        choices=["user", "project", "local"],
+        help=(
+            "Where to write hooks: user → ~/.claude/settings.json (default), "
+            "project → ./.claude/settings.json, local → ./.claude/settings.local.json."
+        ),
+    )
+    location.add_argument(
         "--settings",
         metavar="PATH",
-        help="Claude Code settings.json path (default: ~/.claude/settings.json).",
+        help="Explicit settings.json path. Mutually exclusive with --scope.",
     )
     ns = parser.parse_args(args)
 
@@ -452,9 +475,7 @@ def run(
     cwd = cwd or Path.cwd()
 
     if ns.install_hooks:
-        settings_path = (
-            Path(ns.settings) if ns.settings else Path.home() / ".claude" / "settings.json"
-        )
+        settings_path = _resolve_settings_path(ns.settings, ns.scope, cwd)
         python_path = ns.python or sys.executable
         return install_hooks(
             settings_path=settings_path,
