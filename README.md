@@ -359,6 +359,38 @@ If you would rather hand-merge, the bundled template at
 sed "s|/PATH/TO/wikibricks-dev|$(pwd)|g" examples/claude-settings.json
 ```
 
+### Team-shared MCP via `.mcp.json`
+
+For a team that wants every contributor to register the same `wiki` MCP
+server when they open the repo in Claude Code, commit a `.mcp.json` at the
+repo root instead of asking each developer to run `claude mcp add`:
+
+```json
+{
+  "mcpServers": {
+    "wiki": {
+      "command": "uvx",
+      "args": [
+        "--from",
+        "wikibricks[recorder] @ git+https://github.com/<org>/wikibricks-dev@v0.2.0",
+        "wikibricks-mcp"
+      ]
+    }
+  }
+}
+```
+
+Claude Code prompts the user to approve the server on first session in the
+repo, then auto-starts it from then on. **Caveat:** this snippet pins the
+recorder to a Git ref so every machine resolves to the same code — `file://`
+absolute paths work for one developer but break across teammates. If you
+publish the recorder to PyPI (or a private index), replace the `--from` arg
+with `wikibricks[recorder]==0.2.0` for a faster cold-start.
+
+Hooks are still per-machine (`settings.json` is not committable for team
+hooks because the recorder needs an absolute Python path). Each developer
+runs `wiki-init --install-hooks` once in their own user scope.
+
 ### Per-task wiki switching
 
 ```bash

@@ -43,6 +43,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`tests/test_plugin_manifest.py`** — 16 manifest tests covering plugin
   fields, version sync with `pyproject.toml`, hook events + timeouts,
   MCP server entry, launcher executability, and marketplace consistency.
+- README "Team-shared MCP via `.mcp.json`" section — show how a team commits
+  one `.mcp.json` at the repo root that pins the recorder to a Git ref, so
+  every contributor's Claude Code session registers the same `wiki` server
+  without each developer running `claude mcp add`. Documents the file://
+  portability caveat and the per-machine nature of hooks. (Largely
+  superseded by the plugin's own `.mcp.json` from 0.3.0; kept for
+  non-plugin / multi-server team setups.)
 - `wiki-init --install-hooks` — auto-merge the five recorder hooks into
   `~/.claude/settings.json` (existing entries preserved, file backed up
   first). Replaces the manual `sed examples/claude-settings.json` step.
