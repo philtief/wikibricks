@@ -73,7 +73,7 @@ def run_sql(sql: str) -> list[dict]:
     resp = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,
         statement=sql,
-        wait_timeout="60s",
+        wait_timeout="30s",
     )
     rows = resp.result.data_array or []
     if not rows:
