@@ -21,6 +21,22 @@
 # COMMAND ----------
 
 import json
+import os
+
+
+def _read_widget(name: str, default: str) -> str:
+    try:
+        val = dbutils.widgets.get(name)  # noqa: F821
+        return val or default
+    except Exception:
+        dbutils.widgets.text(name, default)  # noqa: F821
+        return default
+
+
+# wikibricks.ops reads CATALOG/SCHEMA from os.environ at module import time —
+# resolve the job's `catalog` / `schema` widgets into the env BEFORE importing.
+os.environ["WIKIBRICKS_CATALOG"] = _read_widget("catalog", "main")
+os.environ["WIKIBRICKS_SCHEMA"] = _read_widget("schema", "wiki")
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import ChatMessage, ChatMessageRole

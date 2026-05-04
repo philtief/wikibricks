@@ -40,6 +40,9 @@ select = ["E", "F", "W", "I"]
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*" = ["E501"]
+# Notebooks set os.environ from job widgets before importing wikibricks.* — the
+# import-after-statement pattern is required, not a smell.
+"notebooks/*" = ["E402"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

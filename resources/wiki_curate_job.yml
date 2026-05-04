@@ -25,6 +25,8 @@ resources:
           notebook_task:
             notebook_path: ../notebooks/wiki_curate.py
             base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
               warehouse_id: ${var.warehouse_id}
               stale_days: "90"
               connect_lookback_hours: "48"
@@ -40,6 +42,8 @@ resources:
           notebook_task:
             notebook_path: ../notebooks/wiki_segregate.py
             base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
               warehouse_id: ${var.warehouse_id}
               chat_endpoint: ${var.llm_model}
               max_chars_per_chunk: "8000"
@@ -52,6 +56,8 @@ resources:
           notebook_task:
             notebook_path: ../notebooks/promote_from_traces.py
             base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
               warehouse_id: ${var.warehouse_id}
               judge_endpoint: ${var.llm_model}
               embed_endpoint: ${var.embed_model}
