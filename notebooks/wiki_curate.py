@@ -203,8 +203,11 @@ else:
 
 # COMMAND ----------
 
+# Alias page_id AS id and content_text AS body to match classify_page_health
+# / find_duplicate_paths which read those keys (the actual table columns are
+# page_id and content_text — see ops.py and the deploy notebook's CREATE TABLE).
 pages_for_health = run_sql(
-    f"SELECT id, path, body FROM {PAGES_TABLE} "
+    f"SELECT page_id AS id, path, content_text AS body FROM {PAGES_TABLE} "
     f"WHERE path NOT LIKE '_meta/%' "
     f"ORDER BY updated_at DESC LIMIT {MAX_PAGES_PER_RUN}"
 )
@@ -227,7 +230,7 @@ for status, ids in health_by_status.items():
             f"UPDATE {PAGES_TABLE} "
             f"SET health_status = '{status}', health_score = {score}, "
             f"last_health_check = current_timestamp() "
-            f"WHERE id IN ({id_list})"
+            f"WHERE page_id IN ({id_list})"
         ),
         wait_timeout="30s",
     )
