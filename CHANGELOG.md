@@ -9,6 +9,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.3.0] - 2026-05-04
 
+### Fixed
+
+- **Curate / segregate / promote notebooks** set `WIKIBRICKS_CATALOG`
+  and `WIKIBRICKS_SCHEMA` from job widgets before importing
+  `wikibricks.ops` — `ops` reads them at module-load time and was
+  silently resolving every table to `main.wiki` (latent since the
+  recorder shipped). `resources/wiki_curate_job.yml` now passes
+  `catalog` / `schema` widgets to all three task `base_parameters`.
+- **Phase 4 health check** in the curate notebook used the wrong
+  column names (`id`, `body`) — corrected to `page_id` / `content_text`
+  via SQL aliases so `classify_page_health` / `find_duplicate_paths`
+  keep working unchanged.
+- **`run_sql` in segregate** used `wait_timeout="60s"`, which the
+  Databricks Statements API rejects — capped at 50s, lowered to 30s
+  for consistency with curate.
+
+### Performance
+
+- **`WikiClient.commit_edges`** now batches into a single MERGE
+  (multi-row VALUES source) instead of one MERGE per edge. At scale
+  (60 edges per session page × 66 pages updated in 48h) this turns 3960
+  round-trips into 66, dropping a ~3-hour curate phase to ~3 minutes.
+- **`WikiClient.propose_edges`** drops the N+1 `SELECT page_id FROM
+  pages WHERE path = ...` per matching title — `list_pages()` now
+  returns `page_id` (additive change, no breaking callers) and
+  `propose_edges` reads it directly. The shipped curate job lowers
+  `max_pages_per_run` default from 500 → 100 to keep cold-start
+  serverless runs inside the 30-min task budget; pages beyond the cap
+  roll forward into the next nightly window.
+- **New `WikiClient.write_pages(pages: list[dict])`** does real batched
+  writes — exactly four SQL statements regardless of N (history INSERT,
+  pages MERGE, pages_vs_source MERGE, wiki_log INSERT). `bulk_write_pages`
+  delegates to it. `notebooks/wiki_segregate.py` collects parent + chunk
+  children into one `wiki.write_pages(...)` call per oversize page,
+  collapsing 6× round-trips per page into 1×. End-to-end: a curate run
+  that previously timed out at 30 min now completes all three tasks
+  in ~32 min on cold serverless including the full segregate workload.
+
 ### Changed
 
 - Plugin launcher's `WIKIBRICKS_PLUGIN_REF` default switched from `main`
