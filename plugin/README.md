@@ -68,7 +68,7 @@ wikibricks-recorder-hook`):
 
 | Variable                  | Default                                            | Purpose                                            |
 | :------------------------ | :------------------------------------------------- | :------------------------------------------------- |
-| `WIKIBRICKS_PLUGIN_REF`   | `main`                                             | Git ref (tag/branch/sha) the launcher installs. Pin to a tag (e.g. `v0.3.0`) once stable. |
+| `WIKIBRICKS_PLUGIN_REF`   | `v0.3.0`                                           | Git ref (tag/branch/sha) the launcher installs. Override to track `main` for bleeding-edge or pin to a different tag. |
 | `WIKIBRICKS_PLUGIN_GIT`   | `https://github.com/philtief/wikibricks-dev.git`   | Git URL the launcher installs from. Will move to the public mirror later. |
 | `WIKIBRICKS_RECORDER_DIR` | `~/.wikibricks/sessions/`                          | Where session event logs are buffered before flush. |
 | `WIKIBRICKS_CATALOG`      | (resolved via `~/.wikibricks-recorder.toml`)       | UC catalog the recorder writes to.                 |
