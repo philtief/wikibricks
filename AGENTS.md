@@ -62,10 +62,10 @@ it under one of these prefixes so the cut stays mechanical.
 ```
 scripts/build_hotpot_seed.py
 scripts/fetch_hotpot.py
-scripts/hotpot_*.py                  # hotpot_01_setup … hotpot_04_render
+scripts/hotpot_*.py                  # hotpot_02_vs_index, hotpot_03_benchmark, etc.
 scripts/build_twowiki_seed.py
 scripts/fetch_twowiki.py
-scripts/twowiki_*.py                 # twowiki_01_setup … twowiki_06_render, _quick_eval, _variants
+scripts/twowiki_*.py                 # twowiki_02_vs_index, twowiki_03_retrieve, twowiki_04_generate, twowiki_05_evaluate, etc.
 scripts/twowiki_batch_loop.sh
 src/wikibricks/seeds/hotpot/         # HotPotQA seed loader
 src/wikibricks/seeds/twowiki/        # 2WikiMultiHopQA seed loader
@@ -74,6 +74,9 @@ tests/test_eval_metrics.py
 vendor/2wikimultihop_evaluate_v1.1.py
 docs/hotpotqa_evaluation.md
 docs/twowiki_evaluation.md
+notebooks/benchmark_hotpot.py        # HotpotQA benchmark notebook
+examples/hotpotqa.md                 # references excluded hotpot scripts
+examples/twowiki.md                  # references excluded twowiki scripts
 ```
 
 Everything outside this list is public-eligible. `scripts/diagnose_traces.py`,
@@ -129,7 +132,12 @@ because public users can't read `wikibricks-dev`.
    appear in `${CLAUDE_PLUGIN_DATA}/bin/`, and the MCP tools register as
    `mcp__plugin_wikibricks-recorder_wiki__*` in a regular session
    (no `--plugin-dir` flag).
-5. **Update CHANGELOG bottom-of-file compare links** if they ever drift
+5. **Strip the `## Evaluation` section from `README.md`** on the public
+   mirror. The section cites HotpotQA + 2WikiMultiHopQA scores with
+   links to `docs/hotpotqa_evaluation.md` / `docs/twowiki_evaluation.md`
+   — both dev-only — so the links would 404 on public. Dev keeps the
+   section.
+6. **Update CHANGELOG bottom-of-file compare links** if they ever drift
    away from `philtief/wikibricks` — they currently already point at the
    public mirror, so this is a watch-out, not a normal step.
 
