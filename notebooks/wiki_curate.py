@@ -16,15 +16,31 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.1.5-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.3.0-py3-none-any.whl
 # MAGIC # ^ Update path to where the wheel lives in your workspace.
 # MAGIC %restart_python
 
 # COMMAND ----------
 
 import json
+import os
 import uuid
 from datetime import datetime, timedelta, timezone
+
+
+def _read_widget(name: str, default: str) -> str:
+    try:
+        val = dbutils.widgets.get(name)  # noqa: F821
+        return val or default
+    except Exception:
+        dbutils.widgets.text(name, default)  # noqa: F821
+        return default
+
+
+# wikibricks.ops reads CATALOG/SCHEMA from os.environ at module import time —
+# resolve the job's `catalog` / `schema` widgets into the env BEFORE importing.
+os.environ["WIKIBRICKS_CATALOG"] = _read_widget("catalog", "main")
+os.environ["WIKIBRICKS_SCHEMA"] = _read_widget("schema", "wiki")
 
 from databricks.sdk import WorkspaceClient
 
@@ -187,8 +203,11 @@ else:
 
 # COMMAND ----------
 
+# Alias page_id AS id and content_text AS body to match classify_page_health
+# / find_duplicate_paths which read those keys (the actual table columns are
+# page_id and content_text — see ops.py and the deploy notebook's CREATE TABLE).
 pages_for_health = run_sql(
-    f"SELECT id, path, body FROM {PAGES_TABLE} "
+    f"SELECT page_id AS id, path, content_text AS body FROM {PAGES_TABLE} "
     f"WHERE path NOT LIKE '_meta/%' "
     f"ORDER BY updated_at DESC LIMIT {MAX_PAGES_PER_RUN}"
 )
@@ -211,7 +230,7 @@ for status, ids in health_by_status.items():
             f"UPDATE {PAGES_TABLE} "
             f"SET health_status = '{status}', health_score = {score}, "
             f"last_health_check = current_timestamp() "
-            f"WHERE id IN ({id_list})"
+            f"WHERE page_id IN ({id_list})"
         ),
         wait_timeout="30s",
     )

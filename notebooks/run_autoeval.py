@@ -8,7 +8,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.1.5-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.3.0-py3-none-any.whl
 # MAGIC # ^ Update path to where the wheel lives in your workspace.
 # MAGIC %restart_python
 
@@ -73,7 +73,7 @@ def aggregate(results):
     return {
         "recall@3": sum(eval_recall_at_k(r["retrieved"], r["relevant"], 3) for r in results) / n,
         "recall@5": sum(eval_recall_at_k(r["retrieved"], r["relevant"], 5) for r in results) / n,
-        "[redacted-metric]": sum(eval_recall_at_k(r["retrieved"], r["relevant"], 10) for r in results) / n,
+        "recall@10": sum(eval_recall_at_k(r["retrieved"], r["relevant"], 10) for r in results) / n,
         "precision@3": sum(eval_precision_at_k(r["retrieved"], r["relevant"], 3) for r in results) / n,
         "precision@5": sum(eval_precision_at_k(r["retrieved"], r["relevant"], 5) for r in results) / n,
         "mrr": sum(eval_mrr(r["retrieved"], r["relevant"]) for r in results) / n,

@@ -14,13 +14,29 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.1.5-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.3.0-py3-none-any.whl
 # MAGIC # ^ Update path to where the wheel lives in your workspace.
 # MAGIC %restart_python
 
 # COMMAND ----------
 
 import json
+import os
+
+
+def _read_widget(name: str, default: str) -> str:
+    try:
+        val = dbutils.widgets.get(name)  # noqa: F821
+        return val or default
+    except Exception:
+        dbutils.widgets.text(name, default)  # noqa: F821
+        return default
+
+
+# wikibricks.ops reads CATALOG/SCHEMA from os.environ at module import time —
+# resolve the job's `catalog` / `schema` widgets into the env BEFORE importing.
+os.environ["WIKIBRICKS_CATALOG"] = _read_widget("catalog", "main")
+os.environ["WIKIBRICKS_SCHEMA"] = _read_widget("schema", "wiki")
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
@@ -57,7 +73,7 @@ def run_sql(sql: str) -> list[dict]:
     resp = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,
         statement=sql,
-        wait_timeout="60s",
+        wait_timeout="30s",
     )
     rows = resp.result.data_array or []
     if not rows:
@@ -146,30 +162,34 @@ for page in oversize:
     summary, titles = llm_summary_and_titles(page["title"], body, len(chunks))
 
     toc = []
+    chunk_writes: list[dict] = []
     for idx, (chunk_body, chunk_t) in enumerate(zip(chunks, titles), start=1):
         cp = child_path(page["path"], idx)
         ct = child_title(page["title"], chunk_t)
-        wiki.write_page(
-            path=cp,
-            title=ct,
-            content_json={"summary": chunk_t, "body": chunk_body},
-            page_type="chunk",
-            created_by="segregate",
-            tags=["chunk"],
-            parent_id=page["page_id"],
-            chunk_index=idx,
-        )
+        chunk_writes.append({
+            "path": cp,
+            "title": ct,
+            "content": {"summary": chunk_t, "body": chunk_body},
+            "page_type": "chunk",
+            "created_by": "segregate",
+            "tags": ["chunk"],
+            "parent_id": page["page_id"],
+            "chunk_index": idx,
+        })
         toc.append({"path": cp, "title": ct})
 
     parent_body = build_parent_body(summary=summary, toc=toc)
-    wiki.write_page(
-        path=page["path"],
-        title=page["title"],
-        content_json={"summary": summary, "body": parent_body},
-        page_type=page.get("page_type") or "concept",
-        created_by="segregate",
-        tags=list(page.get("tags") or []),
-    )
+    parent_write = {
+        "path": page["path"],
+        "title": page["title"],
+        "content": {"summary": summary, "body": parent_body},
+        "page_type": page.get("page_type") or "concept",
+        "created_by": "segregate",
+        "tags": list(page.get("tags") or []),
+    }
+    # One batched call instead of len(chunks)+1 sequential write_page calls
+    # — collapses 4*(N+1) SQL round-trips into 4 (see WikiClient.write_pages).
+    wiki.write_pages(chunk_writes + [parent_write])
 
     # Mark the parent healthy so curate doesn't keep re-flagging it.
     w.statement_execution.execute_statement(

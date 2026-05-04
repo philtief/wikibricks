@@ -10,8 +10,12 @@ dist/
 app/wikibricks-*.whl
 .DS_Store
 .cache/
-.databricks/
-data/
-NEXT_STEPS.md
-linkedin_post.md
+src/wikibricks/seeds/hotpot/*.jsonl
+src/wikibricks/seeds/twowiki/*.jsonl
+data/twowiki/
+vendor/
+benchmark_results.json
+
+# Ad-hoc local artifacts (blog drafts, one-pagers) at repo root — not part of the repo
+/*.html
 

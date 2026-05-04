@@ -23,7 +23,7 @@ variables:
     description: Vector Search endpoint name.
     default: wiki_endpoint
   seed_domain:
-    description: Seed-domain loader (sample | custom | none).
+    description: Seed-domain loader (sample | hotpot | custom | none).
     default: sample
   llm_model:
     description: Foundation-Model-API endpoint used by the Streamlit app chat + judge.

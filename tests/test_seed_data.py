@@ -1,5 +1,6 @@
 """Tests for WikiBricks seed data and AutoEval functions."""
 
+import importlib.util
 import json
 
 import pytest
@@ -64,6 +65,14 @@ class TestSeedDomains:
         eval_paths = {path for q in eval_queries() for path in q["relevant_paths"]}
         missing = eval_paths - seed_paths
         assert not missing, f"sample seed missing paths referenced by eval_queries: {missing}"
+
+    @pytest.mark.skipif(
+        importlib.util.find_spec("wikibricks.seeds.hotpot") is None,
+        reason="hotpot seed loader is dev-only (not shipped to the public mirror)",
+    )
+    def test_hotpot_empty_when_no_corpus(self, monkeypatch):
+        monkeypatch.setenv("WIKIBRICKS_HOTPOT_PAGES", "/nonexistent/hotpot/pages.jsonl")
+        assert seeds.load("hotpot") == []
 
     def test_custom_empty_by_default(self, monkeypatch):
         monkeypatch.delenv("WIKIBRICKS_CUSTOM_PAGES", raising=False)

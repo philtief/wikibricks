@@ -160,6 +160,163 @@ class WikiClient:
         self._log("write", path=path)
         return f"Wrote wiki page: {path}"
 
+    def write_pages(self, pages: list[dict]) -> int:
+        """Batched write_page — collapses N pages into 4 SQL statements total.
+
+        For each page in `pages`, the dict supports the same fields as
+        `write_page` keyword args: path, title, content (str or dict with
+        summary+body), page_type, created_by, tags, source_ids, parent_id,
+        chunk_index. Falls back to the same defaults as `write_page` for
+        missing fields.
+
+        Statement plan (vs. N × 4 = 4N statements when looping write_page):
+          1. INSERT INTO pages_history ... SELECT ... FROM pages WHERE path IN (...)
+          2. MERGE INTO pages USING (UNION ALL of N source rows)
+          3. MERGE INTO pages_vs_source FROM pages WHERE path IN (...)
+          4. INSERT INTO wiki_log (UNION ALL of N rows)
+
+        Returns the number of pages written.
+
+        Used by segregate (parent + N chunk children per oversize page) and
+        bulk_write_pages. For the agent-marketplace wiki at 27 oversize pages
+        × ~5 chunks each, this is the difference between ~33 min of write
+        round-trips and ~1 min.
+        """
+        if not pages:
+            return 0
+
+        rows: list[dict] = []
+        for p in pages:
+            content = p.get("content") if "content" in p else p.get("content_json")
+            if isinstance(content, dict):
+                content = json.dumps(content)
+            if not p.get("path") or not p.get("title") or content is None:
+                continue
+            rows.append({
+                "path": p["path"],
+                "title": p["title"],
+                "page_type": p.get("page_type", "concept"),
+                "content": content,
+                "tags": p.get("tags") or [],
+                "source_ids": p.get("source_ids"),
+                "parent_id": p.get("parent_id"),
+                "chunk_index": p.get("chunk_index"),
+                "created_by": p.get("created_by", "agent"),
+            })
+        if not rows:
+            return 0
+
+        def _row_select(r: dict, with_aliases: bool) -> str:
+            path = self._escape(r["path"])
+            title = self._escape(r["title"])
+            content = self._escape(r["content"])
+            page_type = r["page_type"]
+            tags = r["tags"]
+            tags_sql = (
+                f"ARRAY({','.join(repr(t) for t in tags)})"
+                if tags else "CAST(ARRAY() AS ARRAY<STRING>)"
+            )
+            sids = r["source_ids"]
+            sids_sql = (
+                f"ARRAY({','.join(repr(s) for s in sids)})"
+                if sids else "CAST(NULL AS ARRAY<STRING>)"
+            )
+            parent_sql = (
+                f"'{self._escape(r['parent_id'])}'"
+                if r["parent_id"] else "CAST(NULL AS STRING)"
+            )
+            chunk_sql = (
+                str(r["chunk_index"])
+                if r["chunk_index"] is not None else "CAST(NULL AS INT)"
+            )
+            created_by = self._escape(r["created_by"])
+            cols = (
+                f"'{path}', '{title}', '{page_type}', '{content}', "
+                f"{tags_sql}, {sids_sql}, {parent_sql}, {chunk_sql}, '{created_by}'"
+            )
+            if with_aliases:
+                return (
+                    f"SELECT '{path}' AS path, '{title}' AS title, "
+                    f"'{page_type}' AS page_type, '{content}' AS content_json, "
+                    f"{tags_sql} AS tags, {sids_sql} AS source_ids, "
+                    f"{parent_sql} AS parent_id, {chunk_sql} AS chunk_index, "
+                    f"'{created_by}' AS created_by"
+                )
+            return f"SELECT {cols}"
+
+        source_sql = " UNION ALL ".join(
+            _row_select(r, with_aliases=(i == 0)) for i, r in enumerate(rows)
+        )
+        paths_in = ", ".join(f"'{self._escape(r['path'])}'" for r in rows)
+
+        # 1. Archive existing rows for these paths into history.
+        self._exec(
+            f"INSERT INTO {HISTORY_TABLE} "
+            f"(page_id, path, title, page_type, content, content_text, tags, "
+            f"created_by, created_at, version) "
+            f"SELECT page_id, path, title, page_type, content, content_text, tags, "
+            f"created_by, created_at, version "
+            f"FROM {PAGES_TABLE} WHERE path IN ({paths_in})"
+        )
+
+        # 2. MERGE INTO pages — one statement covering all rows.
+        self._exec(
+            f"MERGE INTO {PAGES_TABLE} AS target "
+            f"USING ({source_sql}) AS source "
+            f"ON target.path = source.path "
+            f"WHEN MATCHED THEN UPDATE SET "
+            f"  title = source.title, "
+            f"  page_type = source.page_type, "
+            f"  content = PARSE_JSON(source.content_json), "
+            f"  content_text = concat("
+            f"    PARSE_JSON(source.content_json):summary::STRING, ' ', "
+            f"    PARSE_JSON(source.content_json):body::STRING), "
+            f"  tags = source.tags, "
+            f"  source_ids = source.source_ids, "
+            f"  parent_id = source.parent_id, "
+            f"  chunk_index = source.chunk_index, "
+            f"  created_by = source.created_by, "
+            f"  updated_at = current_timestamp(), "
+            f"  version = target.version + 1 "
+            f"WHEN NOT MATCHED THEN INSERT "
+            f"  (page_id, path, title, page_type, content, content_text, tags, "
+            f"   source_ids, parent_id, chunk_index, created_by, version) "
+            f"VALUES (uuid(), source.path, source.title, source.page_type, "
+            f"  PARSE_JSON(source.content_json), "
+            f"  concat("
+            f"    PARSE_JSON(source.content_json):summary::STRING, ' ', "
+            f"    PARSE_JSON(source.content_json):body::STRING), "
+            f"  source.tags, source.source_ids, source.parent_id, "
+            f"  source.chunk_index, source.created_by, 1)"
+        )
+
+        # 3. Sync pages_vs_source for all touched paths in one MERGE.
+        self._exec(
+            f"MERGE INTO {PAGES_VS_SOURCE_TABLE} AS target "
+            f"USING (SELECT page_id, path, title, page_type, content_text, tags, version "
+            f"FROM {PAGES_TABLE} WHERE path IN ({paths_in})) AS source "
+            f"ON target.path = source.path "
+            f"WHEN MATCHED THEN UPDATE SET * "
+            f"WHEN NOT MATCHED THEN INSERT *"
+        )
+
+        # 4. Single multi-row INSERT INTO wiki_log (uuid() must live in SELECT,
+        # not VALUES, on a SQL warehouse — see _log() docstring).
+        log_select = " UNION ALL ".join(
+            (f"SELECT uuid() AS log_id, 'write' AS op_type, "
+             f"'{self._escape(r['path'])}' AS path") if i == 0 else
+            f"SELECT uuid(), 'write', '{self._escape(r['path'])}'"
+            for i, r in enumerate(rows)
+        )
+        try:
+            self._exec(
+                f"INSERT INTO {LOG_TABLE} (log_id, op_type, path) {log_select}"
+            )
+        except Exception:
+            pass
+
+        return len(rows)
+
     def _sync_vs_source(self, path: str) -> None:
         """Mirror a single page into the VS-source projection table.
 
@@ -192,11 +349,11 @@ class WikiClient:
             self._log("vs_sync_fail", details=f"{type(e).__name__}: {e}")
 
     def list_pages(self, path_prefix: str | None = None) -> list[dict]:
-        """List wiki pages for navigation. Returns path, title, page_type, version."""
+        """List wiki pages for navigation. Returns page_id, path, title, page_type, version."""
         prefix_esc = self._escape(path_prefix) if path_prefix else None
         where = f"WHERE path LIKE '{prefix_esc}%'" if prefix_esc else ""
         resp = self._exec(
-            f"SELECT path, title, page_type, version "
+            f"SELECT page_id, path, title, page_type, version "
             f"FROM {PAGES_TABLE} {where} ORDER BY path"
         )
         rows = resp.result.data_array if resp.result else []
@@ -344,20 +501,18 @@ class WikiClient:
         if dry_run:
             return {"written": 0, "would_write": len(pages), "source_tag": source_tag}
 
-        written = 0
-        for page in pages:
-            content = page["content"]
-            if isinstance(content, dict):
-                content = json.dumps(content)
-            self.write_page(
-                path=page["path"],
-                title=page["title"],
-                content_json=content,
-                page_type=page.get("page_type", "concept"),
-                created_by=page.get("created_by", "bulk-import"),
-                tags=page.get("tags") or [],
-            )
-            written += 1
+        normalized = [
+            {
+                "path": p["path"],
+                "title": p["title"],
+                "content": p["content"],
+                "page_type": p.get("page_type", "concept"),
+                "created_by": p.get("created_by", "bulk-import"),
+                "tags": p.get("tags") or [],
+            }
+            for p in pages
+        ]
+        written = self.write_pages(normalized)
 
         details = f"bulk_import count={written} source={source_tag or 'unset'}"
         self._log("bulk_import", details=details)
@@ -418,6 +573,10 @@ class WikiClient:
                 "origin": "auto-vs",
             }
 
+        # Title-substring match. list_pages() now returns page_id, so we
+        # avoid the per-match SELECT that previously dominated propose_edges
+        # latency on wikis with many pages (one round-trip per matching title
+        # × N pages = the prior 55s/page was almost entirely this loop).
         other_pages = self.list_pages()
         content_lower = content.lower()
         for p in other_pages:
@@ -428,14 +587,8 @@ class WikiClient:
                 continue
             if title.lower() not in content_lower:
                 continue
-            tgt_resp = self._exec(
-                f"SELECT page_id FROM {PAGES_TABLE} WHERE path = '{self._escape(p['path'])}'"
-            )
-            rows = tgt_resp.result.data_array if tgt_resp.result else []
-            if not rows:
-                continue
-            tgt_id = rows[0][0]
-            if tgt_id == source_id:
+            tgt_id = p.get("page_id")
+            if not tgt_id or tgt_id == source_id:
                 continue
             key = (tgt_id, "related")
             candidates[key] = {
@@ -451,12 +604,16 @@ class WikiClient:
         return list(candidates.values())
 
     def commit_edges(self, edges: list[dict]) -> int:
-        """Batch-MERGE edges into the links table. Returns number of rows attempted.
+        """Batch-MERGE edges into the links table in a single statement.
 
         Each edge dict must contain: source_page_id, target_page_id, link_type,
         confidence, origin. Invalid rows are skipped silently.
+
+        Collapses N edges into ONE MERGE with a multi-row VALUES source — at
+        scale (60 edges/page × 66 pages/run) this reduces 3960 round-trips to
+        66, which is the difference between a 3-hour run and a 3-minute run.
         """
-        written = 0
+        valid: list[tuple[str, str, str, float, str]] = []
         for e in edges:
             lt = e.get("link_type", "related")
             origin = e.get("origin", "manual")
@@ -467,25 +624,32 @@ class WikiClient:
                 continue
             if not 0.0 <= conf <= 1.0:
                 continue
-            try:
-                self._exec(
-                    f"MERGE INTO {LINKS_TABLE} AS t "
-                    f"USING (SELECT '{src}' AS src, '{tgt}' AS tgt, "
-                    f"'{lt}' AS lt, CAST({conf} AS FLOAT) AS conf, "
-                    f"'{origin}' AS org) AS s "
-                    f"ON t.source_page_id = s.src AND t.target_page_id = s.tgt "
-                    f"AND t.link_type = s.lt "
-                    f"WHEN MATCHED THEN UPDATE SET confidence = s.conf, origin = s.org "
-                    f"WHEN NOT MATCHED THEN INSERT "
-                    f"(source_page_id, target_page_id, link_type, confidence, origin) "
-                    f"VALUES (s.src, s.tgt, s.lt, s.conf, s.org)"
-                )
-                written += 1
-            except Exception:
-                continue
-        if written:
-            self._log("connect", details=f"committed={written}")
-        return written
+            valid.append((src, tgt, lt, conf, origin))
+
+        if not valid:
+            return 0
+
+        rows_sql = ", ".join(
+            f"('{src}', '{tgt}', '{lt}', CAST({conf} AS FLOAT), '{origin}')"
+            for src, tgt, lt, conf, origin in valid
+        )
+        try:
+            self._exec(
+                f"MERGE INTO {LINKS_TABLE} AS t "
+                f"USING (SELECT * FROM (VALUES {rows_sql}) "
+                f"AS v(src, tgt, lt, conf, org)) AS s "
+                f"ON t.source_page_id = s.src AND t.target_page_id = s.tgt "
+                f"AND t.link_type = s.lt "
+                f"WHEN MATCHED THEN UPDATE SET confidence = s.conf, origin = s.org "
+                f"WHEN NOT MATCHED THEN INSERT "
+                f"(source_page_id, target_page_id, link_type, confidence, origin) "
+                f"VALUES (s.src, s.tgt, s.lt, s.conf, s.org)"
+            )
+        except Exception:
+            return 0
+
+        self._log("connect", details=f"committed={len(valid)}")
+        return len(valid)
 
     def graph_neighbors(
         self,

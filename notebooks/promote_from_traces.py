@@ -9,7 +9,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.1.5-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.3.0-py3-none-any.whl
 # MAGIC # ^ Update path to where the wheel lives in your workspace. `databricks
 # MAGIC #   bundle deploy` builds the wheel locally and syncs it to the bundle
 # MAGIC #   workspace path; for interactive runs, upload dist/wikibricks-*.whl
@@ -18,7 +18,23 @@
 
 # COMMAND ----------
 
+import os
 from datetime import timezone
+
+
+def _read_widget(name: str, default: str) -> str:
+    try:
+        val = dbutils.widgets.get(name)  # noqa: F821
+        return val or default
+    except Exception:
+        dbutils.widgets.text(name, default)  # noqa: F821
+        return default
+
+
+# wikibricks.ops reads CATALOG/SCHEMA from os.environ at module import time —
+# resolve the job's `catalog` / `schema` widgets into the env BEFORE importing.
+os.environ["WIKIBRICKS_CATALOG"] = _read_widget("catalog", "main")
+os.environ["WIKIBRICKS_SCHEMA"] = _read_widget("schema", "wiki")
 
 from databricks.sdk import WorkspaceClient
 
@@ -46,7 +62,7 @@ def _param(name: str, default: str) -> str:
 WAREHOUSE_ID = _param("warehouse_id", "")
 TRACES_TABLE = _param("traces_table", "<catalog>.<schema>.agent_traces")
 JUDGE_ENDPOINT = _param("judge_endpoint", "databricks-claude-sonnet-4-5")
-EMBED_ENDPOINT = _param("embed_endpoint", "[redacted-model]")
+EMBED_ENDPOINT = _param("embed_endpoint", "databricks-bge-large-en")
 MIN_CLUSTER_MEMBERS = int(_param("min_cluster_members", "5"))
 MIN_DISTINCT_SESSIONS = int(_param("min_distinct_sessions", "3"))
 JUDGE_THRESHOLD = float(_param("judge_threshold", "4.0"))

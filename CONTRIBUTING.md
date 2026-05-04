@@ -10,8 +10,9 @@ project's non-negotiables.
 ```bash
 git clone https://github.com/<you>/wikibricks.git
 cd wikibricks
-uv sync
-uv run pytest       # 306 tests, no Databricks workspace required
+uv sync                       # core library only
+uv sync --extra recorder      # also include the optional recorder package
+uv run pytest                 # 453 tests, no Databricks workspace required
 ```
 
 A Databricks workspace is only needed for bundle deploy and end-to-end runs.
@@ -33,8 +34,14 @@ problem and create a **new** commit — never `--amend` or `--no-verify`.
 
 1. **No LLM calls inside `src/wikibricks/`.** The library is a storage contract.
    All LLM work lives in `notebooks/promote_from_traces.py` or user code.
-2. **No FastMCP.** UC functions are the MCP surface via Databricks managed MCP.
-3. **No raw REST API calls.** Use `databricks.sdk.WorkspaceClient` everywhere.
+   *Scope:* this rule binds the library only; `src/wikibricks_recorder/`
+   is consumer-side tooling and may interact with LLMs.
+2. **No FastMCP or bespoke MCP server *for the library*.** UC functions are
+   the library's MCP surface via Databricks managed MCP. The recorder
+   package ships its own stdio MCP server (`wikibricks-mcp`) because UC
+   functions cannot do DML — that is consumer-side and allowed.
+3. **No raw REST API calls.** Use `databricks.sdk.WorkspaceClient` everywhere
+   except the vendored [redacted benchmark] evaluator.
 4. **No hardcoded workspace IDs.** `databricks.yml` uses generic defaults;
    workspace-specific values belong in `databricks.override.yml` (gitignored).
 5. **No destructive git without explicit confirmation.** No `git push --force`,

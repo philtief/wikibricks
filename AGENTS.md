@@ -22,31 +22,143 @@ src/wikibricks/            Library core — LLM-free, governs the public API
   promote_logic.py         Pure helpers for the promote notebook
   curate_logic.py          Pure helpers for the curate notebook
   seeds/                   Domain-agnostic seed loaders
+src/wikibricks_recorder/   Optional Claude Code → wiki bridge (consumer-side)
+  hooks.py                 SessionStart/UserPromptSubmit/Stop/SessionEnd dispatch
+  init_cli.py              `wiki-init` — interactive personal/team config
+  target_cli.py            `wiki-target` — switch active wiki per task
+  wiki_mcp.py              Stdio MCP server for read+write from Claude Code
+  config.py                Multi-wiki TOML resolver
 notebooks/                 Databricks notebooks (deploy + curate + promote + eval)
   deploy_wiki_store.py     Creates schema, tables, VS index, UC functions
   wiki_curate.py           Curate task — deterministic, no LLM
   promote_from_traces.py   Promote task — LLM-driven, opt-in
 resources/                 Bundle resource definitions (job, app, dashboards)
 app/                       Streamlit reference app
-scripts/                   Diagnostic CLIs
+scripts/                   Evaluation + diagnostic CLIs (hotpot_*, twowiki_*, diagnose_traces)
 tests/                     pytest suite — runs without a workspace
-docs/                      Architecture diagrams
+docs/                      Evaluation reports + architecture diagrams
+vendor/                    Vendored third-party ([redacted benchmark] evaluator)
 databricks.yml             Bundle config (gets merged with databricks.override.yml)
 databricks.override.example.yml   Template for workspace-specific overrides
 pyproject.toml             Package config — version lives here
 CHANGELOG.md               Keep-a-Changelog format, SemVer
 ```
 
+## Two repos: `wikibricks-dev` (private) vs `wikibricks` (public)
+
+This repo is the development home and ships **everything**, including the
+benchmark / evaluation suites used to validate `WikiClient.search` and the
+managed-MCP retrieval surface. The public repo at
+[philtief/wikibricks](https://github.com/philtief/wikibricks) is a curated
+mirror that ships only the library, app, deploy notebooks, and unit tests —
+**no benchmark code, results, or eval-only tests**.
+
+### Dev-only paths — DO NOT publish to public
+
+Anything matching one of these globs stays in `wikibricks-dev`. When syncing
+dev → public, exclude them. When adding new benchmark / eval material, place
+it under one of these prefixes so the cut stays mechanical.
+
+```
+scripts/build_hotpot_seed.py
+scripts/fetch_hotpot.py
+scripts/hotpot_*.py                  # hotpot_02_vs_index, hotpot_03_benchmark, etc.
+scripts/build_twowiki_seed.py
+scripts/[redacted].py
+scripts/twowiki_*.py                 # twowiki_02_vs_index, twowiki_03_retrieve, twowiki_04_generate, twowiki_05_evaluate, etc.
+scripts/twowiki_batch_loop.sh
+src/wikibricks/seeds/hotpot/         # HotPotQA seed loader
+src/wikibricks/seeds/twowiki/        # [redacted benchmark] seed loader
+tests/test_build_hotpot_seed.py
+tests/test_eval_metrics.py
+vendor/[redacted]_v1.1.py
+docs/hotpotqa_evaluation.md
+docs/twowiki_evaluation.md
+notebooks/benchmark_hotpot.py        # [redacted benchmark] benchmark notebook
+examples/hotpotqa.md                 # references excluded hotpot scripts
+examples/twowiki.md                  # references excluded twowiki scripts
+```
+
+Everything outside this list is public-eligible. `scripts/diagnose_traces.py`,
+`scripts/seed_traces_fixture.py`, `scripts/smoke_segregate.py`, and
+`scripts/sdk_redeploy.py` are diagnostic / operational tools and ship to
+public. The standard unit-test suite (`tests/test_client.py`,
+`tests/test_curate_logic.py`, …) ships to public too — only the benchmark
+tests above are dev-only. **`src/wikibricks_recorder/` and
+`tests/test_recorder_*.py` ship to public** — the recorder is consumer-side
+tooling that any user can opt into via `pip install wikibricks[recorder]`.
+**`plugin/` and `.claude-plugin/marketplace.json` ship to public** — the
+plugin manifest, hooks, MCP server config, and launcher are the install
+surface end users see. **`tests/test_plugin_manifest.py` ships to public**
+— it asserts the manifest stays consistent with `pyproject.toml` after
+any version bump.
+
+### Dev → public sync checklist
+
+Run these steps every time you sync `wikibricks-dev` → `wikibricks`. The
+list is small but easy to forget pieces of, and the URL flips matter
+because public users can't read `wikibricks-dev`.
+
+1. **Exclude dev-only paths.** Drop everything matching the globs above
+   from the working copy you're about to sync.
+2. **Flip the install-source URLs back to the public mirror.** Four files
+   currently default to `https://github.com/philtief/wikibricks-dev.git`
+   while we're pre-public; before publishing each must point at
+   `https://github.com/philtief/wikibricks.git`:
+   - `plugin/bin/launch.sh` — `WIKIBRICKS_PLUGIN_GIT` default + bump
+     `WIKIBRICKS_PLUGIN_REF` from `main` to a stable tag (e.g. `v0.3.0`).
+   - `plugin/.claude-plugin/plugin.json` — `homepage` + `repository`.
+   - `.claude-plugin/marketplace.json` — `homepage` + `repository` in
+     the recorder plugin entry.
+   - `plugin/README.md` — `/plugin marketplace add` URL, the post-init
+     `uvx --from "git+..."` example, and the env-var defaults table.
+   - `CHANGELOG.md` — the install command in the latest release section.
+
+   These four are exactly the inverse of the
+   "`chore(plugin): default install source to wikibricks-dev (pre-public)`"
+   commit. A revert of that commit, rebased on the current HEAD, is the
+   minimum change.
+3. **Tag the public mirror** at the version that just shipped (e.g.
+   `git tag -a v0.3.0 -m "..."` + push tag). Without the tag, the
+   default `WIKIBRICKS_PLUGIN_REF=v0.3.0` install fails with `couldn't
+   find remote ref refs/tags/v0.3.0`.
+4. **Smoke-test the install** end-to-end against the public mirror:
+   ```
+   /plugin marketplace add https://github.com/philtief/wikibricks.git
+   /plugin install wikibricks-recorder@wikibricks
+   ```
+   Confirm the launcher's first-call install lands a `wikibricks==<v>`
+   under `${CLAUDE_PLUGIN_DATA}/uv-tools/`, all four console scripts
+   appear in `${CLAUDE_PLUGIN_DATA}/bin/`, and the MCP tools register as
+   `mcp__plugin_wikibricks-recorder_wiki__*` in a regular session
+   (no `--plugin-dir` flag).
+5. **Strip the `## Evaluation` section from `README.md`** on the public
+   mirror. The section cites [redacted benchmark] + [redacted benchmark] scores with
+   links to `docs/hotpotqa_evaluation.md` / `docs/twowiki_evaluation.md`
+   — both dev-only — so the links would 404 on public. Dev keeps the
+   section.
+6. **Update CHANGELOG bottom-of-file compare links** if they ever drift
+   away from `philtief/wikibricks` — they currently already point at the
+   public mirror, so this is a watch-out, not a normal step.
+
 ## Hard rules — do not violate
 
 1. **No LLM calls inside `src/wikibricks/`.** The library is a storage contract.
    All LLM work lives in `notebooks/promote_from_traces.py` or user code. If
-   you think you need an LLM in `src/`, the design is wrong — surface the
-   tradeoff to the user, don't silently add a call.
-2. **No FastMCP or bespoke MCP server.** UC functions are the MCP surface via
-   Databricks managed MCP at `/api/2.0/mcp/functions/<catalog>/<schema>`.
+   you think you need an LLM in `src/wikibricks/`, the design is wrong —
+   surface the tradeoff to the user, don't silently add a call. *Scope:*
+   this rule applies to the library package only; `src/wikibricks_recorder/`
+   is consumer-side tooling and may interact with LLMs (today it doesn't,
+   but the rule does not bind it).
+2. **No FastMCP or bespoke MCP server *for the library*.** UC functions are
+   the library's MCP surface via Databricks managed MCP at
+   `/api/2.0/mcp/functions/<catalog>/<schema>`. The recorder ships its own
+   stdio MCP server in `src/wikibricks_recorder/wiki_mcp.py` because UC
+   functions cannot do DML and Claude Code needs both read + write — that
+   is a *consumer-side* tool, not a library surface, and is allowed.
 3. **No REST API calls from user-facing code.** Always use the Databricks SDK
-   (`databricks.sdk.WorkspaceClient`).
+   (`databricks.sdk.WorkspaceClient`). The only exception is the vendored
+   [redacted benchmark] eval script.
 4. **No hardcoded workspace IDs in the repo.** `databricks.yml` uses generic
    defaults (`catalog=main`, no `warehouse_id` default); the app reads env
    vars with no workspace-specific fallbacks. Workspace specifics go in
@@ -59,7 +171,8 @@ CHANGELOG.md               Keep-a-Changelog format, SemVer
 
 ```bash
 uv sync                              # install deps into .venv
-uv run pytest                        # 306 tests, no workspace needed
+uv sync --extra recorder             # also install the optional recorder package
+uv run pytest                        # 453 tests, no workspace needed
 uv run pytest tests/test_client.py   # run a single file
 uv run ruff check src tests scripts  # lint
 uv run ruff format src tests scripts # format
@@ -163,6 +276,9 @@ Never invent new op_types silently — add a row to this table and to the
 | Add env for local `streamlit run` | `app/app.yaml` `env:` |
 | Change a notebook parameter | Notebook widget + `resources/wiki_curate_job.yml` |
 | Add a UC function (MCP tool) | `src/wikibricks/ops.py::get_uc_functions` |
+| Recorder runtime config (per-machine) | `~/.wikibricks-recorder.toml` (written by `wiki-init`) |
+| Recorder active wiki (per-machine) | `~/.wikibricks/active-target` (written by `wiki-target`) |
+| Recorder hook commands | `~/.claude/settings.json` (template at `examples/claude-settings.json`) |
 
 ## First-time workspace setup
 

@@ -7,8 +7,162 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-04
+
+### Fixed
+
+- **Curate / segregate / promote notebooks** set `WIKIBRICKS_CATALOG`
+  and `WIKIBRICKS_SCHEMA` from job widgets before importing
+  `wikibricks.ops` — `ops` reads them at module-load time and was
+  silently resolving every table to `main.wiki` (latent since the
+  recorder shipped). `resources/wiki_curate_job.yml` now passes
+  `catalog` / `schema` widgets to all three task `base_parameters`.
+- **Phase 4 health check** in the curate notebook used the wrong
+  column names (`id`, `body`) — corrected to `page_id` / `content_text`
+  via SQL aliases so `classify_page_health` / `find_duplicate_paths`
+  keep working unchanged.
+- **`run_sql` in segregate** used `wait_timeout="60s"`, which the
+  Databricks Statements API rejects — capped at 50s, lowered to 30s
+  for consistency with curate.
+
+### Performance
+
+- **`WikiClient.commit_edges`** now batches into a single MERGE
+  (multi-row VALUES source) instead of one MERGE per edge. At scale
+  (60 edges per session page × 66 pages updated in 48h) this turns 3960
+  round-trips into 66, dropping a ~3-hour curate phase to ~3 minutes.
+- **`WikiClient.propose_edges`** drops the N+1 `SELECT page_id FROM
+  pages WHERE path = ...` per matching title — `list_pages()` now
+  returns `page_id` (additive change, no breaking callers) and
+  `propose_edges` reads it directly. The shipped curate job lowers
+  `max_pages_per_run` default from 500 → 100 to keep cold-start
+  serverless runs inside the 30-min task budget; pages beyond the cap
+  roll forward into the next nightly window.
+- **New `WikiClient.write_pages(pages: list[dict])`** does real batched
+  writes — exactly four SQL statements regardless of N (history INSERT,
+  pages MERGE, pages_vs_source MERGE, wiki_log INSERT). `bulk_write_pages`
+  delegates to it. `notebooks/wiki_segregate.py` collects parent + chunk
+  children into one `wiki.write_pages(...)` call per oversize page,
+  collapsing 6× round-trips per page into 1×. End-to-end: a curate run
+  that previously timed out at 30 min now completes all three tasks
+  in ~32 min on cold serverless including the full segregate workload.
+
+### Changed
+
+- Plugin launcher's `WIKIBRICKS_PLUGIN_REF` default switched from `main`
+  to `v0.3.0` so installs are reproducible by default. Override to
+  `main` (or any other ref) for bleeding-edge.
+- `plugin/README.md` rewritten with a two-half install (workspace bundle
+  deploy first, plugin install second), corrected
+  `WIKIBRICKS_RECORDER_DIR` default (`~/.wikibricks_recorder/`, not
+  `~/.wikibricks/sessions/`), and added the missing `WIKIBRICKS_TARGET`
+  row to the env-var table.
+- Root `README.md` restructured to lead with the personal recorder as
+  the 5-minute on-ramp (was buried 65% through the document). Trimmed
+  448 → 203 lines: dropped redundant "Why" section, compressed the
+  maintenance-loop description, cut deploy-customization sub-sections
+  that moved one link away to `databricks.yml`, cut the team-shared
+  `.mcp.json` snippet (superseded by the plugin's own auto-registering
+  `.mcp.json`), and replaced pre-plugin install instructions
+  (`uv pip install -e ".[recorder]"` + `claude mcp add`) with the
+  marketplace install path. Test count 453 → 491; wheel filename
+  0.2.0 → 0.3.0.
+
 ### Added
 
+- **`wikibricks-recorder` Claude Code plugin** at `plugin/`. Users install
+  via marketplace flow instead of hand-editing `~/.claude/settings.json`:
+  ```
+  /plugin marketplace add https://github.com/philtief/wikibricks.git
+  /plugin install wikibricks-recorder@wikibricks
+  ```
+  Plugin ships:
+  - `.claude-plugin/plugin.json` — full manifest (name, description,
+    version, homepage, repository, license, keywords, author).
+  - `hooks/hooks.json` — 5 events (SessionStart 60s, UserPromptSubmit 5s,
+    PostToolUse 5s, Stop 30s, SessionEnd 30s) routed through `bin/launch.sh`.
+  - `.mcp.json` — `wiki` stdio MCP server, auto-registers without
+    `claude mcp add`. Tools surfaced as
+    `mcp__plugin_wikibricks-recorder_wiki__*`.
+  - `bin/launch.sh` — idempotent `uv tool install` from Git URL into
+    `${CLAUDE_PLUGIN_DATA}` on first call (~5s cold), exec's cached binary
+    thereafter (~70ms warm). Override Git ref / URL via
+    `WIKIBRICKS_PLUGIN_REF` / `WIKIBRICKS_PLUGIN_GIT`.
+- **Repo-root `.claude-plugin/marketplace.json`** registers the plugin in
+  the `wikibricks` marketplace so a single `claude plugin marketplace add`
+  picks up future plugins from the same repo.
+- **`wikibricks-recorder-hook` console script** wired to
+  `wikibricks_recorder.hooks:main`. Lets the plugin launcher exec a
+  binary instead of `python -m wikibricks_recorder.hooks`.
+- **`wikibricks_recorder.wiki_mcp.format_tool_response()`** — extracted
+  the MCP `call_tool` error-wrapping path into a sync helper. Unknown
+  tools, raising tools, and bad kwargs all return `{"error": "..."}` JSON
+  instead of crashing the stdio loop. Five new robustness tests in
+  `tests/test_recorder_wiki_mcp.py::TestFormatToolResponse`.
+- **`tests/test_plugin_manifest.py`** — 16 manifest tests covering plugin
+  fields, version sync with `pyproject.toml`, hook events + timeouts,
+  MCP server entry, launcher executability, and marketplace consistency.
+- README "Team-shared MCP via `.mcp.json`" section — show how a team commits
+  one `.mcp.json` at the repo root that pins the recorder to a Git ref, so
+  every contributor's Claude Code session registers the same `wiki` server
+  without each developer running `claude mcp add`. Documents the file://
+  portability caveat and the per-machine nature of hooks. (Largely
+  superseded by the plugin's own `.mcp.json` from 0.3.0; kept for
+  non-plugin / multi-server team setups.)
+- `wiki-init --install-hooks` — auto-merge the five recorder hooks into
+  `~/.claude/settings.json` (existing entries preserved, file backed up
+  first). Replaces the manual `sed examples/claude-settings.json` step.
+  Honors `--python` and `--settings` for non-default paths. Marked
+  legacy in 0.3.0 — recommended install path is now the plugin.
+- `wiki-init --install-hooks --scope {user,project,local}` — match the
+  `claude mcp add` UX. `user` (default) writes to `~/.claude/settings.json`;
+  `project` writes to `./.claude/settings.json` (team-shared, commit to
+  git); `local` writes to `./.claude/settings.local.json` (personal-per-
+  project, gitignored). `--scope` and `--settings` are mutually exclusive.
+- `wiki-init --uninstall-hooks` — inverse of `--install-hooks`. Matches
+  recorder entries by exact command string, leaves any non-recorder hooks
+  untouched, drops empty event arrays, and backs up before writing.
+  Honors the same `--scope` / `--settings` / `--python` flags.
+- README "Recorder" section now lists every MCP tool's required and
+  optional arguments, sourced from `wiki_mcp.py::get_tool_schemas()`.
+
+### Fixed
+
+- `wiki-init` personal-flow Next-steps message: replaced the broken
+  `uvx --from . '.[recorder]'` invocation with the correct
+  `uvx --from "wikibricks[recorder] @ file://$(pwd)"` form, and pointed
+  users at the new `--install-hooks` flag.
+- `wiki_mcp.py` module docstring: updated the stale
+  `claude mcp add wiki -- uvx --from . wikibricks-mcp` example to the
+  working PEP 508 form (`--scope user`, absolute `file://` URL).
+
+## [0.2.0] - 2026-05-03
+
+### Added
+
+- **`wikibricks_recorder` package** — optional Claude Code → wiki bridge
+  shipped alongside the library. Install with `pip install wikibricks[recorder]`.
+  Three console scripts are wired in `pyproject.toml`:
+  - `wiki-init` — interactive setup that writes `~/.wikibricks-recorder.toml`
+    with a `[wikis.<name>]` section per wiki. Three flows: personal,
+    team-create (emits a non-secret `wikibricks-team.toml` for sharing +
+    GRANT SQL for the owner), team-join (consumes the shared toml + your
+    own CLI profile).
+  - `wiki-target` — switch which configured wiki the hooks write to.
+    Persists the choice in `~/.wikibricks/active-target`. `WIKIBRICKS_TARGET`
+    env var beats the file for one-shot overrides.
+  - `wikibricks-mcp` — stdio MCP server registered with Claude Code via
+    `claude mcp add`. Five tools (3 read, 2 write) talking directly to
+    `WikiClient`. The library's UC functions stay deployed for managed-MCP
+    consumers; this is a separate consumer-side surface.
+- **Multi-wiki TOML format.** `~/.wikibricks-recorder.toml` now supports
+  multiple `[wikis.<name>]` sections (e.g. `[wikis.personal]` next to
+  `[wikis.team-platform]`). The legacy `[recorder]` single-section format
+  is still read for back-compat.
+- **`examples/claude-settings.json`** — copy-pasteable hook template with
+  a `/PATH/TO/wikibricks-recorder` placeholder so new users `sed` it to
+  their checkout and merge into `~/.claude/settings.json` instead of
+  hand-crafting five identical hook entries.
 - **`create_uc_functions_sql(..., enabled=...)`** — opt-in subset deploy
   for the eight UC functions. `enabled=None` (the default) keeps the
   existing behavior (deploy all eight); pass a set or list of names to
@@ -30,6 +184,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   same name. Idempotent: schema → seven tables → managed `wheels` volume
   + wheel upload → drop UC functions outside enabled set →
   `CREATE OR REPLACE` enabled set → verify.
+
+### Changed
+
+- **AGENTS.md hard rules 1 + 2 scoped to the library.** "No LLM in `src/`"
+  and "no bespoke MCP server" now explicitly bind only the `src/wikibricks/`
+  package. `src/wikibricks_recorder/` is consumer-side tooling and ships its
+  own stdio MCP server because UC functions cannot do DML.
 
 ### Fixed
 
@@ -209,7 +370,7 @@ Databricks.
 - **Typed links** between pages (`cites`, `related`, `supports`, `depends_on`,
   …) - cross-reference graph queryable in plain SQL.
 - **Domain-agnostic seed loaders** (`src/wikibricks/seeds/`): `sample`
-  (5 meta-pages), `custom` (JSONL), `none`.
+  (5 meta-pages), `hotpot` ([redacted benchmark], ~66k pages), `custom` (JSONL), `none`.
 - **Databricks Asset Bundle** (`databricks.yml` + `resources/`) with
   `dev` / `staging` / `prod` targets. One-command deploy:
   `databricks bundle deploy --target dev`.
@@ -222,10 +383,21 @@ Databricks.
   stale pages, duplicates, and broken links; writes issues to `log`.
 - **Observability dashboard** (`resources/observability_dashboard.yml`) -
   pages, writes, reads, and lint findings over time.
+- **Evaluation harness**:
+  - [redacted benchmark] fetch + seed + retrieval benchmark (`scripts/hotpot_*.py`,
+    `notebooks/benchmark_hotpot.py`). Produces `benchmark_results.json` and
+    `hotpotqa_results.html`.
+  - [redacted benchmark] fetch + seed + retrieval + generation + eval
+    (`scripts/twowiki_*.py`), including an 8-variant cheap-lever ablation
+    (`scripts/twowiki_variants.py`) and a Delta-checkpointed batch loop
+    (`scripts/twowiki_batch_loop.sh`). Vendored official v1.1 evaluator.
 - **220 unit tests** (`tests/`), no Databricks connectivity required.
-- **Documentation**: `README.md`, `docs/img/architecture.{mmd,svg,png}`.
+- **Documentation**: `README.md`, `examples/hotpotqa.md`,
+  `examples/twowiki.md`, `docs/hotpotqa_evaluation.md`,
+  `docs/twowiki_evaluation.md`, `docs/img/architecture.{mmd,svg,png}`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.1.5...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/philtief/wikibricks/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/philtief/wikibricks/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/philtief/wikibricks/compare/v0.1.3...v0.1.4
 [0.1.3]: https://github.com/philtief/wikibricks/compare/v0.1.0...v0.1.3

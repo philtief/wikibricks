@@ -22,7 +22,7 @@ PAGES_VS_SOURCE_TABLE = f"{CATALOG}.{SCHEMA}.pages_vs_source"
 PROMOTE_CHECKPOINT_TABLE = f"{CATALOG}.{SCHEMA}.promote_checkpoint"
 VS_INDEX = f"{CATALOG}.{SCHEMA}.pages_index"
 VS_ENDPOINT = "wiki-vs-endpoint"
-EMBEDDING_MODEL = "[redacted-model]"
+EMBEDDING_MODEL = "databricks-bge-large-en"
 SOURCES_VOLUME = f"/Volumes/{CATALOG}/{SCHEMA}/sources"
 SCHEMA_VOLUME_PATH = f"/Volumes/{CATALOG}/{SCHEMA}/sources/WIKIBRICKS.MD"
 
@@ -467,7 +467,7 @@ def drop_uc_functions_sql(enabled=None):
 
 
 def seed_pages(domain: str = "sample"):
-    """Return seed wiki pages for the given domain (sample | custom | none)."""
+    """Return seed wiki pages for the given domain (sample | hotpot | custom | none)."""
     from wikibricks import seeds
     return seeds.load(domain)
 
