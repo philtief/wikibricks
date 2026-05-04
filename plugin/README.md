@@ -78,14 +78,18 @@ wikibricks-recorder-hook`):
 
 ```bash
 /plugin uninstall wikibricks-recorder
-rm -rf ~/.claude/plugins/data/wikibricks-recorder    # cached uv install
+rm -rf ~/.claude/plugins/data/wikibricks-recorder-*   # cached uv install
 ```
+
+The cache dir is named `wikibricks-recorder-<marketplace>` (e.g.
+`wikibricks-recorder-wikibricks` when installed from the `wikibricks`
+marketplace). The glob covers any marketplace name.
 
 To switch the installed Git ref without reinstalling the plugin, set
 `WIKIBRICKS_PLUGIN_REF` and remove the marker file:
 
 ```bash
-rm ~/.claude/plugins/data/wikibricks-recorder/installed-*
+rm ~/.claude/plugins/data/wikibricks-recorder-*/installed-*
 ```
 
 The launcher will re-install on the next session.
