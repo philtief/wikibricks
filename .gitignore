@@ -16,3 +16,6 @@ data/twowiki/
 vendor/
 benchmark_results.json
 
+# Ad-hoc local artifacts (blog drafts, one-pagers) at repo root — not part of the repo
+/*.html
+
