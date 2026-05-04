@@ -19,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `WIKIBRICKS_RECORDER_DIR` default (`~/.wikibricks_recorder/`, not
   `~/.wikibricks/sessions/`), and added the missing `WIKIBRICKS_TARGET`
   row to the env-var table.
+- Root `README.md` restructured to lead with the personal recorder as
+  the 5-minute on-ramp (was buried 65% through the document). Trimmed
+  448 → 203 lines: dropped redundant "Why" section, compressed the
+  maintenance-loop description, cut deploy-customization sub-sections
+  that moved one link away to `databricks.yml`, cut the team-shared
+  `.mcp.json` snippet (superseded by the plugin's own auto-registering
+  `.mcp.json`), and replaced pre-plugin install instructions
+  (`uv pip install -e ".[recorder]"` + `claude mcp add`) with the
+  marketplace install path. Test count 453 → 491; wheel filename
+  0.2.0 → 0.3.0.
 
 ### Added
 
