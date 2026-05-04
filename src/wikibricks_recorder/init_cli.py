@@ -428,6 +428,59 @@ def install_hooks(
     return 0
 
 
+def uninstall_hooks(
+    *,
+    settings_path: Path,
+    python_path: str,
+    out: TextIO,
+    now_iso: str | None = None,
+) -> int:
+    """Remove recorder hook entries from a settings.json. Inverse of install_hooks.
+
+    Match-by-command: only entries whose `command` equals
+    `{python_path} -m wikibricks_recorder.hooks` are removed. Other hooks are
+    preserved. Empty event arrays are dropped to keep the file tidy.
+    """
+    cmd = f"{python_path} -m wikibricks_recorder.hooks"
+    if not settings_path.exists():
+        print(f"No settings file at {settings_path} — nothing to uninstall.", file=out)
+        return 0
+    raw = settings_path.read_text()
+    try:
+        existing = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        print(f"error: cannot parse {settings_path}: {exc}", file=out)
+        return 2
+
+    hooks = existing.get("hooks") or {}
+    removed: list[str] = []
+    for event in list(hooks.keys()):
+        bucket = hooks[event]
+        kept = [
+            entry for entry in bucket
+            if not any(h.get("command") == cmd for h in entry.get("hooks", []))
+        ]
+        if len(kept) != len(bucket):
+            removed.append(event)
+        if kept:
+            hooks[event] = kept
+        else:
+            del hooks[event]
+
+    if not removed:
+        print(f"No recorder entries found in {settings_path} — nothing to remove.", file=out)
+        return 0
+
+    ts = now_iso or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup = settings_path.with_name(f"{settings_path.name}.bak-{ts}")
+    backup.write_text(raw)
+    print(f"Backed up existing settings to {backup}", file=out)
+    settings_path.write_text(json.dumps(existing, indent=2) + "\n")
+    print(f"Updated {settings_path}", file=out)
+    print(f"  Removed: {', '.join(removed)}", file=out)
+    return 0
+
+
 def run(
     args: list[str] | None = None,
     *,
@@ -443,10 +496,16 @@ def run(
         metavar="TEAM_CONFIG",
         help="Join an existing team — path to a wikibricks-team.toml.",
     )
-    parser.add_argument(
+    action = parser.add_mutually_exclusive_group()
+    action.add_argument(
         "--install-hooks",
         action="store_true",
-        help="Merge the five recorder hooks into ~/.claude/settings.json (backed up first).",
+        help="Merge the five recorder hooks into a settings.json (backed up first).",
+    )
+    action.add_argument(
+        "--uninstall-hooks",
+        action="store_true",
+        help="Remove the five recorder hooks from a settings.json (backed up first).",
     )
     parser.add_argument(
         "--python",
@@ -478,6 +537,15 @@ def run(
         settings_path = _resolve_settings_path(ns.settings, ns.scope, cwd)
         python_path = ns.python or sys.executable
         return install_hooks(
+            settings_path=settings_path,
+            python_path=python_path,
+            out=out,
+        )
+
+    if ns.uninstall_hooks:
+        settings_path = _resolve_settings_path(ns.settings, ns.scope, cwd)
+        python_path = ns.python or sys.executable
+        return uninstall_hooks(
             settings_path=settings_path,
             python_path=python_path,
             out=out,

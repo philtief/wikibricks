@@ -336,6 +336,15 @@ wiki-init --install-hooks --settings PATH       # explicit path (escape hatch)
 | `project` | `./.claude/settings.json` | Team-shared hooks; commit to git |
 | `local` | `./.claude/settings.local.json` | Personal overrides for one project; gitignored |
 
+To remove the hooks, run the same command with `--uninstall-hooks` (matches by
+exact command string, leaves any non-recorder hooks untouched, backs up
+first):
+
+```bash
+wiki-init --uninstall-hooks                     # mirror of --install-hooks
+wiki-init --uninstall-hooks --scope project     # remove from ./.claude/settings.json
+```
+
 Then register the MCP server (run from your `wikibricks-dev` clone):
 
 ```bash

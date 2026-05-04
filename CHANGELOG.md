@@ -53,6 +53,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `project` writes to `./.claude/settings.json` (team-shared, commit to
   git); `local` writes to `./.claude/settings.local.json` (personal-per-
   project, gitignored). `--scope` and `--settings` are mutually exclusive.
+- `wiki-init --uninstall-hooks` — inverse of `--install-hooks`. Matches
+  recorder entries by exact command string, leaves any non-recorder hooks
+  untouched, drops empty event arrays, and backs up before writing.
+  Honors the same `--scope` / `--settings` / `--python` flags.
 - README "Recorder" section now lists every MCP tool's required and
   optional arguments, sourced from `wiki_mcp.py::get_tool_schemas()`.
 

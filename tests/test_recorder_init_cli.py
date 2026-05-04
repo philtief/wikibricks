@@ -593,3 +593,140 @@ class TestInstallHooks:
             )
         err = capsys.readouterr().err
         assert "not allowed with" in err or "argument" in err
+
+
+class TestUninstallHooks:
+    def _seed(self, settings: Path, *, with_other: bool = False) -> None:
+        cmd = "/p/python -m wikibricks_recorder.hooks"
+        hooks: dict[str, list] = {
+            "SessionStart": [{"matcher": "", "hooks": [{"type": "command", "command": cmd, "timeout": 5}]}],
+            "PostToolUse": [{"matcher": "", "hooks": [{"type": "command", "command": cmd, "timeout": 10}]}],
+            "Stop": [{"matcher": "", "hooks": [{"type": "command", "command": cmd, "timeout": 30}]}],
+        }
+        if with_other:
+            hooks["SessionStart"].insert(
+                0,
+                {
+                    "matcher": "",
+                    "hooks": [{"type": "command", "command": "/other/hook.sh", "timeout": 5}],
+                },
+            )
+        settings.write_text(json.dumps({"model": "opus", "hooks": hooks}))
+
+    def test_removes_only_recorder_entries(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        self._seed(settings, with_other=True)
+        out = io.StringIO()
+        rc = init_cli.uninstall_hooks(
+            settings_path=settings,
+            python_path="/p/python",
+            out=out,
+            now_iso="20260503T220000Z",
+        )
+        assert rc == 0
+        data = json.loads(settings.read_text())
+        assert data["model"] == "opus"
+        assert "PostToolUse" not in data["hooks"]
+        assert "Stop" not in data["hooks"]
+        ss = data["hooks"]["SessionStart"]
+        assert len(ss) == 1
+        assert ss[0]["hooks"][0]["command"] == "/other/hook.sh"
+
+    def test_handles_missing_settings_file(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        out = io.StringIO()
+        rc = init_cli.uninstall_hooks(
+            settings_path=settings,
+            python_path="/p/python",
+            out=out,
+        )
+        assert rc == 0
+        assert "no settings" in out.getvalue().lower() or "not found" in out.getvalue().lower()
+        assert not settings.exists()
+
+    def test_handles_no_recorder_entries(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        settings.write_text(
+            json.dumps(
+                {
+                    "hooks": {
+                        "SessionStart": [
+                            {"matcher": "", "hooks": [{"type": "command", "command": "/other.sh"}]}
+                        ]
+                    }
+                }
+            )
+        )
+        out = io.StringIO()
+        rc = init_cli.uninstall_hooks(
+            settings_path=settings,
+            python_path="/p/python",
+            out=out,
+            now_iso="20260503T220000Z",
+        )
+        assert rc == 0
+        data = json.loads(settings.read_text())
+        assert len(data["hooks"]["SessionStart"]) == 1
+        assert "nothing" in out.getvalue().lower() or "no recorder" in out.getvalue().lower()
+
+    def test_backs_up_before_writing(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        self._seed(settings)
+        original = settings.read_text()
+        out = io.StringIO()
+        init_cli.uninstall_hooks(
+            settings_path=settings,
+            python_path="/p/python",
+            out=out,
+            now_iso="20260503T220000Z",
+        )
+        backups = list(tmp_path.glob("settings.json.bak-*"))
+        assert len(backups) == 1
+        assert backups[0].read_text() == original
+
+    def test_drops_emptied_event_arrays(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        self._seed(settings)
+        out = io.StringIO()
+        init_cli.uninstall_hooks(
+            settings_path=settings,
+            python_path="/p/python",
+            out=out,
+            now_iso="20260503T220000Z",
+        )
+        data = json.loads(settings.read_text())
+        # All three seeded events were recorder-only, so they should disappear.
+        assert data["hooks"] == {}
+
+    def test_run_dispatches_uninstall_hooks(self, tmp_path):
+        settings = tmp_path / "settings.json"
+        self._seed(settings)
+        out = io.StringIO()
+        rc = init_cli.run(
+            [
+                "--uninstall-hooks",
+                "--python",
+                "/p/python",
+                "--settings",
+                str(settings),
+            ],
+            reader=make_reader([]),
+            out=out,
+            config_path=tmp_path / "rc.toml",
+            cwd=tmp_path,
+        )
+        assert rc == 0
+        data = json.loads(settings.read_text())
+        assert data["hooks"] == {}
+
+    def test_install_and_uninstall_flags_conflict(self, tmp_path, capsys):
+        with pytest.raises(SystemExit):
+            init_cli.run(
+                ["--install-hooks", "--uninstall-hooks"],
+                reader=make_reader([]),
+                out=io.StringIO(),
+                config_path=tmp_path / "rc.toml",
+                cwd=tmp_path,
+            )
+        err = capsys.readouterr().err
+        assert "not allowed with" in err or "argument" in err
