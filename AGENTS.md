@@ -84,6 +84,54 @@ public. The standard unit-test suite (`tests/test_client.py`,
 tests above are dev-only. **`src/wikibricks_recorder/` and
 `tests/test_recorder_*.py` ship to public** — the recorder is consumer-side
 tooling that any user can opt into via `pip install wikibricks[recorder]`.
+**`plugin/` and `.claude-plugin/marketplace.json` ship to public** — the
+plugin manifest, hooks, MCP server config, and launcher are the install
+surface end users see. **`tests/test_plugin_manifest.py` ships to public**
+— it asserts the manifest stays consistent with `pyproject.toml` after
+any version bump.
+
+### Dev → public sync checklist
+
+Run these steps every time you sync `wikibricks-dev` → `wikibricks`. The
+list is small but easy to forget pieces of, and the URL flips matter
+because public users can't read `wikibricks-dev`.
+
+1. **Exclude dev-only paths.** Drop everything matching the globs above
+   from the working copy you're about to sync.
+2. **Flip the install-source URLs back to the public mirror.** Four files
+   currently default to `https://github.com/philtief/wikibricks-dev.git`
+   while we're pre-public; before publishing each must point at
+   `https://github.com/philtief/wikibricks.git`:
+   - `plugin/bin/launch.sh` — `WIKIBRICKS_PLUGIN_GIT` default + bump
+     `WIKIBRICKS_PLUGIN_REF` from `main` to a stable tag (e.g. `v0.3.0`).
+   - `plugin/.claude-plugin/plugin.json` — `homepage` + `repository`.
+   - `.claude-plugin/marketplace.json` — `homepage` + `repository` in
+     the recorder plugin entry.
+   - `plugin/README.md` — `/plugin marketplace add` URL, the post-init
+     `uvx --from "git+..."` example, and the env-var defaults table.
+   - `CHANGELOG.md` — the install command in the latest release section.
+
+   These four are exactly the inverse of the
+   "`chore(plugin): default install source to wikibricks-dev (pre-public)`"
+   commit. A revert of that commit, rebased on the current HEAD, is the
+   minimum change.
+3. **Tag the public mirror** at the version that just shipped (e.g.
+   `git tag -a v0.3.0 -m "..."` + push tag). Without the tag, the
+   default `WIKIBRICKS_PLUGIN_REF=v0.3.0` install fails with `couldn't
+   find remote ref refs/tags/v0.3.0`.
+4. **Smoke-test the install** end-to-end against the public mirror:
+   ```
+   /plugin marketplace add https://github.com/philtief/wikibricks.git
+   /plugin install wikibricks-recorder@wikibricks
+   ```
+   Confirm the launcher's first-call install lands a `wikibricks==<v>`
+   under `${CLAUDE_PLUGIN_DATA}/uv-tools/`, all four console scripts
+   appear in `${CLAUDE_PLUGIN_DATA}/bin/`, and the MCP tools register as
+   `mcp__plugin_wikibricks-recorder_wiki__*` in a regular session
+   (no `--plugin-dir` flag).
+5. **Update CHANGELOG bottom-of-file compare links** if they ever drift
+   away from `philtief/wikibricks` — they currently already point at the
+   public mirror, so this is a watch-out, not a normal step.
 
 ## Hard rules — do not violate
 

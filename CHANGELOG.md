@@ -7,12 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-04
+
 ### Added
 
+- **`wikibricks-recorder` Claude Code plugin** at `plugin/`. Users install
+  via marketplace flow instead of hand-editing `~/.claude/settings.json`:
+  ```
+  /plugin marketplace add https://github.com/philtief/wikibricks-dev.git
+  /plugin install wikibricks-recorder@wikibricks
+  ```
+  Plugin ships:
+  - `.claude-plugin/plugin.json` — full manifest (name, description,
+    version, homepage, repository, license, keywords, author).
+  - `hooks/hooks.json` — 5 events (SessionStart 60s, UserPromptSubmit 5s,
+    PostToolUse 5s, Stop 30s, SessionEnd 30s) routed through `bin/launch.sh`.
+  - `.mcp.json` — `wiki` stdio MCP server, auto-registers without
+    `claude mcp add`. Tools surfaced as
+    `mcp__plugin_wikibricks-recorder_wiki__*`.
+  - `bin/launch.sh` — idempotent `uv tool install` from Git URL into
+    `${CLAUDE_PLUGIN_DATA}` on first call (~5s cold), exec's cached binary
+    thereafter (~70ms warm). Override Git ref / URL via
+    `WIKIBRICKS_PLUGIN_REF` / `WIKIBRICKS_PLUGIN_GIT`.
+- **Repo-root `.claude-plugin/marketplace.json`** registers the plugin in
+  the `wikibricks` marketplace so a single `claude plugin marketplace add`
+  picks up future plugins from the same repo.
+- **`wikibricks-recorder-hook` console script** wired to
+  `wikibricks_recorder.hooks:main`. Lets the plugin launcher exec a
+  binary instead of `python -m wikibricks_recorder.hooks`.
+- **`wikibricks_recorder.wiki_mcp.format_tool_response()`** — extracted
+  the MCP `call_tool` error-wrapping path into a sync helper. Unknown
+  tools, raising tools, and bad kwargs all return `{"error": "..."}` JSON
+  instead of crashing the stdio loop. Five new robustness tests in
+  `tests/test_recorder_wiki_mcp.py::TestFormatToolResponse`.
+- **`tests/test_plugin_manifest.py`** — 16 manifest tests covering plugin
+  fields, version sync with `pyproject.toml`, hook events + timeouts,
+  MCP server entry, launcher executability, and marketplace consistency.
 - `wiki-init --install-hooks` — auto-merge the five recorder hooks into
   `~/.claude/settings.json` (existing entries preserved, file backed up
   first). Replaces the manual `sed examples/claude-settings.json` step.
-  Honors `--python` and `--settings` for non-default paths.
+  Honors `--python` and `--settings` for non-default paths. Marked
+  legacy in 0.3.0 — recommended install path is now the plugin.
 - README "Recorder" section now lists every MCP tool's required and
   optional arguments, sourced from `wiki_mcp.py::get_tool_schemas()`.
 

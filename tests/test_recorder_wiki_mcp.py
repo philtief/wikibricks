@@ -6,6 +6,7 @@ pure pieces — schema definitions, tool dispatch, env-var config.
 
 from __future__ import annotations
 
+import json
 from unittest.mock import MagicMock
 
 import pytest
@@ -148,6 +149,55 @@ class TestDispatch:
         from wikibricks_recorder.wiki_mcp import dispatch_tool
         with pytest.raises(ValueError, match="Unknown tool"):
             dispatch_tool("not_a_tool", {}, tools={})
+
+
+# ---------------------------------------------------------------------------
+# format_tool_response — error wrapping (audit point 5: MCP crash robustness)
+# ---------------------------------------------------------------------------
+
+
+class TestFormatToolResponse:
+    def test_unknown_tool_returns_error_json_not_raises(self):
+        from wikibricks_recorder.wiki_mcp import format_tool_response
+        out = format_tool_response("not_a_tool", {}, tools={})
+        assert json.loads(out) == {"error": "Unknown tool: not_a_tool"}
+
+    def test_tool_raising_returns_error_json(self):
+        from wikibricks_recorder.wiki_mcp import format_tool_response
+
+        def boom(**_):
+            raise RuntimeError("backend exploded")
+
+        out = format_tool_response("wiki_search", {"query": "x"}, tools={"wiki_search": boom})
+        assert json.loads(out) == {"error": "backend exploded"}
+
+    def test_bad_kwargs_returns_error_json(self):
+        from wikibricks_recorder.wiki_mcp import format_tool_response
+
+        def needs_query(query, k=5):  # noqa: ARG001
+            return {"hit": True}
+
+        out = format_tool_response(
+            "wiki_search", {"unexpected_kwarg": 1}, tools={"wiki_search": needs_query}
+        )
+        parsed = json.loads(out)
+        assert "error" in parsed
+        assert "unexpected_kwarg" in parsed["error"]
+
+    def test_happy_path_serializes_result(self):
+        from wikibricks_recorder.wiki_mcp import format_tool_response
+        tools = {"wiki_search": lambda **_: [{"path": "topics/x", "score": 0.9}]}
+        out = format_tool_response("wiki_search", {"query": "x"}, tools=tools)
+        assert json.loads(out) == [{"path": "topics/x", "score": 0.9}]
+
+    def test_serializes_datetime_via_isoformat(self):
+        from datetime import datetime, timezone
+
+        from wikibricks_recorder.wiki_mcp import format_tool_response
+        ts = datetime(2026, 5, 4, 12, 0, tzinfo=timezone.utc)
+        tools = {"wiki_search": lambda **_: {"updated_at": ts}}
+        out = format_tool_response("wiki_search", {"query": "x"}, tools=tools)
+        assert json.loads(out)["updated_at"].startswith("2026-05-04T12:00:00")
 
 
 # ---------------------------------------------------------------------------

@@ -196,6 +196,24 @@ def _json_default(o: Any) -> str:
     return str(o)
 
 
+def format_tool_response(
+    name: str,
+    arguments: dict[str, Any],
+    tools: dict | None = None,
+) -> str:
+    """Run a tool and return its result as a JSON string.
+
+    Any exception (unknown tool, bad args, backend error) is wrapped as
+    `{"error": "<message>"}` so the server returns a structured response
+    instead of crashing the stdio loop.
+    """
+    try:
+        result = dispatch_tool(name, arguments, tools=tools)
+    except Exception as exc:
+        return json.dumps({"error": str(exc)})
+    return json.dumps(result, default=_json_default)
+
+
 async def _serve() -> None:
     from mcp.server import Server
     from mcp.server.stdio import stdio_server
@@ -209,11 +227,7 @@ async def _serve() -> None:
 
     @server.call_tool()
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
-        try:
-            result = dispatch_tool(name, arguments)
-        except Exception as exc:
-            return [TextContent(type="text", text=json.dumps({"error": str(exc)}))]
-        return [TextContent(type="text", text=json.dumps(result, default=_json_default))]
+        return [TextContent(type="text", text=format_tool_response(name, arguments))]
 
     async with stdio_server() as (read_stream, write_stream):
         await server.run(read_stream, write_stream, server.create_initialization_options())

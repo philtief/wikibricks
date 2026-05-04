@@ -1,0 +1,27 @@
+{
+  "name": "wikibricks",
+  "description": "Claude Code plugins built on top of WikiBricks — a Delta + Vector Search wiki store for agents on Databricks.",
+  "owner": {
+    "name": "Philipp Tiefenbacher",
+    "email": "philipp.tiefenbacher@databricks.com"
+  },
+  "plugins": [
+    {
+      "name": "wikibricks-recorder",
+      "source": "./plugin",
+      "description": "Records every Claude Code session as one WikiBricks page and exposes the wiki to the agent via 5 stdio MCP tools.",
+      "homepage": "https://github.com/philtief/wikibricks-dev",
+      "repository": "https://github.com/philtief/wikibricks-dev.git",
+      "license": "Apache-2.0",
+      "keywords": [
+        "databricks",
+        "unity-catalog",
+        "vector-search",
+        "memory",
+        "agent",
+        "mcp",
+        "session-recording"
+      ]
+    }
+  ]
+}
