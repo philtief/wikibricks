@@ -7,13 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-04
+
 ### Changed
 
 - Plugin launcher's `WIKIBRICKS_PLUGIN_REF` default switched from `main`
   to `v0.3.0` so installs are reproducible by default. Override to
   `main` (or any other ref) for bleeding-edge.
-
-## [0.3.0] - 2026-05-04
+- `plugin/README.md` rewritten with a two-half install (workspace bundle
+  deploy first, plugin install second), corrected
+  `WIKIBRICKS_RECORDER_DIR` default (`~/.wikibricks_recorder/`, not
+  `~/.wikibricks/sessions/`), and added the missing `WIKIBRICKS_TARGET`
+  row to the env-var table.
 
 ### Added
 
