@@ -192,11 +192,11 @@ class WikiClient:
             self._log("vs_sync_fail", details=f"{type(e).__name__}: {e}")
 
     def list_pages(self, path_prefix: str | None = None) -> list[dict]:
-        """List wiki pages for navigation. Returns path, title, page_type, version."""
+        """List wiki pages for navigation. Returns page_id, path, title, page_type, version."""
         prefix_esc = self._escape(path_prefix) if path_prefix else None
         where = f"WHERE path LIKE '{prefix_esc}%'" if prefix_esc else ""
         resp = self._exec(
-            f"SELECT path, title, page_type, version "
+            f"SELECT page_id, path, title, page_type, version "
             f"FROM {PAGES_TABLE} {where} ORDER BY path"
         )
         rows = resp.result.data_array if resp.result else []
@@ -418,6 +418,10 @@ class WikiClient:
                 "origin": "auto-vs",
             }
 
+        # Title-substring match. list_pages() now returns page_id, so we
+        # avoid the per-match SELECT that previously dominated propose_edges
+        # latency on wikis with many pages (one round-trip per matching title
+        # × N pages = the prior 55s/page was almost entirely this loop).
         other_pages = self.list_pages()
         content_lower = content.lower()
         for p in other_pages:
@@ -428,14 +432,8 @@ class WikiClient:
                 continue
             if title.lower() not in content_lower:
                 continue
-            tgt_resp = self._exec(
-                f"SELECT page_id FROM {PAGES_TABLE} WHERE path = '{self._escape(p['path'])}'"
-            )
-            rows = tgt_resp.result.data_array if tgt_resp.result else []
-            if not rows:
-                continue
-            tgt_id = rows[0][0]
-            if tgt_id == source_id:
+            tgt_id = p.get("page_id")
+            if not tgt_id or tgt_id == source_id:
                 continue
             key = (tgt_id, "related")
             candidates[key] = {

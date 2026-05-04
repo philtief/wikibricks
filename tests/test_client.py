@@ -492,10 +492,10 @@ def _vs_response(rows, columns):
 
 class TestProposeEdges:
     def _setup(self, ws, page_row, other_pages, vs_hits):
-        """Configure ws mock so read_page, list_pages, search, and id-resolver all work."""
+        """Configure ws mock so read_page, list_pages, and search all work."""
         page_cols = ["page_id", "path", "title", "page_type", "content_text",
                      "tags", "created_by", "created_at", "updated_at", "version"]
-        list_cols = ["path", "title", "page_type", "version"]
+        list_cols = ["page_id", "path", "title", "page_type", "version"]
         vs_cols = ["page_id", "path", "title", "page_type", "content_text",
                    "tags", "version", "score"]
 
@@ -503,15 +503,11 @@ class TestProposeEdges:
             sql = kwargs["statement"].strip()
             if sql.startswith("SELECT page_id, path, title, page_type, content_text, tags, created_by"):
                 return _mock_response([page_row], columns=page_cols)
-            if sql.startswith("SELECT path, title, page_type, version"):
-                rows = [[p["path"], p["title"], p.get("page_type", "concept"),
-                         p.get("version", 1)] for p in other_pages]
+            if sql.startswith("SELECT page_id, path, title, page_type, version"):
+                rows = [[p["page_id"], p["path"], p["title"],
+                         p.get("page_type", "concept"), p.get("version", 1)]
+                        for p in other_pages]
                 return _mock_response(rows, columns=list_cols)
-            if sql.startswith("SELECT page_id FROM"):
-                for p in other_pages:
-                    if f"'{p['path']}'" in sql:
-                        return _mock_response([[p["page_id"]]], columns=["page_id"])
-                return _mock_response([], columns=["page_id"])
             return _mock_response([])
 
         ws.statement_execution.execute_statement.side_effect = handler

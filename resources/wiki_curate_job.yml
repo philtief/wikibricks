@@ -32,7 +32,7 @@ resources:
               connect_lookback_hours: "48"
               auto_commit_threshold: ${var.auto_commit_threshold}
               min_similarity: "0.70"
-              max_pages_per_run: "500"
+              max_pages_per_run: "100"
               repair_broken_links: "true"
           environment_key: serverless
           timeout_seconds: 1800
