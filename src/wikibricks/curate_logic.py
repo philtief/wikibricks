@@ -6,7 +6,8 @@ workspace. No LLM calls, no SDK calls.
 
 from __future__ import annotations
 
-from typing import Iterable
+from concurrent.futures import ThreadPoolExecutor
+from typing import Callable, Iterable
 
 BODY_OVERSIZE_THRESHOLD = 50_000
 """Bytes-of-body above which a page is flagged for segregation."""
@@ -108,4 +109,72 @@ def build_health_summary(
         "pages_checked": pages_checked,
         "by_status": by_status,
         "duplicates": duplicates,
+    }
+
+
+def run_connect_phase(
+    *,
+    paths: list[str],
+    propose_fn: Callable[[str], list[dict]],
+    commit_fn: Callable[[list[dict]], int],
+    auto_commit_threshold: float,
+    max_workers: int = 8,
+) -> dict:
+    """Fan-out propose_fn across paths, batch one commit_fn call at the end.
+
+    `propose_fn(path)` is called once per path, in parallel up to
+    `max_workers`. High-confidence edges (>= `auto_commit_threshold`) from
+    every path are aggregated and passed to `commit_fn` in one call so the
+    underlying MERGE is a single Delta transaction (no concurrent-write
+    contention on the links table).
+
+    Per-path exceptions in `propose_fn` are swallowed: the path is recorded
+    in `failed_paths` and contributes zero edges. The whole phase keeps
+    running so one bad page doesn't block 99 good ones.
+
+    Returns::
+
+        {
+          "edges_proposed":      int,         # sum of all proposed edges
+          "edges_committed":     int,         # commit_fn return (0 if not called)
+          "deferred_low_confidence": list[dict],  # each tagged with `path`
+          "failed_paths":        list[str],
+        }
+    """
+    if not paths:
+        return {
+            "edges_proposed": 0,
+            "edges_committed": 0,
+            "deferred_low_confidence": [],
+            "failed_paths": [],
+        }
+
+    proposed_total = 0
+    high_edges: list[dict] = []
+    deferred: list[dict] = []
+    failed: list[str] = []
+
+    def _safe_propose(path: str) -> tuple[str, list[dict] | None]:
+        try:
+            return path, propose_fn(path)
+        except Exception:
+            return path, None
+
+    with ThreadPoolExecutor(max_workers=max(1, max_workers)) as ex:
+        for path, edges in ex.map(_safe_propose, paths):
+            if edges is None:
+                failed.append(path)
+                continue
+            proposed_total += len(edges)
+            high, low = partition_by_confidence(edges, auto_commit_threshold)
+            high_edges.extend(high)
+            deferred.extend({"path": path, **e} for e in low)
+
+    committed_total = commit_fn(high_edges) if high_edges else 0
+
+    return {
+        "edges_proposed": proposed_total,
+        "edges_committed": committed_total,
+        "deferred_low_confidence": deferred,
+        "failed_paths": failed,
     }

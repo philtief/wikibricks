@@ -4,6 +4,9 @@ Every feature exercised by `notebooks/wiki_curate.py` has a test here that runs
 without a workspace, SDK, or LLM.
 """
 
+import threading
+from unittest.mock import MagicMock
+
 from wikibricks.curate_logic import (
     BODY_OVERSIZE_THRESHOLD,
     build_curate_summary,
@@ -11,6 +14,7 @@ from wikibricks.curate_logic import (
     classify_page_health,
     find_duplicate_paths,
     partition_by_confidence,
+    run_connect_phase,
 )
 
 
@@ -245,3 +249,152 @@ class TestBuildHealthSummary:
         s = build_health_summary(pages_checked=0, by_status={}, duplicates=0)
         assert s["pages_checked"] == 0
         assert s["by_status"] == {}
+
+
+class TestRunConnectPhase:
+    def _commit_recorder(self):
+        commits: list[list[dict]] = []
+
+        def commit(edges):
+            commits.append(list(edges))
+            return len(edges)
+
+        return commit, commits
+
+    def test_propose_called_once_per_path(self):
+        propose = MagicMock(return_value=[])
+        commit, _ = self._commit_recorder()
+        result = run_connect_phase(
+            paths=["a", "b", "c"],
+            propose_fn=propose,
+            commit_fn=commit,
+            auto_commit_threshold=0.85,
+            max_workers=4,
+        )
+        assert propose.call_count == 3
+        called_paths = sorted(c.args[0] for c in propose.call_args_list)
+        assert called_paths == ["a", "b", "c"]
+        assert result["edges_proposed"] == 0
+
+    def test_commit_called_exactly_once_with_aggregated_high_edges(self):
+        def propose(path):
+            return [{"source_page_id": path, "target_page_id": "t",
+                     "link_type": "related", "confidence": 0.9, "origin": "auto-vs"}]
+        commit, commits = self._commit_recorder()
+        result = run_connect_phase(
+            paths=["a", "b", "c"],
+            propose_fn=propose,
+            commit_fn=commit,
+            auto_commit_threshold=0.85,
+            max_workers=4,
+        )
+        assert len(commits) == 1, "commit_fn must be called exactly once"
+        assert len(commits[0]) == 3
+        assert result["edges_committed"] == 3
+        assert result["edges_proposed"] == 3
+        assert result["deferred_low_confidence"] == []
+
+    def test_commit_not_called_when_no_high_confidence_edges(self):
+        def propose(path):
+            return [{"source_page_id": path, "target_page_id": "t",
+                     "link_type": "related", "confidence": 0.5, "origin": "auto-vs"}]
+        commit, commits = self._commit_recorder()
+        result = run_connect_phase(
+            paths=["a", "b"],
+            propose_fn=propose,
+            commit_fn=commit,
+            auto_commit_threshold=0.85,
+            max_workers=2,
+        )
+        assert commits == []
+        assert result["edges_committed"] == 0
+        assert result["edges_proposed"] == 2
+        assert len(result["deferred_low_confidence"]) == 2
+
+    def test_deferred_edges_tagged_with_source_path(self):
+        def propose(path):
+            return [{"source_page_id": path, "target_page_id": f"t-{path}",
+                     "link_type": "related", "confidence": 0.5, "origin": "auto-vs"}]
+        commit, _ = self._commit_recorder()
+        result = run_connect_phase(
+            paths=["a", "b"],
+            propose_fn=propose,
+            commit_fn=commit,
+            auto_commit_threshold=0.85,
+            max_workers=2,
+        )
+        deferred_paths = sorted(d["path"] for d in result["deferred_low_confidence"])
+        assert deferred_paths == ["a", "b"]
+
+    def test_propose_exception_does_not_crash_and_counts_as_zero(self):
+        def propose(path):
+            if path == "bad":
+                raise RuntimeError("boom")
+            return [{"source_page_id": path, "target_page_id": "t",
+                     "link_type": "related", "confidence": 0.9, "origin": "auto-vs"}]
+        commit, commits = self._commit_recorder()
+        result = run_connect_phase(
+            paths=["a", "bad", "c"],
+            propose_fn=propose,
+            commit_fn=commit,
+            auto_commit_threshold=0.85,
+            max_workers=4,
+        )
+        assert result["edges_proposed"] == 2  # bad page contributed nothing
+        assert result["failed_paths"] == ["bad"]
+        assert len(commits[0]) == 2
+
+    def test_max_workers_one_runs_sequentially(self):
+        propose = MagicMock(return_value=[])
+        commit, _ = self._commit_recorder()
+        run_connect_phase(
+            paths=["a", "b"],
+            propose_fn=propose,
+            commit_fn=commit,
+            auto_commit_threshold=0.85,
+            max_workers=1,
+        )
+        assert propose.call_count == 2
+
+    def test_propose_runs_concurrently_when_max_workers_gt_one(self):
+        # Barrier of size 4 only releases when 4 threads enter — proves
+        # concurrency. With max_workers=1 the barrier would time out.
+        barrier = threading.Barrier(4, timeout=2.0)
+        seen_threads: set[int] = set()
+        lock = threading.Lock()
+
+        def propose(path):
+            with lock:
+                seen_threads.add(threading.get_ident())
+            barrier.wait()
+            return []
+
+        commit, _ = self._commit_recorder()
+        run_connect_phase(
+            paths=[f"p{i}" for i in range(4)],
+            propose_fn=propose,
+            commit_fn=commit,
+            auto_commit_threshold=0.85,
+            max_workers=4,
+        )
+        assert len(seen_threads) >= 2, \
+            f"expected concurrent execution, only saw {len(seen_threads)} thread(s)"
+
+    def test_empty_paths_calls_nothing(self):
+        propose = MagicMock(return_value=[])
+        commit, commits = self._commit_recorder()
+        result = run_connect_phase(
+            paths=[],
+            propose_fn=propose,
+            commit_fn=commit,
+            auto_commit_threshold=0.85,
+            max_workers=4,
+        )
+        assert propose.call_count == 0
+        assert commits == []
+        assert result == {
+            "edges_proposed": 0,
+            "edges_committed": 0,
+            "deferred_low_confidence": [],
+            "failed_paths": [],
+        }
