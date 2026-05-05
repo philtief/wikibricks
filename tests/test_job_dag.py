@@ -137,6 +137,12 @@ class TestJobDagSchemaContract:
         # zero times (no recent pages) but fix_broken_links unconditionally
         # runs when REPAIR_BROKEN_LINKS is true (default).
         wiki.fix_broken_links.assert_called()
+        # commit_edges is now called at most once per curate run (batched).
+        # With zero recent paths → zero high edges → zero calls.
+        assert wiki.commit_edges.call_count <= 1, (
+            f"commit_edges called {wiki.commit_edges.call_count} times — "
+            "connect phase should batch into a single MERGE"
+        )
         # Curate logs a `curate_run` summary at the end.
         assert any(
             c.args and c.args[0] == "curate_run"
