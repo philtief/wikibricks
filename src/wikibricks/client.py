@@ -523,6 +523,7 @@ class WikiClient:
         path: str,
         num_candidates: int = 10,
         min_similarity: float = 0.7,
+        other_pages: list[dict] | None = None,
     ) -> list[dict]:
         """Propose candidate edges for a page without calling an LLM.
 
@@ -534,6 +535,11 @@ class WikiClient:
 
         Edges are proposed only — nothing is written. The agent or curate job
         decides which to commit via :meth:`commit_edges`.
+
+        ``other_pages`` is the candidate set for the title-substring match.
+        When ``None`` (default), :meth:`list_pages` is called once. Batch
+        callers (e.g. the curate notebook) should pre-fetch ``list_pages()``
+        once and pass it in to avoid an O(N) round-trip per page in the loop.
 
         Returns a list of dicts::
 
@@ -577,7 +583,9 @@ class WikiClient:
         # avoid the per-match SELECT that previously dominated propose_edges
         # latency on wikis with many pages (one round-trip per matching title
         # × N pages = the prior 55s/page was almost entirely this loop).
-        other_pages = self.list_pages()
+        # Batch callers can pre-fetch and pass `other_pages` to skip this SQL.
+        if other_pages is None:
+            other_pages = self.list_pages()
         content_lower = content.lower()
         for p in other_pages:
             title = (p.get("title") or "").strip()

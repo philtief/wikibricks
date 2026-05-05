@@ -160,6 +160,7 @@ class TestJobDagSchemaContract:
 
     def test_all_wiki_methods_used_by_curate_exist_on_class(self):
         """Same guard for curate-side calls."""
-        expected = {"propose_edges", "commit_edges", "fix_broken_links", "_log"}
+        expected = {"propose_edges", "commit_edges", "fix_broken_links",
+                    "list_pages", "_log"}
         missing = expected - set(dir(WikiClient))
         assert not missing, f"curate uses methods missing from WikiClient: {missing}"

@@ -103,13 +103,26 @@ def run_sql(sql: str) -> list[dict]:
 # COMMAND ----------
 
 since = (datetime.now(timezone.utc) - timedelta(hours=CONNECT_LOOKBACK_HOURS)).isoformat()
+# Filter to user/agent-authored top-level pages. Segregate-produced chunks
+# (parent_id IS NOT NULL, created_by='segregate') and promote-produced
+# answers (created_by='promote') already have their links established and
+# would otherwise dominate the lookback window after a big segregate run —
+# turning a daily curate into a 21-min loop over ~100 stale candidates.
 recent = run_sql(
     f"SELECT path FROM {PAGES_TABLE} "
-    f"WHERE updated_at >= '{since}' AND path NOT LIKE '_meta/%' "
+    f"WHERE updated_at >= '{since}' "
+    f"  AND parent_id IS NULL "
+    f"  AND (created_by IS NULL OR created_by NOT IN ('segregate', 'promote')) "
+    f"  AND path NOT LIKE '_meta/%' "
     f"ORDER BY updated_at DESC LIMIT {MAX_PAGES_PER_RUN}"
 )
 paths = [r["path"] for r in recent]
-print(f"connect: {len(paths)} pages updated in the last {CONNECT_LOOKBACK_HOURS}h")
+print(f"connect: {len(paths)} agent pages updated in the last {CONNECT_LOOKBACK_HOURS}h")
+
+# Pre-fetch once instead of once-per-page inside propose_edges. With ~1k
+# pages and ~100 candidates per run, this collapses 100 list_pages SQL
+# round-trips (≈4-5s each) into 1.
+all_pages = wiki.list_pages()
 
 # COMMAND ----------
 
@@ -119,7 +132,9 @@ deferred_low_confidence = []
 
 for path in paths:
     try:
-        edges = wiki.propose_edges(path, min_similarity=MIN_SIMILARITY)
+        edges = wiki.propose_edges(
+            path, min_similarity=MIN_SIMILARITY, other_pages=all_pages,
+        )
     except Exception as e:
         print(f"propose_edges failed for {path}: {e}")
         continue
