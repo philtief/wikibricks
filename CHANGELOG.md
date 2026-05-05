@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-05
+
+### Added
+
+- **`wikibricks.curate_logic.run_connect_phase`** — pure helper that fans
+  `propose_fn` across paths via `ThreadPoolExecutor` and batches one
+  `commit_fn` call at the end. Used by `notebooks/wiki_curate.py`.
+- **`wiki_curate` notebook** gains a `propose_concurrency` widget
+  (default 8). The bundle resource sets the same default for scheduled
+  runs.
+
+### Performance
+
+- **`notebooks/wiki_curate.py` connect phase** now runs `propose_edges`
+  in parallel up to `propose_concurrency` workers and commits all
+  high-confidence edges in a single MERGE INTO links instead of one
+  MERGE per page. On the personal philipp wiki (~92 candidate pages
+  per run on serverless) this drops the connect phase from ~9 min to
+  ~1-2 min wall time.
+
+### Fixed
+
+- **`notebooks/wiki_curate.py` connect filter** restricts the recent-
+  pages window to `parent_id IS NULL` and
+  `created_by NOT IN ('segregate', 'promote')`. Segregate-produced
+  chunk children dominated the prior 48h lookback after a single big
+  segregate run (984 of 1074 "recent" pages on 2026-05-05); the loop
+  was processing stale chunks instead of new agent writes.
+- **`WikiClient.propose_edges`** accepts an optional `other_pages`
+  argument. Batch callers can pre-fetch `list_pages()` once and pass it
+  in, collapsing N list_pages SQL round-trips into 1. Default behavior
+  unchanged.
+
 ## [0.3.0] - 2026-05-04
 
 ### Fixed
@@ -418,7 +451,9 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/philtief/wikibricks/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/philtief/wikibricks/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/philtief/wikibricks/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/philtief/wikibricks/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/philtief/wikibricks/compare/v0.1.3...v0.1.4
