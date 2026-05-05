@@ -97,3 +97,58 @@ class TestWikiCurateNotebook:
         with open("notebooks/wiki_curate.py") as f:
             source = f.read()
         assert "WikiClient" in source
+
+
+class TestWikiSegregateNotebook:
+    def test_notebook_is_valid_python(self):
+        with open("notebooks/wiki_segregate.py") as f:
+            source = f.read()
+        ast.parse(source)
+
+    def test_imports_wikibricks(self):
+        with open("notebooks/wiki_segregate.py") as f:
+            source = f.read()
+        assert "from wikibricks" in source
+
+    def test_imports_segregate_logic_helpers(self):
+        with open("notebooks/wiki_segregate.py") as f:
+            source = f.read()
+        for helper in ("build_parent_body", "child_path",
+                       "child_title", "chunk_at_boundaries"):
+            assert helper in source, f"missing import of segregate_logic.{helper}"
+
+    def test_filters_to_oversize_parents_only(self):
+        # Segregate must only pick `health_status='oversize' AND parent_id IS NULL`
+        # so it doesn't recursively split chunk children. If this filter drifts,
+        # one big oversize parent → infinite re-segregation across runs.
+        with open("notebooks/wiki_segregate.py") as f:
+            source = f.read()
+        assert "health_status = 'oversize'" in source
+        assert "parent_id IS NULL" in source
+
+    def test_exits_early_when_no_oversize_pages(self):
+        with open("notebooks/wiki_segregate.py") as f:
+            source = f.read()
+        assert 'dbutils.notebook.exit("no oversize pages")' in source
+
+    def test_writes_via_batched_write_pages(self):
+        # write_pages (plural) collapses N+1 sequential writes into 4 SQL
+        # statements per page. Reverting to write_page (singular) inside
+        # the loop would re-introduce the perf regression CHANGELOG 0.3.0
+        # explicitly fixed.
+        with open("notebooks/wiki_segregate.py") as f:
+            source = f.read()
+        assert "wiki.write_pages(" in source
+        assert "wiki.write_page(" not in source, (
+            "segregate must use batched write_pages, not per-page write_page"
+        )
+
+    def test_syncs_index_after_segregation(self):
+        with open("notebooks/wiki_segregate.py") as f:
+            source = f.read()
+        assert "wiki.sync_index()" in source
+
+    def test_uses_wiki_client(self):
+        with open("notebooks/wiki_segregate.py") as f:
+            source = f.read()
+        assert "WikiClient" in source

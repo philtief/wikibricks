@@ -7,6 +7,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-05-05
+
+### Added
+
+- **`wikibricks.curate_logic.run_connect_phase`** — pure helper that fans
+  `propose_fn` across paths via `ThreadPoolExecutor` and batches one
+  `commit_fn` call at the end. Used by `notebooks/wiki_curate.py`.
+- **`wiki_curate` notebook** gains a `propose_concurrency` widget
+  (default 8). The bundle resource sets the same default for scheduled
+  runs.
+- **`tests/test_deploy_notebook.py::TestWikiSegregateNotebook`** — eight
+  drift guards over `notebooks/wiki_segregate.py` (parses-as-Python,
+  imports the segregate_logic helpers, filters to oversize parents
+  only, batched `write_pages`, etc.). Closes a previously-untested
+  notebook.
+- **`tests/test_job_dag.py`** — DAG contract test now also execs
+  `notebooks/wiki_segregate.py` against the spec_set'd `WikiClient`,
+  plus a static `test_all_wiki_methods_used_by_segregate_exist_on_class`
+  guard pinning `write_pages`, `sync_index`, `_log`.
+
+### Performance
+
+- **`notebooks/wiki_curate.py` connect phase** now runs `propose_edges`
+  in parallel up to `propose_concurrency` workers and commits all
+  high-confidence edges in a single MERGE INTO links instead of one
+  MERGE per page. Live measurement on a personal wiki with 95
+  candidate pages: 21.6 min → 2.8 min wall time (7.7×). Per-call
+  propose_edges latency at 8 workers: 7.94s → 1.54s (5.2×).
+
+### Fixed
+
+- **`notebooks/wiki_curate.py` connect filter** restricts the recent-
+  pages window to `parent_id IS NULL` and
+  `created_by NOT IN ('segregate', 'promote')`. Segregate-produced
+  chunk children dominated the prior 48h lookback after a single big
+  segregate run; the loop was processing stale chunks instead of new
+  agent writes.
+- **`WikiClient.propose_edges`** accepts an optional `other_pages`
+  argument. Batch callers can pre-fetch `list_pages()` once and pass
+  it in, collapsing N list_pages SQL round-trips into 1. Default
+  behavior unchanged.
+
+### Install
+
+```
+/plugin marketplace add https://github.com/philtief/wikibricks.git
+/plugin install wikibricks-recorder@wikibricks
+```
+
 ## [0.3.0] - 2026-05-04
 
 ### Fixed
@@ -396,7 +445,9 @@ Databricks.
   `examples/twowiki.md`, `docs/hotpotqa_evaluation.md`,
   `docs/twowiki_evaluation.md`, `docs/img/architecture.{mmd,svg,png}`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.2.0...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.3.1...HEAD
+[0.3.1]: https://github.com/philtief/wikibricks/compare/v0.3.0...v0.3.1
+[0.3.0]: https://github.com/philtief/wikibricks/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/philtief/wikibricks/compare/v0.1.5...v0.2.0
 [0.1.5]: https://github.com/philtief/wikibricks/compare/v0.1.4...v0.1.5
 [0.1.4]: https://github.com/philtief/wikibricks/compare/v0.1.3...v0.1.4

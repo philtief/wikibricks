@@ -34,8 +34,8 @@ and let it record one Claude Code session.
 ### 1. Deploy the wiki store (one-time, ~3 minutes)
 
 ```bash
-git clone https://github.com/philtief/wikibricks-dev.git
-cd wikibricks-dev
+git clone https://github.com/philtief/wikibricks.git
+cd wikibricks
 cp databricks.override.example.yml databricks.override.yml
 # edit: host, profile, catalog, schema, warehouse_id
 
@@ -51,14 +51,14 @@ UC functions, and the daily curate Lakeflow Job.
 In any Claude Code session:
 
 ```
-/plugin marketplace add https://github.com/philtief/wikibricks-dev.git
+/plugin marketplace add https://github.com/philtief/wikibricks.git
 /plugin install wikibricks-recorder@wikibricks
 ```
 
 Then once per machine:
 
 ```bash
-uvx --from "git+https://github.com/philtief/wikibricks-dev.git@v0.3.0" \
+uvx --from "git+https://github.com/philtief/wikibricks.git@v0.3.1" \
     wiki-init personal      # | team-create | team-join
 ```
 
@@ -168,9 +168,9 @@ SQL functions can't perform writes.
 ```bash
 uv sync                              # core library
 uv sync --extra recorder             # also install the recorder package
-uv run pytest                        # 491 tests, no workspace needed
+uv run pytest                        # 480 tests, no workspace needed
 uv run ruff check src tests scripts
-uv build                             # → dist/wikibricks-0.3.0-py3-none-any.whl
+uv build                             # → dist/wikibricks-0.3.1-py3-none-any.whl
 ```
 
 For the recorder, see [`plugin/README.md`](plugin/README.md). For

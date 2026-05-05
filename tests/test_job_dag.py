@@ -22,6 +22,7 @@ from wikibricks import WikiClient
 REPO_ROOT = Path(__file__).parent.parent
 CURATE_NB = REPO_ROOT / "notebooks" / "wiki_curate.py"
 PROMOTE_NB = REPO_ROOT / "notebooks" / "promote_from_traces.py"
+SEGREGATE_NB = REPO_ROOT / "notebooks" / "wiki_segregate.py"
 
 
 class NotebookExit(Exception):
@@ -47,6 +48,7 @@ def _make_spec_wiki() -> MagicMock:
     wiki.read_page.return_value = None
     wiki.list_pages.return_value = []
     wiki.write_page.return_value = "written"
+    wiki.write_pages.return_value = None
     wiki.promote_answer.return_value = "promoted/foo"
     wiki.history.return_value = []
     wiki.sync_index.return_value = None
@@ -98,6 +100,33 @@ def _make_ws() -> MagicMock:
     return ws
 
 
+def _make_ws_segregate() -> MagicMock:
+    """Workspace client for segregate. Statements API returns no rows
+    so `oversize` is empty and the notebook exits via dbutils.notebook.exit.
+
+    Defensive: if the notebook ever queries serving_endpoints (it shouldn't
+    on the empty-oversize path), provide a navigable stub so the test
+    fails on the contract check, not on attribute access.
+    """
+    ws = _make_ws()
+    resp = MagicMock()
+    resp.choices = [MagicMock()]
+    resp.choices[0].message.content = '{"summary": "x", "titles": []}'
+    ws.serving_endpoints.query.return_value = resp
+    return ws
+
+
+def _make_spark_segregate() -> MagicMock:
+    """Segregate-side spark: empty oversize result → notebook exits early.
+
+    The notebook calls dbutils.notebook.exit("no oversize pages") when
+    no rows match. That early-exit path still proves the import block,
+    parameter parsing, and the initial SQL all work against the
+    spec_set'd wiki — without needing to mock the LLM serving endpoint.
+    """
+    return _make_spark_curate()  # same shape: returns empty .collect() everywhere
+
+
 def _exec_notebook(path: Path, spark: MagicMock, ws: MagicMock, wiki: MagicMock, dbutils: MagicMock):
     src = path.read_text()
     ns = {
@@ -131,12 +160,22 @@ class TestJobDagSchemaContract:
         dbutils = _make_dbutils()
 
         _exec_notebook(CURATE_NB, _make_spark_curate(), ws, wiki, dbutils)
+        _exec_notebook(
+            SEGREGATE_NB, _make_spark_segregate(),
+            _make_ws_segregate(), wiki, _make_dbutils(),
+        )
         _exec_notebook(PROMOTE_NB, _make_spark_promote(), ws, wiki, _make_dbutils())
 
         # Curate's two phases both ran: propose_edges may have been called
         # zero times (no recent pages) but fix_broken_links unconditionally
         # runs when REPAIR_BROKEN_LINKS is true (default).
         wiki.fix_broken_links.assert_called()
+        # commit_edges is now called at most once per curate run (batched).
+        # With zero recent paths → zero high edges → zero calls.
+        assert wiki.commit_edges.call_count <= 1, (
+            f"commit_edges called {wiki.commit_edges.call_count} times — "
+            "connect phase should batch into a single MERGE"
+        )
         # Curate logs a `curate_run` summary at the end.
         assert any(
             c.args and c.args[0] == "curate_run"
@@ -160,6 +199,15 @@ class TestJobDagSchemaContract:
 
     def test_all_wiki_methods_used_by_curate_exist_on_class(self):
         """Same guard for curate-side calls."""
-        expected = {"propose_edges", "commit_edges", "fix_broken_links", "_log"}
+        expected = {"propose_edges", "commit_edges", "fix_broken_links",
+                    "list_pages", "_log"}
         missing = expected - set(dir(WikiClient))
         assert not missing, f"curate uses methods missing from WikiClient: {missing}"
+
+    def test_all_wiki_methods_used_by_segregate_exist_on_class(self):
+        """Same guard for the segregate notebook."""
+        expected = {"write_pages", "sync_index", "_log"}
+        missing = expected - set(dir(WikiClient))
+        assert not missing, (
+            f"segregate uses methods missing from WikiClient: {missing}"
+        )

@@ -16,7 +16,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.3.0-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.3.1-py3-none-any.whl
 # MAGIC # ^ Update path to where the wheel lives in your workspace.
 # MAGIC %restart_python
 
@@ -50,7 +50,7 @@ from wikibricks.curate_logic import (
     build_health_summary,
     classify_page_health,
     find_duplicate_paths,
-    partition_by_confidence,
+    run_connect_phase,
 )
 from wikibricks.ops import (
     LOG_TABLE,
@@ -77,6 +77,7 @@ CONNECT_LOOKBACK_HOURS = int(_param("connect_lookback_hours", "48"))
 AUTO_COMMIT_THRESHOLD = float(_param("auto_commit_threshold", "0.85"))
 MIN_SIMILARITY = float(_param("min_similarity", "0.70"))
 MAX_PAGES_PER_RUN = int(_param("max_pages_per_run", "500"))
+PROPOSE_CONCURRENCY = int(_param("propose_concurrency", "8"))
 REPAIR_BROKEN_LINKS = _param("repair_broken_links", "true").lower() == "true"
 
 w = WorkspaceClient()
@@ -103,36 +104,54 @@ def run_sql(sql: str) -> list[dict]:
 # COMMAND ----------
 
 since = (datetime.now(timezone.utc) - timedelta(hours=CONNECT_LOOKBACK_HOURS)).isoformat()
+# Filter to user/agent-authored top-level pages. Segregate-produced chunks
+# (parent_id IS NOT NULL, created_by='segregate') and promote-produced
+# answers (created_by='promote') already have their links established and
+# would otherwise dominate the lookback window after a big segregate run —
+# turning a daily curate into a 21-min loop over ~100 stale candidates.
 recent = run_sql(
     f"SELECT path FROM {PAGES_TABLE} "
-    f"WHERE updated_at >= '{since}' AND path NOT LIKE '_meta/%' "
+    f"WHERE updated_at >= '{since}' "
+    f"  AND parent_id IS NULL "
+    f"  AND (created_by IS NULL OR created_by NOT IN ('segregate', 'promote')) "
+    f"  AND path NOT LIKE '_meta/%' "
     f"ORDER BY updated_at DESC LIMIT {MAX_PAGES_PER_RUN}"
 )
 paths = [r["path"] for r in recent]
-print(f"connect: {len(paths)} pages updated in the last {CONNECT_LOOKBACK_HOURS}h")
+print(f"connect: {len(paths)} agent pages updated in the last {CONNECT_LOOKBACK_HOURS}h")
+
+# Pre-fetch once instead of once-per-page inside propose_edges. With ~1k
+# pages and ~100 candidates per run, this collapses 100 list_pages SQL
+# round-trips (≈4-5s each) into 1.
+all_pages = wiki.list_pages()
 
 # COMMAND ----------
 
-committed_total = 0
-proposed_total = 0
-deferred_low_confidence = []
-
-for path in paths:
-    try:
-        edges = wiki.propose_edges(path, min_similarity=MIN_SIMILARITY)
-    except Exception as e:
-        print(f"propose_edges failed for {path}: {e}")
-        continue
-    proposed_total += len(edges)
-    high, low = partition_by_confidence(edges, AUTO_COMMIT_THRESHOLD)
-    if high:
-        committed_total += wiki.commit_edges(high)
-    deferred_low_confidence.extend(
-        {"path": path, **e} for e in low
+def _propose_one(path: str) -> list[dict]:
+    return wiki.propose_edges(
+        path, min_similarity=MIN_SIMILARITY, other_pages=all_pages,
     )
 
+
+connect = run_connect_phase(
+    paths=paths,
+    propose_fn=_propose_one,
+    commit_fn=wiki.commit_edges,
+    auto_commit_threshold=AUTO_COMMIT_THRESHOLD,
+    max_workers=PROPOSE_CONCURRENCY,
+)
+proposed_total = connect["edges_proposed"]
+committed_total = connect["edges_committed"]
+deferred_low_confidence = connect["deferred_low_confidence"]
+
+if connect["failed_paths"]:
+    failed = connect["failed_paths"]
+    preview = failed[:5]
+    suffix = "..." if len(failed) > 5 else ""
+    print(f"connect: {len(failed)} paths failed: {preview}{suffix}")
 print(f"connect: proposed={proposed_total} committed={committed_total} "
-      f"deferred_for_agent={len(deferred_low_confidence)}")
+      f"deferred_for_agent={len(deferred_low_confidence)} "
+      f"workers={PROPOSE_CONCURRENCY}")
 
 # COMMAND ----------
 

@@ -588,6 +588,57 @@ class TestProposeEdges:
         assert len(edges) == 1
         assert edges[0]["origin"] == "auto-title"
 
+    def test_caller_supplied_other_pages_skips_list_pages_sql(self):
+        # When the caller pre-fetches list_pages() and passes it in (curate's
+        # batch loop), propose_edges must not re-issue the list_pages SELECT.
+        ws = MagicMock()
+        page_row = ["page-a", "topics/a", "A", "concept",
+                    "This page mentions Databricks.", [], "agent", "t", "t", 1]
+        # _setup's handler will still answer a list_pages query if asked, but
+        # the assertion below checks that branch was never hit.
+        self._setup(ws, page_row, other_pages=[], vs_hits=[])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        prefetched = [
+            {"page_id": "page-db", "path": "topics/databricks", "title": "Databricks"},
+        ]
+        edges = wiki.propose_edges("topics/a", other_pages=prefetched)
+
+        statements = [c.kwargs["statement"] for c in
+                      ws.statement_execution.execute_statement.call_args_list]
+        # Only read_page should have hit the warehouse — no list_pages SELECT.
+        assert not any(
+            s.strip().startswith("SELECT page_id, path, title, page_type, version")
+            for s in statements
+        ), f"list_pages SQL was issued despite other_pages being supplied: {statements}"
+        # Title match still works against the supplied list.
+        assert len(edges) == 1
+        assert edges[0]["target_page_id"] == "page-db"
+        assert edges[0]["origin"] == "auto-title"
+
+    def test_other_pages_none_falls_back_to_list_pages(self):
+        # Default behaviour preserved: when the caller does not supply
+        # other_pages, propose_edges still issues the list_pages SELECT.
+        ws = MagicMock()
+        page_row = ["page-a", "topics/a", "A", "concept",
+                    "Mentions Databricks.", [], "agent", "t", "t", 1]
+        other_pages = [
+            {"page_id": "page-db", "path": "topics/databricks", "title": "Databricks"},
+        ]
+        self._setup(ws, page_row, other_pages=other_pages, vs_hits=[])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        edges = wiki.propose_edges("topics/a")  # no other_pages arg
+
+        statements = [c.kwargs["statement"] for c in
+                      ws.statement_execution.execute_statement.call_args_list]
+        assert any(
+            s.strip().startswith("SELECT page_id, path, title, page_type, version")
+            for s in statements
+        )
+        assert len(edges) == 1
+        assert edges[0]["origin"] == "auto-title"
+
 
 class TestCommitEdges:
     def test_merges_valid_edges(self):

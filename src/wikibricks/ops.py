@@ -576,7 +576,7 @@ def eval_mrr_multi(retrieved_paths, relevant_paths):
 
 
 def eval_supporting_fact_f1(retrieved_paths, relevant_paths):
-    """F1 over retrieved vs relevant - the [redacted benchmark] supporting-fact metric. 1.0 when both sets are empty."""
+    """F1 over retrieved vs relevant - the HotpotQA supporting-fact metric. 1.0 when both sets are empty."""
     retrieved = set(retrieved_paths)
     relevant = set(relevant_paths)
     if not retrieved and not relevant:
