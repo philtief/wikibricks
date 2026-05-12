@@ -14,23 +14,12 @@ from typing import Any
 TITLE_MAX = 120
 SUMMARY_MAX = 200
 
-# Prompt text starting with one of these prefixes is almost always a
-# skill-supplied system prompt (memory consolidation, daily summarisation,
-# code review templates). Skill invocations create their own Claude Code
-# sessions, and recording every one of them turns the wiki index into noise.
-_SYSTEM_PROMPT_PREFIXES = (
-    "You are ",
-    "Apply maximum ",
-    "Apply minimum ",
-    "Apply non-destructive ",
-)
+# Skill-template prompts that mean "this session is a sub-agent, not real work".
+_SYSTEM_PROMPT_PREFIXES = ("You are ", "Apply maximum ")
 
 
 def _looks_like_system_prompt(text: str) -> bool:
-    if not text:
-        return False
-    stripped = text.strip()
-    return any(stripped.startswith(p) for p in _SYSTEM_PROMPT_PREFIXES)
+    return bool(text) and text.strip().startswith(_SYSTEM_PROMPT_PREFIXES)
 
 
 def _started_dt(started_at: str | None) -> datetime:
@@ -49,8 +38,6 @@ def session_path(user_id: str, session_id: str, started_at: str | None) -> str:
 
 
 def session_title(state: dict[str, Any]) -> str:
-    # Prefer the first prompt that is not a skill system-prompt template.
-    # Falls back to the original behaviour if every prompt looks like one.
     for e in state.get("events", []):
         if e.get("kind") != "prompt":
             continue
@@ -59,8 +46,7 @@ def session_title(state: dict[str, Any]) -> str:
             return text.split("\n", 1)[0][:TITLE_MAX]
     fp = state.get("first_prompt")
     if fp:
-        first_line = fp.strip().split("\n", 1)[0]
-        return first_line[:TITLE_MAX]
+        return fp.strip().split("\n", 1)[0][:TITLE_MAX]
     return f"Session {state['session_id'][:8]}"
 
 

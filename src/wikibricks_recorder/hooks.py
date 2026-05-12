@@ -98,37 +98,14 @@ def on_post_tool_use() -> None:
         _log_error("on_post_tool_use", e)
 
 
-# Tmp working directories Claude Code uses when a skill spawns a sub-session.
-# A session running from one of these is a synthetic skill invocation, not
-# user-driven work, and does not deserve a wiki page.
-_UTILITY_CWD_PREFIXES = (
-    "/private/var/folders/",
-    "/var/folders/",
-    "/tmp/",
-)
-
-
 def _is_utility_session(state: dict[str, Any]) -> bool:
-    """True for sessions that are synthetic skill invocations, not real work.
-
-    Filters two patterns:
-    1. `cwd` rooted in a system tmp dir — Claude Code's marker for sub-agent /
-       skill invocations spawned from a parent session. Near-zero false
-       positives in practice.
-    2. A single prompt event whose text looks like a system prompt template
-       (memory consolidation, daily summarisation, …). One-shot skill runs.
-    """
+    """True for skill / sub-agent sessions that should not be recorded."""
     cwd = state.get("cwd") or ""
-    if any(cwd.startswith(p) for p in _UTILITY_CWD_PREFIXES):
+    if cwd.startswith(("/private/var/folders/", "/var/folders/", "/tmp/")):
         return True
-
-    prompt_events = [e for e in state.get("events", []) if e.get("kind") == "prompt"]
-    if len(prompt_events) <= 1:
-        first = (state.get("first_prompt") or "").strip()
-        if first and page_builder._looks_like_system_prompt(first):
-            return True
-
-    return False
+    prompts = [e for e in state.get("events", []) if e.get("kind") == "prompt"]
+    first = (state.get("first_prompt") or "").strip()
+    return len(prompts) <= 1 and page_builder._looks_like_system_prompt(first)
 
 
 def _build_wiki_client(cfg: dict[str, str]):
