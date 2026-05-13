@@ -1,6 +1,8 @@
 """WikiClient: high-level API for reading and writing wiki pages on Databricks."""
 
 import json
+import math
+import os
 import re
 
 from databricks.sdk import WorkspaceClient
@@ -377,14 +379,27 @@ class WikiClient:
         self._log("read", path=path)
         return dict(zip(cols, rows[0]))
 
-    def search(self, query: str, mode: str = "HYBRID", num_results: int = 5) -> list[dict]:
+    def search(
+        self,
+        query: str,
+        mode: str = "HYBRID",
+        num_results: int = 5,
+        rerank_by_citations: bool | None = None,
+    ) -> list[dict]:
         """Search wiki pages via Vector Search.
 
         Args:
             query: Search query text.
             mode: One of ANN, FULL_TEXT, HYBRID.
             num_results: Max results to return.
+            rerank_by_citations: If True, after Vector Search returns hits,
+                rerank them by adding a citation bonus from ``wiki_log``
+                (``op_type='cited'``). If ``None`` (default), uses the
+                ``WIKIBRICKS_RERANK_BY_CITATIONS=1`` env var as the signal
+                so the recorder can opt-in globally without touching the API.
         """
+        if rerank_by_citations is None:
+            rerank_by_citations = os.environ.get("WIKIBRICKS_RERANK_BY_CITATIONS") == "1"
         kwargs = {
             "index_name": VS_INDEX,
             "columns": ["page_id", "path", "title", "page_type", "content_text", "tags", "version"],
@@ -400,7 +415,47 @@ class WikiClient:
         # Vector Search API returns columns directly on manifest, not under .schema
         cols = [c.name for c in resp.manifest.columns]
         self._log("search", query=query)
-        return [dict(zip(cols, row)) for row in resp.result.data_array]
+        hits = [dict(zip(cols, row)) for row in resp.result.data_array]
+        if rerank_by_citations:
+            hits = self._rerank_by_citations(hits)
+        return hits
+
+    def _fetch_citation_counts(self, paths: list[str]) -> dict[str, int]:
+        """Return ``{path: cited_count}`` for the given paths from
+        ``wiki_log``. Empty dict on any failure or empty input.
+        """
+        if not paths:
+            return {}
+        try:
+            escaped = ", ".join(f"'{self._escape(p)}'" for p in paths if p)
+            if not escaped:
+                return {}
+            resp = self._exec(
+                f"SELECT path, COUNT(*) AS n FROM {LOG_TABLE} "
+                f"WHERE op_type = 'cited' AND path IN ({escaped}) "
+                f"GROUP BY path"
+            )
+            rows = (resp.result.data_array if resp and resp.result else None) or []
+            return {r[0]: int(r[1]) for r in rows}
+        except Exception:
+            return {}
+
+    def _rerank_by_citations(self, hits: list[dict], alpha: float = 0.5) -> list[dict]:
+        """Reorder hits by combining each hit's original VS rank with a
+        bonus proportional to ``log(1 + citation_count)``. Cited pages
+        move up; never-cited pages keep their VS order.
+        """
+        if not hits:
+            return hits
+        paths = [h.get("path") for h in hits if h.get("path")]
+        counts = self._fetch_citation_counts(paths)
+        scored = []
+        for i, h in enumerate(hits):
+            base = 1.0 / (i + 1)
+            n = counts.get(h.get("path"), 0)
+            scored.append((base + alpha * math.log1p(n), i, h))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        return [h for _, _, h in scored]
 
     def history(self, path: str) -> list[dict]:
         """Get version history for a wiki page."""

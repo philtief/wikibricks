@@ -260,6 +260,7 @@ framework to give an agent direct promote-to-memory capability.
 | `vs_sync` / `vs_sync_fail` | `sync_index()` result |
 | `verify_fix` | `fix_broken_links` healed an edge |
 | `curate_run` | End-of-run summary from the curate notebook |
+| `cited` | A prior session cited this page via a `[wb:<path>]` marker — drives the citation-aware search reranker |
 | `segregate` | A page was split into a parent + N chunk children |
 | `segregate_skip` | An oversize page could not be split (single paragraph too large) |
 

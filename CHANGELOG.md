@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-13
+
+### Added
+
+- **Outcome tracking via citation parsing.** At ``Stop`` time, the
+  recorder reads the transcript JSONL at ``payload["transcript_path"]``,
+  walks to the agent's most recent assistant message, and extracts every
+  ``[wb:<path>]`` marker. One ``op_type='cited'`` row per unique cited
+  path goes to ``wiki_log``, with ``details={"session_id": "<sid>"}``.
+  Visible stderr summary mirrors the other injection paths::
+
+      wikibricks: cited 2 pages from this session
+        - sessions/2026/05/04/abc
+        - topics/solvd
+
+  Parser lives in ``src/wikibricks_recorder/citations.py`` (pure
+  function, no LLM, no SDK calls). Logging lives in
+  ``hooks.py::_log_citations``. All failures (missing transcript, bad
+  JSON, log errors) are swallowed silently so the host is never crashed.
+- **Citation-aware search reranker.**
+  ``WikiClient.search(rerank_by_citations=True)`` now joins each
+  candidate hit with its ``wiki_log`` citation count and re-orders by
+  ``1/(rank+1) + 0.5 * log(1 + cited_count)``. Pages with ≥ 5 prior
+  citations consistently move ahead of un-cited rank-0 hits — the wiki
+  *learns* which pages have proven useful and surfaces them first. The
+  recorder's MCP search and per-prompt injection both pick up reranking
+  automatically when ``WIKIBRICKS_RERANK_BY_CITATIONS=1`` is set; the
+  argument flips the default per-call when callers want to override.
+  Lives in ``WikiClient._rerank_by_citations`` and
+  ``WikiClient._fetch_citation_counts``.
+- New ``wiki_log`` op_type: ``cited`` (documented in
+  ``CLAUDE.md`` op_type table).
+
+### Changed
+
+- Plugin launcher's ``WIKIBRICKS_PLUGIN_REF`` default bumped from
+  ``v0.6.0`` to ``v0.7.0``.
+- ``_flush`` now returns the constructed ``WikiClient`` (or ``None``
+  when the session was skipped as empty/utility) so callers can reuse
+  it. Used by ``on_stop`` to call ``_log_citations`` on the same client
+  without re-resolving config.
+
+Test count: 609 → 637 (11 parser + 7 logging + 10 rerank). Ruff clean.
+
 ## [0.6.0] - 2026-05-13
 
 ### Added
@@ -683,7 +727,8 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/philtief/wikibricks/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/philtief/wikibricks/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/philtief/wikibricks/compare/v0.4.1...v0.5.0
 [0.4.1]: https://github.com/philtief/wikibricks/compare/v0.4.0...v0.4.1

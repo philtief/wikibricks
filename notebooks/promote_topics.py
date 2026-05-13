@@ -21,7 +21,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.6.0-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.7.0-py3-none-any.whl
 # MAGIC %restart_python
 
 # COMMAND ----------

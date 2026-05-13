@@ -25,7 +25,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from wikibricks_recorder import auto_tag, config, page_builder, session
+from wikibricks_recorder import auto_tag, citations, config, page_builder, session
 
 
 def _read_payload() -> dict[str, Any]:
@@ -222,11 +222,15 @@ def _build_wiki_client(cfg: dict[str, str]):
     return WikiClient(warehouse_id=cfg["warehouse_id"], workspace_client=ws)
 
 
-def _flush(state: dict[str, Any]) -> None:
+def _flush(state: dict[str, Any]):
+    """Write the session as one wiki page. Returns the client (so the
+    caller can reuse it for citation logging) or ``None`` if the session
+    was skipped (empty or utility).
+    """
     if not state.get("events"):
-        return
+        return None
     if _is_utility_session(state):
-        return
+        return None
     cfg = config.load_config()
     client = _build_wiki_client(cfg)
     path = page_builder.session_path(
@@ -255,6 +259,34 @@ def _flush(state: dict[str, Any]) -> None:
         content_json=page_builder.session_content(state),
         tags=tags,
     )
+    return client
+
+
+def _log_citations(session_id: str, transcript_path: str | None, client) -> None:
+    """Parse [wb:<path>] markers from the agent's last assistant message in
+    the transcript and emit one ``cited`` row per unique path. Silent on
+    any failure — citation tracking is best-effort and must never crash
+    the host.
+    """
+    try:
+        cited = citations.extract_cited_paths(transcript_path)
+        if not cited:
+            return
+        details = json.dumps({"session_id": session_id})
+        for path in sorted(cited):
+            try:
+                client._log("cited", path=path, details=details)
+            except Exception:
+                pass
+        n = len(cited)
+        print(
+            f"wikibricks: cited {n} page{'s' if n != 1 else ''} from this session",
+            file=sys.stderr,
+        )
+        for path in sorted(cited):
+            print(f"  - {path}", file=sys.stderr)
+    except Exception:
+        pass
 
 
 def on_stop() -> None:
@@ -264,7 +296,9 @@ def on_stop() -> None:
         if not sid:
             return
         state = session.load(sid)
-        _flush(state)
+        client = _flush(state)
+        if client is not None:
+            _log_citations(sid, payload.get("transcript_path"), client)
     except Exception as e:
         _log_error("on_stop", e)
 
