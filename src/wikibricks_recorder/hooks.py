@@ -140,7 +140,9 @@ def on_post_tool_use() -> None:
 def _is_utility_session(state: dict[str, Any]) -> bool:
     """True for skill / sub-agent sessions that should not be recorded."""
     cwd = state.get("cwd") or ""
-    if cwd.startswith(("/private/var/folders/", "/var/folders/", "/tmp/")):
+    if cwd in ("/tmp", "/private/tmp") or cwd.startswith(
+        ("/private/var/folders/", "/var/folders/", "/tmp/", "/private/tmp/")
+    ):
         return True
     prompts = [e for e in state.get("events", []) if e.get("kind") == "prompt"]
     first = (state.get("first_prompt") or "").strip()

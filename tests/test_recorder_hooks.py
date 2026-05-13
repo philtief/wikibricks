@@ -22,6 +22,9 @@ def _state(*, cwd=None, events=None, first_prompt=None):
     "/private/var/folders/1q/abc/T",
     "/var/folders/abc/T",
     "/tmp/working",
+    "/private/tmp",
+    "/private/tmp/somework",
+    "/tmp",
 ])
 def test_tmp_cwd_is_utility(cwd):
     assert _is_utility_session(_state(cwd=cwd, events=[{"kind": "prompt"}]))

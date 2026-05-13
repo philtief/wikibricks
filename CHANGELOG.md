@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.3] - 2026-05-13
+
+### Fixed
+
+- **Recorder utility-session filter now catches `/private/tmp`.** macOS
+  resolves `/tmp` to `/private/tmp` at the kernel level; Claude Code
+  reports the resolved path. The cwd-prefix list previously had
+  `/tmp/` but not `/private/tmp/`, so skill / sub-agent sessions
+  spawned from `/private/tmp` slipped past the cwd-prefix path
+  (they were still caught by the system-prompt-text path as a
+  fallback, but this closes the gap). Exact-equality cases (`/tmp`,
+  `/private/tmp` with no trailing slash) are now caught too.
+
+### Changed
+
+- Plugin launcher's `WIKIBRICKS_PLUGIN_REF` default bumped from
+  `v0.3.2` to `v0.3.3`.
+
 ## [0.3.2] - 2026-05-13
 
 ### Fixed
