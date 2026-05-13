@@ -6,6 +6,7 @@ import pytest
 
 from wikibricks_recorder.page_builder import (
     _looks_like_system_prompt,
+    session_tags,
     session_title,
 )
 
@@ -57,3 +58,57 @@ def test_session_title_uses_first_line_and_truncates():
 
 def test_session_title_no_prompts_falls_back_to_session_id():
     assert session_title(_state(events=[])) == "Session abc12345"
+
+
+# ---- customer auto-tagging (feature 2) ---------------------------------
+
+
+def _tagstate(*, cwd=None, first_prompt=None, events=None, session_id="s", model=None):
+    return {
+        "session_id": session_id,
+        "cwd": cwd,
+        "first_prompt": first_prompt,
+        "events": events or [],
+        "model": model,
+    }
+
+
+def test_session_tags_no_keywords_no_customer_tag():
+    tags = session_tags(_tagstate(first_prompt="Tell me about Solvd"))
+    assert not any(t.startswith("customer:") for t in tags)
+
+
+def test_session_tags_matches_first_prompt():
+    state = _tagstate(first_prompt="Tell me about Solvd Lakebase")
+    tags = session_tags(state, topic_keywords={"solvd": ["solvd"]})
+    assert "customer:solvd" in tags
+
+
+def test_session_tags_matches_later_event_prompt():
+    state = _tagstate(
+        first_prompt="Generic intro",
+        events=[
+            {"kind": "prompt", "prompt": "Generic intro"},
+            {"kind": "prompt", "prompt": "now switch to Allianz Italy"},
+        ],
+    )
+    tags = session_tags(state, topic_keywords={"allianz-italy": ["allianz italy"]})
+    assert "customer:allianz-italy" in tags
+
+
+def test_session_tags_no_match_no_tag():
+    tags = session_tags(
+        _tagstate(first_prompt="Tell me about something else"),
+        topic_keywords={"solvd": ["solvd"]},
+    )
+    assert not any(t.startswith("customer:") for t in tags)
+
+
+def test_session_tags_multiple_customers():
+    state = _tagstate(first_prompt="Solvd vs Allianz Italy comparison")
+    tags = session_tags(state, topic_keywords={
+        "solvd": ["solvd"],
+        "allianz-italy": ["allianz italy"],
+    })
+    assert "customer:solvd" in tags
+    assert "customer:allianz-italy" in tags

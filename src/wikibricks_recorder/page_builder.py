@@ -50,7 +50,10 @@ def session_title(state: dict[str, Any]) -> str:
     return f"Session {state['session_id'][:8]}"
 
 
-def session_tags(state: dict[str, Any]) -> list[str]:
+def session_tags(
+    state: dict[str, Any],
+    topic_keywords: dict[str, list[str]] | None = None,
+) -> list[str]:
     tags = ["session"]
     cwd = state.get("cwd")
     if cwd:
@@ -58,6 +61,15 @@ def session_tags(state: dict[str, Any]) -> list[str]:
     model = state.get("model")
     if model:
         tags.append(f"model:{model}")
+    if topic_keywords:
+        text = (state.get("first_prompt") or "")
+        for e in state.get("events", []):
+            if e.get("kind") == "prompt":
+                text += " " + (e.get("prompt") or "")
+        text_lower = text.lower()
+        for slug, terms in topic_keywords.items():
+            if any(t.lower() in text_lower for t in terms):
+                tags.append(f"customer:{slug}")
     return tags
 
 

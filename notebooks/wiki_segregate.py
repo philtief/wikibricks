@@ -14,7 +14,7 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.3.3-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.3.4-py3-none-any.whl
 # MAGIC # ^ Update path to where the wheel lives in your workspace.
 # MAGIC %restart_python
 

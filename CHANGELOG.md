@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.4] - 2026-05-13
+
+### Added
+
+- **Visible context injection.** When
+  `WIKIBRICKS_INJECT_CONTEXT=1` causes hits to be injected, the recorder
+  now also writes a one-line summary to stderr so Claude Code surfaces
+  it to the user above the agent's reply:
+  ``wikibricks: injected 2 pages\n  - sessions/2026/05/08/abc\n  - …``
+  Silent when no hits, env var off, or any exception. The stdout
+  ``additionalContext`` JSON for the model is unchanged.
+- **Auto-tag sessions by customer-keyword.** New
+  ``[topic_keywords]`` section in ``~/.wikibricks-recorder.toml`` adds
+  ``customer:<slug>`` tags to every flushed session whose prompts
+  match the keyword terms (case-insensitive substring). Backward
+  compatible: no section ⇒ no auto-tagging.
+
+  ```toml
+  [topic_keywords]
+  solvd = ["solvd", "controlexpert"]
+  allianz-italy = ["allianz italy", "az italy"]
+  ```
+
+  ``page_builder.session_tags(state, topic_keywords=...)`` gained the
+  optional kwarg; ``config.load_topic_keywords()`` exposes the
+  parsed map.
+
+### Changed
+
+- Plugin launcher's ``WIKIBRICKS_PLUGIN_REF`` default bumped from
+  ``v0.3.3`` to ``v0.3.4``.
+
+Test count: 556 → 564. Ruff clean.
+
 ## [0.3.3] - 2026-05-13
 
 ### Fixed

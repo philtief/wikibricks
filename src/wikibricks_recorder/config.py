@@ -73,6 +73,21 @@ def list_wikis() -> dict[str, dict[str, str]]:
     }
 
 
+def load_topic_keywords() -> dict[str, list[str]]:
+    """Return the ``[topic_keywords]`` section as ``{slug: [terms, ...]}``.
+    Empty dict if the section is absent or malformed. Used by the recorder
+    to auto-tag sessions with ``customer:<slug>`` at flush time.
+    """
+    section = _load_full_toml().get("topic_keywords") or {}
+    if not isinstance(section, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for slug, terms in section.items():
+        if isinstance(terms, list):
+            out[str(slug)] = [str(t) for t in terms if isinstance(t, (str, int))]
+    return out
+
+
 def get_active_target() -> str | None:
     if not ACTIVE_TARGET_FILE.exists():
         return None

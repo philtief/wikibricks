@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import io
 import json
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 from wikibricks_recorder.hooks import _emit_relevant_context
@@ -15,6 +15,13 @@ def _capture(fn, *a, **kw) -> str:
     with redirect_stdout(buf):
         fn(*a, **kw)
     return buf.getvalue()
+
+
+def _capture_both(fn, *a, **kw) -> tuple[str, str]:
+    out, err = io.StringIO(), io.StringIO()
+    with redirect_stdout(out), redirect_stderr(err):
+        fn(*a, **kw)
+    return out.getvalue(), err.getvalue()
 
 
 def test_no_emission_when_env_var_off(monkeypatch):
@@ -93,3 +100,44 @@ def test_swallows_exceptions(monkeypatch):
                side_effect=RuntimeError("boom")):
         out = _capture(_emit_relevant_context, "sid1", "Tell me about something")
     assert out == ""
+
+
+def test_emits_stderr_summary_when_context_injected(monkeypatch):
+    """User-visible: when hits are injected, emit a one-line summary to stderr."""
+    monkeypatch.setenv("WIKIBRICKS_INJECT_CONTEXT", "1")
+    fake_cfg = {"user_id": "me", "catalog": "c", "schema": "s",
+                "warehouse_id": "w", "profile": "p"}
+    fake_hits = [
+        {"path": "sessions/2026/05/08/abc",
+         "title": "Solvd kickoff",
+         "content_text": "..."},
+        {"path": "sessions/2026/04/30/xyz",
+         "title": "AZ CH workshop",
+         "content_text": "..."},
+    ]
+    with patch("wikibricks_recorder.hooks.config.load_config", return_value=fake_cfg), \
+         patch("wikibricks_recorder.hooks._build_wiki_client") as mock_build:
+        mock_build.return_value.search.return_value = fake_hits
+        out, err = _capture_both(_emit_relevant_context, "sid-current", "What about Solvd?")
+    assert "wikibricks: injected 2 pages" in err
+    assert "sessions/2026/05/08/abc" in err
+    assert "sessions/2026/04/30/xyz" in err
+    # stdout JSON for the model still emits as before
+    assert json.loads(out.strip())["hookSpecificOutput"]["additionalContext"]
+
+
+def test_no_stderr_when_no_hits(monkeypatch):
+    monkeypatch.setenv("WIKIBRICKS_INJECT_CONTEXT", "1")
+    fake_cfg = {"user_id": "me", "catalog": "c", "schema": "s",
+                "warehouse_id": "w", "profile": "p"}
+    with patch("wikibricks_recorder.hooks.config.load_config", return_value=fake_cfg), \
+         patch("wikibricks_recorder.hooks._build_wiki_client") as mock_build:
+        mock_build.return_value.search.return_value = []
+        _out, err = _capture_both(_emit_relevant_context, "sid1", "Tell me something")
+    assert err == ""
+
+
+def test_no_stderr_when_env_var_off(monkeypatch):
+    monkeypatch.delenv("WIKIBRICKS_INJECT_CONTEXT", raising=False)
+    _out, err = _capture_both(_emit_relevant_context, "sid1", "Tell me about Solvd")
+    assert err == ""

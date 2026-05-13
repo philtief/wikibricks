@@ -117,6 +117,11 @@ def _emit_relevant_context(session_id: str, prompt: str) -> None:
                 "additionalContext": "\n".join(lines),
             }
         }))
+        # User-visible summary on stderr so Claude Code surfaces it.
+        used = relevant[:_INJECT_MAX_HITS]
+        print(f"wikibricks: injected {len(used)} pages", file=sys.stderr)
+        for h in used:
+            print(f"  - {h.get('path', '')}", file=sys.stderr)
     except Exception:
         # Never break the user's session because of a failed wiki call.
         pass
@@ -174,7 +179,7 @@ def _flush(state: dict[str, Any]) -> None:
     path = page_builder.session_path(
         cfg["user_id"], state["session_id"], state.get("started_at")
     )
-    tags = page_builder.session_tags(state)
+    tags = page_builder.session_tags(state, topic_keywords=config.load_topic_keywords())
     tags.append(f"user:{cfg['user_id']}")
     client.write_page(
         path,
