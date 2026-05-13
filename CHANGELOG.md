@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-13
+
+### Added
+
+- **SessionStart prelude — "where you left off."** When
+  ``WIKIBRICKS_INJECT_CONTEXT=1`` (same env-var gate as Stage 2
+  per-prompt injection), the recorder's ``on_session_start`` hook now
+  queries wikibricks for the most recent 3 session pages tagged with
+  the current ``cwd:<basename>`` and emits them as a one-shot
+  ``SessionStart`` ``additionalContext`` JSON. The agent sees prior
+  sessions from this directory the moment the new session opens — no
+  search, no prompt needed. User-visible stderr summary mirrors the
+  per-prompt path:
+
+      wikibricks: prelude - 3 prior sessions in 'wikibricks'
+
+  New ``WikiClient.list_recent_by_cwd_tag(cwd_basename, limit=3)``
+  exposes the underlying SQL (filter by ``array_contains(tags,
+  'cwd:X')``, order by ``updated_at`` DESC). LLM-free per the library
+  hard rules. Hook lives in
+  ``src/wikibricks_recorder/hooks.py::_emit_cwd_prelude``.
+- **Search-visibility stderr in the MCP server.** Every successful
+  ``wiki_search``, ``wiki_read_full``, ``wiki_write_page``,
+  ``wiki_promote_answer``, and ``wiki_index`` MCP tool call now prints
+  a single terse line to stderr. Examples:
+
+      wikibricks: search "AGI roadmap" -> 3 hits
+      wikibricks: read sessions/2026/05/04/abc
+      wikibricks: wrote topics/solvd
+
+  Closes the trust gap from the other side: you already saw automatic
+  injection via Stage 2; now you also see every agent-initiated wiki
+  call. Always-on, no env-var gate, terse format (one line, ≤120
+  chars). Hook lives in
+  ``src/wikibricks_recorder/wiki_mcp.py::_log_tool_call``.
+
+### Changed
+
+- Plugin launcher's ``WIKIBRICKS_PLUGIN_REF`` default bumped from
+  ``v0.4.1`` to ``v0.5.0``.
+
+Test count: 591 → 607 (7 cwd-tag + 5 prelude + 4 stderr-summary).
+Ruff clean.
+
 ## [0.4.1] - 2026-05-13
 
 ### Fixed

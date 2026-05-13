@@ -63,8 +63,51 @@ def on_session_start() -> None:
         if state.get("model") is None and payload.get("model"):
             state["model"] = payload["model"]
         session.save(state)
+        _emit_cwd_prelude(state.get("cwd") or "")
     except Exception as e:
         _log_error("on_session_start", e)
+
+
+_PRELUDE_LIMIT = 3
+
+
+def _emit_cwd_prelude(cwd: str) -> None:
+    """If WIKIBRICKS_INJECT_CONTEXT=1, emit a one-shot "previously here"
+    summary of the most recent sessions in this directory. Same env-var
+    gate as the per-prompt injection — opting into one opts into both.
+    Failures are silent.
+    """
+    if os.environ.get("WIKIBRICKS_INJECT_CONTEXT") != "1":
+        return
+    if not cwd:
+        return
+    from pathlib import PurePath
+
+    basename = PurePath(cwd).name
+    if not basename:
+        return
+    try:
+        cfg = config.load_config()
+        client = _build_wiki_client(cfg)
+        rows = client.list_recent_by_cwd_tag(basename, limit=_PRELUDE_LIMIT)
+        if not rows:
+            return
+        lines = [f"Previously in this directory ({len(rows)} recent sessions):"]
+        for r in rows:
+            date = (r.get("updated_at") or "")[:10]
+            title = (r.get("title") or "")[:80]
+            path = r.get("path") or ""
+            lines.append(f"- {date} [{path}] {title}")
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "\n".join(lines),
+            }
+        }))
+        print(f"wikibricks: prelude — {len(rows)} prior sessions in '{basename}'",
+              file=sys.stderr)
+    except Exception:
+        pass
 
 
 def on_user_prompt_submit() -> None:

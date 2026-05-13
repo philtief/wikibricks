@@ -727,6 +727,32 @@ class WikiClient:
                         tags=["meta", "index", "auto-generated"])
         return f"Materialized index with {len(entries)} pages"
 
+    def list_recent_by_cwd_tag(self, cwd_basename: str, limit: int = 3) -> list[dict]:
+        """Return the most-recently-updated session pages tagged with the given
+        cwd basename. Used by the recorder's SessionStart hook to surface
+        "where you left off" context when a user opens Claude Code in a
+        directory they've worked in before.
+
+        Returns ``[{path, title, summary, updated_at}, ...]``. Empty list if
+        ``cwd_basename`` is empty.
+        """
+        if not cwd_basename:
+            return []
+        tag = self._escape(f"cwd:{cwd_basename}")
+        resp = self._exec(
+            f"SELECT path, title, content:summary::STRING AS summary, "
+            f"       CAST(updated_at AS STRING) AS updated_at "
+            f"FROM {PAGES_TABLE} "
+            f"WHERE array_contains(tags, '{tag}') "
+            f"ORDER BY updated_at DESC "
+            f"LIMIT {int(limit)}"
+        )
+        rows = (resp.result.data_array if resp.result else None) or []
+        if not rows:
+            return []
+        cols = [c.name for c in self._manifest_columns(resp.manifest)]
+        return [dict(zip(cols, row)) for row in rows]
+
     # ---- vocabulary ------------------------------------------------------
 
     _VOCAB_SOURCES = ("llm", "manual", "seed")

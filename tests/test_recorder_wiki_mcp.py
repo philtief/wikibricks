@@ -200,6 +200,56 @@ class TestFormatToolResponse:
         assert json.loads(out)["updated_at"].startswith("2026-05-04T12:00:00")
 
 
+class TestToolCallStderrSummary:
+    """The MCP server emits a one-line stderr summary per tool call so the
+    user sees agent-initiated wiki activity."""
+
+    def _capture_stderr(self, fn, *a, **kw):
+        import io
+        from contextlib import redirect_stderr
+        buf = io.StringIO()
+        with redirect_stderr(buf):
+            fn(*a, **kw)
+        return buf.getvalue()
+
+    def test_search_emits_query_and_hit_count(self):
+        from wikibricks_recorder.wiki_mcp import format_tool_response
+        tools = {"wiki_search": lambda **_: [{"path": "a"}, {"path": "b"}, {"path": "c"}]}
+        err = self._capture_stderr(
+            format_tool_response, "wiki_search",
+            {"query": "AGI roadmap"}, tools=tools,
+        )
+        assert 'wikibricks: search "AGI roadmap"' in err
+        assert "-> 3 hits" in err
+
+    def test_read_full_emits_path(self):
+        from wikibricks_recorder.wiki_mcp import format_tool_response
+        tools = {"wiki_read_full": lambda **_: {"path": "p", "body": "x"}}
+        err = self._capture_stderr(
+            format_tool_response, "wiki_read_full",
+            {"path": "topics/solvd"}, tools=tools,
+        )
+        assert "wikibricks: read topics/solvd" in err
+
+    def test_write_emits_path(self):
+        from wikibricks_recorder.wiki_mcp import format_tool_response
+        tools = {"wiki_write_page": lambda **_: "ok"}
+        err = self._capture_stderr(
+            format_tool_response, "wiki_write_page",
+            {"path": "topics/foo", "title": "T", "content_json": "{}"},
+            tools=tools,
+        )
+        assert "wikibricks: wrote topics/foo" in err
+
+    def test_no_stderr_on_error(self):
+        from wikibricks_recorder.wiki_mcp import format_tool_response
+        # Unknown tool returns error JSON; _log_tool_call must not fire.
+        err = self._capture_stderr(
+            format_tool_response, "not_a_tool", {}, tools={},
+        )
+        assert "wikibricks:" not in err
+
+
 # ---------------------------------------------------------------------------
 # read_full — UC function call with catalog.schema injected from config
 # ---------------------------------------------------------------------------
