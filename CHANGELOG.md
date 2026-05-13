@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2026-05-13
+
+### Fixed
+
+- **Recorder no longer records skill / sub-agent sessions.** `_flush`
+  skips any session whose `cwd` is rooted in a tmp directory
+  (`/private/var/folders/`, `/var/folders/`, `/tmp/`) or whose single
+  prompt matches a known system-prompt prefix (`"You are "`,
+  `"Apply maximum "`). Filter lives in `hooks.py::_is_utility_session`.
+- **Session titles prefer the first non-templated user prompt.**
+  `page_builder.session_title` walks events for a prompt that does not
+  match `_looks_like_system_prompt`, falling back to the original
+  `first_prompt` if every prompt is templated.
+
+### Added
+
+- **Proactive context injection (opt-in).** With
+  `WIKIBRICKS_INJECT_CONTEXT=1`, the recorder's `on_user_prompt_submit`
+  hook searches the wiki and emits up to 3 relevant prior pages as a
+  `UserPromptSubmit` `additionalContext` JSON response. Hits from the
+  current session are filtered out; short prompts (<10 chars) and
+  search failures are silent. Default off. See
+  `hooks.py::_emit_relevant_context`.
+- **`scripts/purge_noise.py` + `src/wikibricks/title_repair.py`.**
+  One-shot cleanup tool that deletes session pages with system-prompt
+  template titles. Used to take a personal wiki from 1620 pages down
+  to 44 after the recorder filter shipped. Dry-run by default;
+  `--apply` to mutate. Logs `op_type='purge_noise'` to `wiki_log`.
+- **Stage 1 scaffolding for cross-session topic synthesis.** New
+  `src/wikibricks/topic_clustering.py` with `cluster_pages_by_keyword`
+  (pure function, LLM-free per the library's hard rules) groups
+  session pages into topic buckets by case-insensitive title match.
+  New `notebooks/promote_topics.py` is a dry-run-only stub: enforces a
+  corpus-size guard (default 80 pages), clusters via the keyword map,
+  prints eligible topics, and leaves the LLM-synthesis + judge step as
+  a clearly-marked TODO. No bundle resource entry added by default —
+  the notebook is opt-in.
+
+### Changed
+
+- Plugin launcher's `WIKIBRICKS_PLUGIN_REF` default bumped from
+  `v0.3.1` to `v0.3.2`.
+
+Test count: 491 → 553. Ruff clean.
+
 ## [0.3.1] - 2026-05-05
 
 ### Added
