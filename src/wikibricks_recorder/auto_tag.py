@@ -104,11 +104,13 @@ def extract_topic_slugs(
         return []
     endpoint = cfg.get("endpoint", DEFAULT_ENDPOINT)
     try:
+        from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+
         response = workspace_client.serving_endpoints.query(
             name=endpoint,
             messages=[
-                {"role": "system", "content": _EXTRACTION_SYSTEM_PROMPT},
-                {"role": "user", "content": sample},
+                ChatMessage(role=ChatMessageRole.SYSTEM, content=_EXTRACTION_SYSTEM_PROMPT),
+                ChatMessage(role=ChatMessageRole.USER, content=sample),
             ],
             max_tokens=_MAX_OUTPUT_TOKENS,
         )

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-13
+
+### Fixed
+
+- **`WikiClient.list_active_vocabulary`** no longer crashes on an empty
+  result set. The Databricks SDK returns ``resp.result.data_array =
+  None`` for 0-row SELECTs, not ``[]``; the helper now coerces to ``[]``
+  before iterating.
+- **`auto_tag.extract_topic_slugs`** now passes typed
+  ``databricks.sdk.service.serving.ChatMessage`` objects to
+  ``serving_endpoints.query`` instead of plain dicts. The dict form was
+  silently rejected by the SDK (``'dict' object has no attribute
+  as_dict'``), so the call never made it to FMAPI in 0.4.0. End-to-end
+  test now extracts real slugs against the live endpoint in ~2s.
+
 ## [0.4.0] - 2026-05-13
 
 ### Added

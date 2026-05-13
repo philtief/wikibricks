@@ -803,5 +803,5 @@ class WikiClient:
             f"  AND last_seen > current_timestamp() - INTERVAL {self._VOCAB_ACTIVE_WINDOW_DAYS} DAY "
             f"ORDER BY count DESC, last_seen DESC"
         )
-        rows = resp.result.data_array if resp.result else []
+        rows = (resp.result.data_array if resp.result else None) or []
         return [r[0] for r in rows]
