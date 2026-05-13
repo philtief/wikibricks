@@ -141,3 +141,17 @@ def test_no_stderr_when_env_var_off(monkeypatch):
     monkeypatch.delenv("WIKIBRICKS_INJECT_CONTEXT", raising=False)
     _out, err = _capture_both(_emit_relevant_context, "sid1", "Tell me about Solvd")
     assert err == ""
+
+
+def test_additional_context_includes_citation_directive(monkeypatch):
+    monkeypatch.setenv("WIKIBRICKS_INJECT_CONTEXT", "1")
+    fake_cfg = {"user_id": "me", "catalog": "c", "schema": "s",
+                "warehouse_id": "w", "profile": "p"}
+    fake_hits = [{"path": "sessions/abc", "title": "T", "content_text": "..."}]
+    with patch("wikibricks_recorder.hooks.config.load_config", return_value=fake_cfg), \
+         patch("wikibricks_recorder.hooks._build_wiki_client") as mock_build:
+        mock_build.return_value.search.return_value = fake_hits
+        out = _capture(_emit_relevant_context, "sid", "Tell me about Solvd Lakebase")
+    ctx = json.loads(out.strip())["hookSpecificOutput"]["additionalContext"]
+    assert "[wb:<path>]" in ctx
+    assert "trace the source" in ctx

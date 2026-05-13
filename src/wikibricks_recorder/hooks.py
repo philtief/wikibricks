@@ -98,6 +98,7 @@ def _emit_cwd_prelude(cwd: str) -> None:
             title = (r.get("title") or "")[:80]
             path = r.get("path") or ""
             lines.append(f"- {date} [{path}] {title}")
+        lines.append(_CITATION_DIRECTIVE)
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
@@ -131,6 +132,14 @@ _INJECT_MIN_PROMPT_LEN = 10
 _INJECT_MAX_HITS = 3
 _INJECT_SNIPPET_LEN = 200
 
+# Citation directive appended to every injected context block. Tells the
+# agent how to cite the injected pages inline. Stable format (`[wb:<path>]`)
+# enables downstream citation parsing for outcome tracking.
+_CITATION_DIRECTIVE = (
+    "\nWhen you use information from any page above, cite the path inline "
+    "as [wb:<path>] so the user can trace the source."
+)
+
 
 def _emit_relevant_context(session_id: str, prompt: str) -> None:
     """If WIKIBRICKS_INJECT_CONTEXT=1 and the prompt is substantive, search the
@@ -154,6 +163,7 @@ def _emit_relevant_context(session_id: str, prompt: str) -> None:
             path = h.get("path") or ""
             snippet = (h.get("content_text") or "").replace("\n", " ").strip()[:_INJECT_SNIPPET_LEN]
             lines.append(f"- [{path}] {title}: {snippet}")
+        lines.append(_CITATION_DIRECTIVE)
         print(json.dumps({
             "hookSpecificOutput": {
                 "hookEventName": "UserPromptSubmit",

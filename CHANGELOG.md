@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-13
+
+### Added
+
+- **Provenance citations on injected context.** Every
+  ``additionalContext`` block emitted by the recorder (both the
+  ``SessionStart`` prelude and the per-prompt ``UserPromptSubmit``
+  injection) now ends with a one-line directive instructing the agent
+  to cite any page it used inline as ``[wb:<path>]``::
+
+      When you use information from any page above, cite the path
+      inline as [wb:<path>] so the user can trace the source.
+
+  The marker format is stable and machine-parseable. It lets users
+  trace which prior page the agent's answer drew from, and sets up
+  outcome tracking in 0.7.0 (citations → ``helpful_score`` column →
+  search reranker). Lives in
+  ``src/wikibricks_recorder/hooks.py::_CITATION_DIRECTIVE`` and is
+  appended to both injection paths. No behavior change when
+  ``WIKIBRICKS_INJECT_CONTEXT`` is unset.
+
+### Changed
+
+- Plugin launcher's ``WIKIBRICKS_PLUGIN_REF`` default bumped from
+  ``v0.5.0`` to ``v0.6.0``.
+
+Test count: 607 → 609 (2 citation-directive assertions). Ruff clean.
+
 ## [0.5.0] - 2026-05-13
 
 ### Added
@@ -655,7 +683,14 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/philtief/wikibricks/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/philtief/wikibricks/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/philtief/wikibricks/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/philtief/wikibricks/compare/v0.3.4...v0.4.0
+[0.3.4]: https://github.com/philtief/wikibricks/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/philtief/wikibricks/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/philtief/wikibricks/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/philtief/wikibricks/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/philtief/wikibricks/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/philtief/wikibricks/compare/v0.1.5...v0.2.0

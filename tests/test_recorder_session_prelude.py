@@ -81,3 +81,17 @@ def test_swallows_exceptions(monkeypatch):
         out, err = _capture_both(_emit_cwd_prelude, "/Users/me/proj")
     assert out == ""
     assert err == ""
+
+
+def test_prelude_includes_citation_directive(monkeypatch):
+    monkeypatch.setenv("WIKIBRICKS_INJECT_CONTEXT", "1")
+    cfg = {"user_id": "me", "catalog": "c", "schema": "s",
+           "warehouse_id": "w", "profile": "p"}
+    rows = [{"path": "sessions/abc", "title": "T",
+             "summary": "s", "updated_at": "2026-05-13T08:00:00Z"}]
+    with patch("wikibricks_recorder.hooks.config.load_config", return_value=cfg), \
+         patch("wikibricks_recorder.hooks._build_wiki_client") as mock_build:
+        mock_build.return_value.list_recent_by_cwd_tag.return_value = rows
+        out, _err = _capture_both(_emit_cwd_prelude, "/Users/me/proj")
+    ctx = json.loads(out.strip())["hookSpecificOutput"]["additionalContext"]
+    assert "[wb:<path>]" in ctx
