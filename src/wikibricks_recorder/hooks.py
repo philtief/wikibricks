@@ -79,8 +79,47 @@ def on_user_prompt_submit() -> None:
             state["first_prompt"] = prompt
         state["events"].append({"kind": "prompt", "ts": _now_iso(), "prompt": prompt})
         session.save(state)
+        _emit_relevant_context(sid, prompt)
     except Exception as e:
         _log_error("on_user_prompt_submit", e)
+
+
+_INJECT_MIN_PROMPT_LEN = 10
+_INJECT_MAX_HITS = 3
+_INJECT_SNIPPET_LEN = 200
+
+
+def _emit_relevant_context(session_id: str, prompt: str) -> None:
+    """If WIKIBRICKS_INJECT_CONTEXT=1 and the prompt is substantive, search the
+    wiki and emit a UserPromptSubmit additionalContext JSON response on stdout.
+    All exceptions swallowed — must never break the user's session.
+    """
+    if os.environ.get("WIKIBRICKS_INJECT_CONTEXT") != "1":
+        return
+    if len(prompt.strip()) < _INJECT_MIN_PROMPT_LEN:
+        return
+    try:
+        cfg = config.load_config()
+        client = _build_wiki_client(cfg)
+        hits = client.search(prompt, mode="HYBRID", num_results=_INJECT_MAX_HITS + 2)
+        relevant = [h for h in (hits or []) if session_id not in (h.get("path") or "")]
+        if not relevant:
+            return
+        lines = ["Wikibricks — relevant prior pages:"]
+        for h in relevant[:_INJECT_MAX_HITS]:
+            title = (h.get("title") or "").strip()[:80]
+            path = h.get("path") or ""
+            snippet = (h.get("content_text") or "").replace("\n", " ").strip()[:_INJECT_SNIPPET_LEN]
+            lines.append(f"- [{path}] {title}: {snippet}")
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": "\n".join(lines),
+            }
+        }))
+    except Exception:
+        # Never break the user's session because of a failed wiki call.
+        pass
 
 
 def on_post_tool_use() -> None:
