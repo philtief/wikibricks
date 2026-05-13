@@ -15,6 +15,7 @@ from wikibricks.ops import (
     SOURCES_TABLE,
     VALID_LINK_ORIGINS,
     VALID_LINK_TYPES,
+    VOCABULARY_TABLE,
     VS_INDEX,
     delete_broken_links_sql,
     graph_neighbors_sql,
@@ -725,3 +726,82 @@ class WikiClient:
                         page_type="synthesis", created_by="maintenance",
                         tags=["meta", "index", "auto-generated"])
         return f"Materialized index with {len(entries)} pages"
+
+    # ---- vocabulary ------------------------------------------------------
+
+    _VOCAB_SOURCES = ("llm", "manual", "seed")
+    _VOCAB_MIN_COUNT_FOR_ACTIVE = 3
+    _VOCAB_ACTIVE_WINDOW_DAYS = 90
+
+    @staticmethod
+    def _normalize_slug(raw: str) -> str:
+        """Lowercase, replace whitespace/underscore runs with single hyphens, strip."""
+        s = (raw or "").strip().lower()
+        out: list[str] = []
+        sep = False
+        for ch in s:
+            if ch.isalnum():
+                out.append(ch)
+                sep = False
+            elif ch in (" ", "_", "-", "/", "\t"):
+                if not sep and out:
+                    out.append("-")
+                    sep = True
+        return "".join(out).strip("-")
+
+    def upsert_vocabulary_slugs(self, slugs: list[str], source: str) -> int:
+        """Insert or bump count for each slug. Returns count of slugs written.
+
+        ``source`` must be one of ``llm | manual | seed``. Slugs are normalized
+        (lowercase, hyphen-separated, alnum). Empty slugs after normalization
+        are dropped. Status defaults to ``candidate``; the daily curate task
+        promotes to ``active`` once count crosses
+        ``_VOCAB_MIN_COUNT_FOR_ACTIVE``.
+        """
+        if source not in self._VOCAB_SOURCES:
+            raise ValueError(
+                f"source must be one of {self._VOCAB_SOURCES}, got {source!r}"
+            )
+        normalized = [n for n in (self._normalize_slug(s) for s in slugs) if n]
+        if not normalized:
+            return 0
+        src_esc = self._escape(source)
+        values_rows = ", ".join(
+            f"('{self._escape(s)}', '{src_esc}', current_timestamp(), current_timestamp())"
+            for s in normalized
+        )
+        promote = self._VOCAB_MIN_COUNT_FOR_ACTIVE
+        sql = (
+            f"MERGE INTO {VOCABULARY_TABLE} t "
+            f"USING (SELECT col1 AS slug, col2 AS source, col3 AS first_seen, col4 AS last_seen "
+            f"       FROM (VALUES {values_rows})) s "
+            f"ON t.slug = s.slug "
+            f"WHEN MATCHED THEN UPDATE SET "
+            f"  count = t.count + 1, "
+            f"  last_seen = s.last_seen, "
+            f"  status = CASE WHEN t.status = 'archived' THEN 'archived' "
+            f"                WHEN t.count + 1 >= {promote} THEN 'active' "
+            f"                ELSE t.status END "
+            f"WHEN NOT MATCHED THEN INSERT "
+            f"  (slug, source, count, first_seen, last_seen, status) "
+            f"  VALUES (s.slug, s.source, 1, s.first_seen, s.last_seen, "
+            f"          CASE WHEN s.source = 'seed' THEN 'active' ELSE 'candidate' END)"
+        )
+        self._exec(sql)
+        return len(normalized)
+
+    def list_active_vocabulary(self) -> list[str]:
+        """Return slugs with ``status='active'`` and recent activity.
+
+        Slugs not seen in the last ``_VOCAB_ACTIVE_WINDOW_DAYS`` days are
+        excluded even if their stored status is still ``active`` — they decay
+        out of the tag set until the daily curate task formally archives them.
+        """
+        resp = self._exec(
+            f"SELECT slug FROM {VOCABULARY_TABLE} "
+            f"WHERE status = 'active' "
+            f"  AND last_seen > current_timestamp() - INTERVAL {self._VOCAB_ACTIVE_WINDOW_DAYS} DAY "
+            f"ORDER BY count DESC, last_seen DESC"
+        )
+        rows = resp.result.data_array if resp.result else []
+        return [r[0] for r in rows]

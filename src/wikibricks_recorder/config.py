@@ -73,6 +73,21 @@ def list_wikis() -> dict[str, dict[str, str]]:
     }
 
 
+def load_auto_tag_config() -> dict[str, Any]:
+    """Return the ``[auto_tag]`` section from the recorder config, or empty.
+
+    Used by the recorder to opt into LLM-based topic-slug extraction.
+    Default behaviour (no section) is OFF.
+    """
+    section = _load_full_toml().get("auto_tag") or {}
+    if not isinstance(section, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in section.items():
+        out[str(k)] = v
+    return out
+
+
 def load_topic_keywords() -> dict[str, list[str]]:
     """Return the ``[topic_keywords]`` section as ``{slug: [terms, ...]}``.
     Empty dict if the section is absent or malformed. Used by the recorder

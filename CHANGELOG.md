@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-13
+
+### Added
+
+- **Evolving customer-tag vocabulary via LLM (opt-in).** New
+  ``wiki_vocabulary`` Delta table accumulates topic slugs over time;
+  the recorder asks a configurable Databricks Foundation Model API
+  serving endpoint to extract 1-3 slugs per session at flush time,
+  upserts them, and tags the session with ``customer:<slug>``. Replaces
+  the static ``[topic_keywords]`` design from 0.3.4 with one that grows
+  naturally as the corpus expands. **Off by default**; enable via
+  ``[auto_tag]`` section in ``~/.wikibricks-recorder.toml``::
+
+      [auto_tag]
+      enabled = true
+      endpoint = "databricks-claude-haiku-4-5"
+      max_input_tokens = 1000
+
+  Slugs persist with ``source ∈ {llm, manual, seed}`` and ``status ∈
+  {candidate, active, archived}``; a slug crosses to ``active`` once
+  ``count >= 3``. ``WikiClient`` gains
+  ``upsert_vocabulary_slugs(slugs, source)`` and
+  ``list_active_vocabulary()`` (both LLM-free per the library's hard
+  rules — the LLM call lives in ``src/wikibricks_recorder/auto_tag.py``).
+- ``config.load_auto_tag_config()`` reads the new TOML section.
+
+### Schema
+
+- New table ``{catalog}.{schema}.wiki_vocabulary`` created by
+  ``create_tables_sql()``. Run the ``deploy_wiki_store`` notebook or
+  ``databricks bundle deploy`` to add it to existing wikis.
+
+### Privacy
+
+- The auto-tag path sends a sample of prompt text to your configured
+  Databricks serving endpoint for entity extraction. Default endpoint
+  ``databricks-claude-haiku-4-5`` stays within your workspace tenant.
+  No data leaves Databricks. Disable by omitting the ``[auto_tag]``
+  section or setting ``enabled = false``.
+
+### Changed
+
+- Plugin launcher's ``WIKIBRICKS_PLUGIN_REF`` default bumped from
+  ``v0.3.4`` to ``v0.4.0``.
+
+Test count: 564 → 591 (added 8 vocabulary + 16 auto_tag + 2 hook + 1 ops).
+Ruff clean.
+
 ## [0.3.4] - 2026-05-13
 
 ### Added

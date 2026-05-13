@@ -81,9 +81,15 @@ class TestEnvOverride:
 
 
 class TestCreateTablesSql:
-    def test_returns_seven_statements(self):
+    def test_returns_eight_statements(self):
         stmts = create_tables_sql()
-        assert len(stmts) == 7
+        assert len(stmts) == 8
+
+    def test_vocabulary_table(self):
+        from wikibricks.ops import VOCABULARY_TABLE
+        stmts = create_tables_sql()
+        assert any(VOCABULARY_TABLE in s for s in stmts)
+        assert any("slug" in s and "first_seen" in s for s in stmts)
 
     def test_promote_checkpoint_table(self):
         from wikibricks import PROMOTE_CHECKPOINT_TABLE

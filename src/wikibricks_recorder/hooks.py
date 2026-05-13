@@ -25,7 +25,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from wikibricks_recorder import config, page_builder, session
+from wikibricks_recorder import auto_tag, config, page_builder, session
 
 
 def _read_payload() -> dict[str, Any]:
@@ -180,6 +180,21 @@ def _flush(state: dict[str, Any]) -> None:
         cfg["user_id"], state["session_id"], state.get("started_at")
     )
     tags = page_builder.session_tags(state, topic_keywords=config.load_topic_keywords())
+
+    # Auto-tag via LLM (opt-in). Failures are swallowed inside extract_topic_slugs.
+    auto_cfg = config.load_auto_tag_config()
+    if auto_tag.is_enabled(auto_cfg):
+        slugs = auto_tag.extract_topic_slugs(state, auto_cfg, client.ws)
+        if slugs:
+            try:
+                client.upsert_vocabulary_slugs(slugs, source="llm")
+            except Exception as e:
+                _log_error("upsert_vocabulary_slugs", e)
+            for slug in slugs:
+                normalized = client._normalize_slug(slug)
+                if normalized:
+                    tags.append(f"customer:{normalized}")
+
     tags.append(f"user:{cfg['user_id']}")
     client.write_page(
         path,
