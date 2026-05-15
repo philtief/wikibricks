@@ -209,6 +209,27 @@ overrides), see [`docs/`](docs/) and the bundle config in
 [`AGENTS.md`](AGENTS.md) for repo conventions, hard rules, release
 checklist, and the dev → public sync checklist.
 
+## Karpathy export — round-trip with the importer (v0.7.1)
+
+Exports the whole wiki as a folder of markdown files:
+
+```bash
+uv run python -m wikibricks.export_karpathy ./out/ \
+    --profile <databricks-profile> \
+    --catalog <catalog> --schema <schema> --warehouse-id <wh>
+```
+
+Output mirrors the importer's input format:
+- One `.md` per page under `topics/`, `sources/`, `notes/`, `promoted/`,
+  `sessions/`, mirroring `pages.path`.
+- YAML frontmatter (`title`, `tags`, `memory_class`, `page_type`, `path`).
+- `## Related` section listing outgoing currently-valid edges
+  (`valid_until IS NULL`) as `[[wikilinks]]` (plain) or
+  `link_type::[[wikilinks]]` (typed, LLM Wiki v2 convention).
+
+Round-trips with `import_karpathy` — export, edit in Obsidian / Foam /
+Dendron / vim, re-import. **Your data, your format, no lock-in.**
+
 ## Graph analytics + PageRank rerank (v0.7.0)
 
 Every curate run computes per-page `hub_score` (PageRank, damping=0.85) and

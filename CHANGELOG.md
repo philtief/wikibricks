@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-05-15
+
+### Added
+
+- **Karpathy export** — `python -m wikibricks.export_karpathy <target_dir>`
+  walks every page, writes one `.md` per page with YAML frontmatter and
+  a `## Related` section carrying outgoing currently-valid edges as
+  `[[wikilinks]]` (plain) or `link_type::[[wikilinks]]` (typed). Round-trips
+  with the v0.6.0 importer — export, edit in Obsidian/Foam/Dendron, re-import.
+- **`wikibricks.karpathy_logic.render_page_markdown`** and
+  `map_wiki_path_to_file` — pure helpers for the export pipeline. Tested
+  for round-trip fidelity against the example fixture.
+
+### Changed
+
+- Bundle's `version` variable default bumped to `0.7.1` so fresh deploys
+  resolve to the published wheel.
+
+
 ## [0.7.0] - 2026-05-15
 
 ### Added

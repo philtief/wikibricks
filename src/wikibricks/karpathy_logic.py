@@ -109,6 +109,96 @@ def _slugify(text: str) -> str:
     return text.strip("-")
 
 
+def map_wiki_path_to_file(wiki_path: str) -> str:
+    """Map a wikibricks page path to a relative `.md` file under the export root.
+
+    The Karpathy/v0.6.0 importer expects:
+    - `topics/foo` ← `topics/foo.md`
+    - `sources/bar` ← `sources/bar.md`
+    - `notes/index` ← `notes/index.md` (frontmatter `path:` override)
+
+    Subfolders are preserved. Existing `.md` suffix is not duplicated.
+    """
+    if wiki_path.endswith(".md"):
+        return wiki_path
+    return f"{wiki_path}.md"
+
+
+def _render_yaml_value(v) -> str:
+    """Render a Python scalar/list as a YAML value (minimal, no quoting hell)."""
+    if isinstance(v, list):
+        if not v:
+            return None  # caller skips the key entirely
+        return "\n" + "\n".join(f"  - {item}" for item in v)
+    if isinstance(v, str):
+        # Quote if it has a colon, newline, or starts with a YAML reserved char
+        if any(c in v for c in (":", "\n", "#")) or v.startswith(("-", "[", "{", "&", "*")):
+            return ' "' + v.replace('"', '\\"') + '"'
+        return f" {v}"
+    return f" {v}"
+
+
+def render_page_markdown(page: dict, outgoing_edges: list[dict]) -> str:
+    """Render a wikibricks page as a Karpathy-style markdown file with frontmatter.
+
+    Round-trip target: this output must parse cleanly via `parse_frontmatter`
+    + `extract_wikilinks` + `extract_typed_edges` so the v0.6.0 importer can
+    re-ingest it without loss.
+
+    Sections:
+    - YAML frontmatter: title, tags (list form), memory_class, page_type, path
+    - Body: the page's content body, verbatim
+    - "## Related" (only when outgoing_edges is non-empty): one bullet per
+      edge. Plain edges become `[[target_path]]`; typed edges become
+      `link_type::[[target_path]]` matching the LLM Wiki v2 convention.
+
+    `content` may be a dict (canonical form, `{summary, body}`) or a JSON
+    string; both are handled.
+    """
+    import json as _json
+    content = page.get("content")
+    if isinstance(content, str):
+        try:
+            content = _json.loads(content)
+        except (ValueError, TypeError):
+            content = {"body": content}
+    if not isinstance(content, dict):
+        content = {}
+    body = content.get("body", "") or ""
+
+    frontmatter_keys = [
+        ("title", page.get("title", "")),
+        ("tags", page.get("tags") or []),
+        ("memory_class", page.get("memory_class") or "semantic"),
+        ("page_type", page.get("page_type") or "concept"),
+        ("path", page.get("path", "")),
+    ]
+    fm_lines = ["---"]
+    for k, v in frontmatter_keys:
+        rendered = _render_yaml_value(v)
+        if rendered is None:
+            continue  # skip empty lists
+        fm_lines.append(f"{k}:{rendered}")
+    fm_lines.append("---")
+    fm = "\n".join(fm_lines)
+
+    related = ""
+    if outgoing_edges:
+        related_lines = ["", "", "## Related", ""]
+        for e in outgoing_edges:
+            target = e.get("target_path", "")
+            if not target:
+                continue
+            link_type = e.get("link_type", "related")
+            if link_type == "related":
+                related_lines.append(f"- [[{target}]]")
+            else:
+                related_lines.append(f"- {link_type}::[[{target}]]")
+        related = "\n".join(related_lines)
+
+    return f"{fm}\n{body}{related}\n"
+
+
 def wiki_path_for(
     local_path: str,
     base_dir: str,
