@@ -620,6 +620,27 @@ class TestUpsertVocabulary:
         for slug in ("a", "b", "c"):
             assert f"'{slug}'" in sql
 
+    def test_handles_duplicate_slugs_in_batch(self):
+        # Bug 5: when the LLM proposes the same tag across multiple pages,
+        # the batch arrives with duplicate slugs. Without GROUP BY, Delta
+        # rejects the MERGE with DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW.
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.upsert_vocabulary([
+            {"slug": "data-ingestion", "source": "auto_tag"},
+            {"slug": "data-ingestion", "source": "auto_tag"},
+            {"slug": "data-ingestion", "source": "auto_tag"},
+        ])
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        # The CTE must collapse duplicates with GROUP BY slug.
+        assert "GROUP BY slug" in sql
+        # And the MERGE updates count by occurrences (sum from the GROUP BY),
+        # not by a hardcoded 1.
+        assert "t.count + s.occurrences" in sql
+        # The threshold check uses the post-merge count.
+        assert "t.count + s.occurrences >=" in sql
+
     def test_escapes_single_quotes_in_slug(self):
         ws = MagicMock()
         ws.statement_execution.execute_statement.return_value = _mock_response([])

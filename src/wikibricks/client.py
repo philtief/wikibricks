@@ -524,20 +524,28 @@ class WikiClient:
             rows.append(f"SELECT '{slug}' AS slug, '{source}' AS source")
         union = " UNION ALL ".join(rows)
         threshold = int(approve_threshold)
+        # Pre-aggregate by slug so MERGE sees one source row per target — Delta
+        # rejects multi-source-to-single-target matches as ambiguous. Without
+        # GROUP BY here, batches with repeated slugs (the LLM proposes the same
+        # tag across multiple pages) fail with
+        # DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE.
         self._exec(
             f"MERGE INTO {VOCABULARY_TABLE} AS t "
-            f"USING ({union}) AS s "
+            f"USING ("
+            f"  SELECT slug, MAX(source) AS source, COUNT(*) AS occurrences "
+            f"  FROM ({union}) GROUP BY slug"
+            f") AS s "
             f"ON t.slug = s.slug "
             f"WHEN MATCHED THEN UPDATE SET "
-            f"  count = t.count + 1, "
+            f"  count = t.count + s.occurrences, "
             f"  last_seen = current_timestamp(), "
-            f"  status = CASE WHEN t.count + 1 >= {threshold} "
+            f"  status = CASE WHEN t.count + s.occurrences >= {threshold} "
             f"               THEN 'approved' ELSE t.status END "
             f"WHEN NOT MATCHED THEN INSERT "
             f"(slug, source, count, first_seen, last_seen, status) "
-            f"VALUES (s.slug, s.source, 1, "
+            f"VALUES (s.slug, s.source, s.occurrences, "
             f"        current_timestamp(), current_timestamp(), "
-            f"        CASE WHEN 1 >= {threshold} THEN 'approved' ELSE 'pending' END)"
+            f"        CASE WHEN s.occurrences >= {threshold} THEN 'approved' ELSE 'pending' END)"
         )
         return len(observations)
 

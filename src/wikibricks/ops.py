@@ -690,7 +690,7 @@ def create_agent_traces_view_sql():
     SELECT
       log_id AS session_id,
       query AS user_query,
-      CAST(NULL AS STRING) AS model_response,
+      CAST('' AS STRING) AS model_response,
       transform(
         from_json(details, 'STRUCT<returned_paths: ARRAY<STRING>>').returned_paths,
         x -> x
