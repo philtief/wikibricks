@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-15
+
+### Fixed
+
+- **`WikiClient.upsert_vocabulary`** (Bug 5) — pre-aggregates source rows
+  with `GROUP BY slug, COUNT(*) AS occurrences` before the MERGE. Without
+  this, batches with the same slug across multiple pages fail with
+  `DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE`. Increments
+  count by occurrences (not a hardcoded 1) on the matched branch.
+- **`agent_traces_v`** (Bug 6) — emits `CAST('' AS STRING) AS model_response`
+  instead of NULL. The promote notebook concatenates message contents
+  through `str.join`; NULL hits `TypeError: sequence item 0: expected str
+  instance, NoneType found`.
+
+
 ## [0.5.0] - 2026-05-15
 
 ### Added
