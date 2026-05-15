@@ -193,12 +193,15 @@ def migrate_tables_sql():
         f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN first_seen SET DEFAULT current_timestamp()",
         f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN last_seen  DROP NOT NULL",
         f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN last_seen  SET DEFAULT current_timestamp()",
-        f"ALTER TABLE {LINKS_TABLE} ADD COLUMN IF NOT EXISTS valid_from TIMESTAMP",
+        # Databricks SQL doesn't accept IF NOT EXISTS on ADD COLUMN; on
+        # re-runs this statement FAILS with "column already exists" and
+        # sdk_redeploy logs FAILED but continues. That's the idempotency
+        # we want — first run adds, subsequent runs no-op via the continue.
+        f"ALTER TABLE {LINKS_TABLE} ADD COLUMNS (valid_from TIMESTAMP, valid_until TIMESTAMP)",
         f"ALTER TABLE {LINKS_TABLE} ALTER COLUMN valid_from SET DEFAULT current_timestamp()",
-        f"ALTER TABLE {LINKS_TABLE} ADD COLUMN IF NOT EXISTS valid_until TIMESTAMP",
         # Backfill: any existing row with NULL valid_from gets the current
         # timestamp as its conservative "we don't know when this started"
-        # value. Idempotent — re-runs do nothing.
+        # value. Idempotent — re-runs touch 0 rows.
         f"UPDATE {LINKS_TABLE} SET valid_from = current_timestamp() WHERE valid_from IS NULL",
     ]
 

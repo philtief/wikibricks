@@ -662,12 +662,12 @@ class TestMigrateTablesSql:
 
     def test_links_bitemporal_migration_present(self):
         # v0.6.0 (Track 1) migration: pre-v0.6.0 links table has no validity
-        # columns. ADD COLUMN IF NOT EXISTS is idempotent; backfill NULL
-        # valid_from rows so reads filtering by valid_until still work.
+        # columns. Databricks SQL has no `ADD COLUMN IF NOT EXISTS`, so the
+        # first-run statement adds both columns and re-runs fail with
+        # "column already exists" — caught + continued by sdk_redeploy.
         stmts = migrate_tables_sql()
         joined = "\n".join(stmts)
-        assert "ADD COLUMN IF NOT EXISTS valid_from" in joined
-        assert "ADD COLUMN IF NOT EXISTS valid_until" in joined
+        assert "ADD COLUMNS (valid_from TIMESTAMP, valid_until TIMESTAMP)" in joined
         assert "valid_from IS NULL" in joined  # backfill predicate
 
 
