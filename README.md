@@ -233,6 +233,15 @@ wiki.link_history("topics/databricks", "topics/apache-spark")
 This is the same shape as Graphiti's bi-temporal model<sup>1</sup>, on a
 Delta + Unity Catalog substrate.
 
+**What persists the history**: the closed rows themselves. A superseded
+edge is `UPDATE`d in place to set `valid_until = current_timestamp()` and
+keeps living in the table as a first-class row. `link_history` and
+`graph_neighbors_at` are plain `SELECT`s over current table state — they
+do **not** rely on Delta time travel, which is retention-bounded (default
+30 days for `delta.logRetentionDuration`). The full history survives
+`OPTIMIZE` and `VACUUM` indefinitely; it only goes away when something
+explicitly `DELETE`s the row.
+
 <sup>1</sup> [Zep: A Temporal Knowledge Graph Architecture for Agent Memory](https://arxiv.org/abs/2501.13956)
 
 ## Importing a Karpathy-style markdown wiki (v0.6.0)
