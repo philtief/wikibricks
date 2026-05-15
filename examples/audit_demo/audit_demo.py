@@ -32,7 +32,7 @@ Run:
 import argparse
 import os
 import sys
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 def main() -> int:
@@ -69,7 +69,7 @@ def main() -> int:
                     page_type="entity", created_by="audit_demo")
     for city in ("munich", "london", "berlin"):
         wiki.write_page(paths[city], city.capitalize(),
-                        {"summary": f"A city in Europe.", "body": city.capitalize()},
+                        {"summary": "A city in Europe.", "body": city.capitalize()},
                         page_type="entity", created_by="audit_demo")
 
     philipp = wiki.read_page(paths["philipp"])
@@ -101,7 +101,7 @@ def main() -> int:
         # no valid_until — currently valid
     }])
     print("    Wrote 3 facts; each carries a (valid_from, valid_until) window.")
-    print(f"    transaction time `created_at` is set to {datetime.utcnow().isoformat()}Z")
+    print(f"    transaction time `created_at` is set to {datetime.now(timezone.utc).isoformat()}")
     print("    — independent of the three different valid_from values above.")
 
     print("\n==> 3. Where does Philipp live today?")
@@ -132,8 +132,8 @@ def main() -> int:
             history.append((row["valid_from"], row["valid_until"], city))
     history.sort()
     for vf, vu, city in history:
-        end = vu if vu else "NULL (currently valid)"
-        print(f"    {vf[:10]} → {str(end)[:10]:<32} {city}")
+        end = str(vu)[:10] if vu else "now (currently valid)"
+        print(f"    {str(vf)[:10]} → {end:<28} {city}")
 
     print()
     print("The point: every fact is preserved with its event-time window.")
