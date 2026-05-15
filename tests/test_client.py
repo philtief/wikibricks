@@ -1047,6 +1047,79 @@ class TestCommitEdgesBiTemporal:
         assert "valid_until IS NULL" in sql
 
 
+class TestCommitEdgesAcceptsValidFromValidUntil:
+    """Real bi-temporal: caller-supplied event times, distinct from
+    transaction time (`created_at`). Without this, every "valid_from" was
+    just current_timestamp() and the model was uni-temporal in disguise.
+    """
+
+    def test_caller_supplied_valid_from_is_used_in_insert(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.commit_edges([
+            {"source_page_id": "a", "target_page_id": "b",
+             "link_type": "related", "confidence": 1.0, "origin": "manual",
+             "valid_from": "2020-01-01T00:00:00",
+             "valid_until": "2023-06-01T00:00:00"},
+        ])
+        statements = [c.kwargs["statement"]
+                       for c in ws.statement_execution.execute_statement.call_args_list]
+        insert_sql = next(s for s in statements if s.strip().startswith("INSERT"))
+        assert "2020-01-01T00:00:00" in insert_sql
+        assert "2023-06-01T00:00:00" in insert_sql
+        # Confirm the literals are typed as TIMESTAMP — bare strings would
+        # silently truncate or fail on Databricks.
+        assert "TIMESTAMP '2020-01-01T00:00:00'" in insert_sql
+
+    def test_caller_unspecified_falls_back_to_current_timestamp(self):
+        # Default behavior unchanged: a commit_edges call without valid_from
+        # still records "valid since now, currently valid." Backward-compat.
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.commit_edges([
+            {"source_page_id": "a", "target_page_id": "b",
+             "link_type": "related", "confidence": 1.0, "origin": "manual"},
+        ])
+        statements = [c.kwargs["statement"]
+                       for c in ws.statement_execution.execute_statement.call_args_list]
+        insert_sql = next(s for s in statements if s.strip().startswith("INSERT"))
+        assert "current_timestamp()" in insert_sql
+
+    def test_supersede_uses_new_edges_valid_from_as_old_valid_until(self):
+        # Continuous validity intervals: when a new edge backdates to T, the
+        # prior open row should be closed at T (not at current_timestamp()),
+        # so there's no gap and no overlap in the timeline.
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.commit_edges([
+            {"source_page_id": "a", "target_page_id": "b",
+             "link_type": "related", "confidence": 1.0, "origin": "manual",
+             "valid_from": "2023-06-01T00:00:00"},
+        ])
+        statements = [c.kwargs["statement"]
+                       for c in ws.statement_execution.execute_statement.call_args_list]
+        update_sql = next(s for s in statements if s.strip().startswith("UPDATE"))
+        # The close-out timestamp must match the new edge's valid_from,
+        # so consecutive facts have no gap.
+        assert "valid_until = TIMESTAMP '2023-06-01T00:00:00'" in update_sql
+
+    def test_supersede_default_close_time_is_current_when_no_valid_from(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.commit_edges([
+            {"source_page_id": "a", "target_page_id": "b",
+             "link_type": "related", "confidence": 1.0, "origin": "manual"},
+        ])
+        statements = [c.kwargs["statement"]
+                       for c in ws.statement_execution.execute_statement.call_args_list]
+        update_sql = next(s for s in statements if s.strip().startswith("UPDATE"))
+        assert "valid_until = current_timestamp()" in update_sql
+
+
 class TestGraphNeighborsFiltersValid:
     """Reads only return currently-valid edges by default."""
 

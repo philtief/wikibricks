@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.2] - 2026-05-15
+
+### Fixed
+
+- **`commit_edges` is now genuinely bi-temporal.** Prior versions accepted
+  no caller-supplied event times, so every edge's `valid_from` collapsed
+  to `current_timestamp()` — structurally bi-temporal (the columns existed)
+  but functionally uni-temporal in disguise. v0.6.2 accepts optional
+  `valid_from` and `valid_until` strings per edge. Supersede close-out
+  uses the new edge's `valid_from` (continuous validity intervals, no gap).
+  An agent learning today that "Philipp lived in Munich from 2020 to 2023"
+  can now record that fact with its real validity window while `created_at`
+  remains today.
+- README claim about "Graphiti's bi-temporal model" was technically true
+  only after v0.6.2. Prior to this release the column shape was bi-temporal
+  but the write API was not — calling the v0.6.0 model "bi-temporal" was an
+  overclaim. Corrected.
+
+### Changed
+
+- **`commit_edges` batching**: edges are now grouped by `(valid_from,
+  valid_until)`. Default-now case (no caller-supplied times) is still
+  exactly one UPDATE + one INSERT per call. Mixed-time batches do one
+  UPDATE + one INSERT per distinct `(valid_from, valid_until)` group.
+
+
 ## [0.6.1] - 2026-05-15
 
 ### Fixed

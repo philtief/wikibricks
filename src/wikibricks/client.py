@@ -699,24 +699,37 @@ class WikiClient:
         return list(candidates.values())
 
     def commit_edges(self, edges: list[dict]) -> int:
-        """Batch-write edges with bi-temporal semantics (v0.6.0).
+        """Batch-write edges with bi-temporal semantics.
 
-        Each edge dict must contain: source_page_id, target_page_id, link_type,
-        confidence, origin. Invalid rows are skipped silently.
+        Each edge dict must contain: ``source_page_id``, ``target_page_id``,
+        ``link_type``, ``confidence``, ``origin``. Optional bi-temporal fields:
+        ``valid_from`` (ISO 8601 string — when the fact became true) and
+        ``valid_until`` (when it stopped). Both default to "open-ended now":
+        ``valid_from = current_timestamp()``, ``valid_until = NULL``.
 
         Append-only write pattern. For each new edge:
         1. UPDATE any currently-open row with the same
            ``(source_page_id, target_page_id, link_type)`` to set
-           ``valid_until = current_timestamp()``. This closes the prior fact
-           without overwriting it (history preserved in Delta + the closed row).
-        2. INSERT the new row with ``valid_from = current_timestamp()`` and
-           ``valid_until = NULL``.
+           ``valid_until`` = the new edge's ``valid_from`` (or
+           ``current_timestamp()`` if unspecified). This produces continuous
+           validity intervals — no gap, no overlap — and preserves the
+           closed row as ordinary table state.
+        2. INSERT the new row with the caller's (or default) ``valid_from``
+           and ``valid_until``.
 
-        Both happen as two batched statements so an N-edge call is two SQL
-        round-trips regardless of N. Reads through ``graph_neighbors`` and
-        ``graph_neighbors_at`` filter on validity automatically.
+        For backward-compatible "the fact starts now" callers, no API change
+        is required. For real bi-temporal recording (a fact learned today
+        about a past event), supply ``valid_from``/``valid_until`` per-edge.
+
+        Edges are grouped by ``valid_from`` so the batched UPDATE+INSERT
+        pattern still collapses N edges to at most 2*K SQL round-trips
+        (where K = number of distinct valid_from values supplied).
+        Single-group (no caller-supplied valid_from) is the common case
+        and remains exactly two statements.
         """
-        valid: list[tuple[str, str, str, float, str]] = []
+        from collections import defaultdict
+
+        valid: list[tuple[str, str, str, float, str, str | None, str | None]] = []
         for e in edges:
             lt = e.get("link_type", "related")
             origin = e.get("origin", "manual")
@@ -727,41 +740,51 @@ class WikiClient:
                 continue
             if not 0.0 <= conf <= 1.0:
                 continue
-            valid.append((src, tgt, lt, conf, origin))
+            valid.append((src, tgt, lt, conf, origin,
+                          e.get("valid_from"), e.get("valid_until")))
 
         if not valid:
             return 0
 
-        # Step 1 — close any currently-open rows for the keys we're about to insert.
-        # Build a VALUES-driven UPDATE so the close-out is single-statement.
-        keys_sql = ", ".join(
-            f"('{src}', '{tgt}', '{lt}')" for src, tgt, lt, _, _ in valid
-        )
-        try:
-            self._exec(
-                f"UPDATE {LINKS_TABLE} "
-                f"SET valid_until = current_timestamp() "
-                f"WHERE valid_until IS NULL "
-                f"  AND (source_page_id, target_page_id, link_type) IN ({keys_sql})"
-            )
-        except Exception:
-            return 0
+        # Group by (valid_from, valid_until) so a single backdated batch can
+        # still close the prior open rows with the right cutoff. Most calls
+        # have all edges in one group (the default-now case).
+        groups: dict[tuple[str | None, str | None], list[tuple]] = defaultdict(list)
+        for row in valid:
+            groups[(row[5], row[6])].append(row)
 
-        # Step 2 — INSERT new rows. valid_from defaults to current_timestamp();
-        # valid_until stays NULL ("currently valid").
-        rows_sql = ", ".join(
-            f"('{src}', '{tgt}', '{lt}', CAST({conf} AS FLOAT), '{origin}', "
-            f"current_timestamp(), NULL)"
-            for src, tgt, lt, conf, origin in valid
-        )
-        try:
-            self._exec(
-                f"INSERT INTO {LINKS_TABLE} "
-                f"(source_page_id, target_page_id, link_type, confidence, origin, "
-                f" valid_from, valid_until) VALUES {rows_sql}"
+        for (vf, vu), group in groups.items():
+            # Close-out timestamp for the supersede UPDATE: the new edge's
+            # valid_from (continuous intervals), or current_timestamp().
+            close_sql = f"TIMESTAMP '{self._escape(vf)}'" if vf else "current_timestamp()"
+            keys_sql = ", ".join(
+                f"('{r[0]}', '{r[1]}', '{r[2]}')" for r in group
             )
-        except Exception:
-            return 0
+            try:
+                self._exec(
+                    f"UPDATE {LINKS_TABLE} "
+                    f"SET valid_until = {close_sql} "
+                    f"WHERE valid_until IS NULL "
+                    f"  AND (source_page_id, target_page_id, link_type) IN ({keys_sql})"
+                )
+            except Exception:
+                return 0
+
+            vf_sql = f"TIMESTAMP '{self._escape(vf)}'" if vf else "current_timestamp()"
+            vu_sql = f"TIMESTAMP '{self._escape(vu)}'" if vu else "NULL"
+            rows_sql = ", ".join(
+                f"('{r[0]}', '{r[1]}', '{r[2]}', CAST({r[3]} AS FLOAT), '{r[4]}', "
+                f"{vf_sql}, {vu_sql})"
+                for r in group
+            )
+            try:
+                self._exec(
+                    f"INSERT INTO {LINKS_TABLE} "
+                    f"(source_page_id, target_page_id, link_type, confidence, origin, "
+                    f" valid_from, valid_until) VALUES {rows_sql}"
+                )
+            except Exception:
+                return 0
 
         self._log("connect", details=f"committed={len(valid)}")
         return len(valid)

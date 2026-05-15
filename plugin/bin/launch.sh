@@ -16,7 +16,7 @@ if [ "$#" -lt 1 ]; then
   exit 64
 fi
 
-REF="${WIKIBRICKS_PLUGIN_REF:-v0.6.1}"
+REF="${WIKIBRICKS_PLUGIN_REF:-v0.6.2}"
 GIT_URL="${WIKIBRICKS_PLUGIN_GIT:-https://github.com/philtief/wikibricks.git}"
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-${HOME}/.claude/plugins/data/wikibricks-recorder}"
 TOOL_DIR="${DATA_DIR}/uv-tools"
