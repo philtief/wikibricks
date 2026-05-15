@@ -37,7 +37,7 @@ app/                       Streamlit reference app
 scripts/                   Evaluation + diagnostic CLIs (hotpot_*, twowiki_*, diagnose_traces)
 tests/                     pytest suite — runs without a workspace
 docs/                      Evaluation reports + architecture diagrams
-vendor/                    Vendored third-party ([redacted benchmark] evaluator)
+vendor/                    Vendored third-party (2WikiMultiHopQA evaluator)
 databricks.yml             Bundle config (gets merged with databricks.override.yml)
 databricks.override.example.yml   Template for workspace-specific overrides
 pyproject.toml             Package config — version lives here
@@ -64,17 +64,17 @@ scripts/build_hotpot_seed.py
 scripts/fetch_hotpot.py
 scripts/hotpot_*.py                  # hotpot_02_vs_index, hotpot_03_benchmark, etc.
 scripts/build_twowiki_seed.py
-scripts/[redacted].py
+scripts/fetch_twowiki.py
 scripts/twowiki_*.py                 # twowiki_02_vs_index, twowiki_03_retrieve, twowiki_04_generate, twowiki_05_evaluate, etc.
 scripts/twowiki_batch_loop.sh
 src/wikibricks/seeds/hotpot/         # HotPotQA seed loader
-src/wikibricks/seeds/twowiki/        # [redacted benchmark] seed loader
+src/wikibricks/seeds/twowiki/        # 2WikiMultiHopQA seed loader
 tests/test_build_hotpot_seed.py
 tests/test_eval_metrics.py
-vendor/[redacted]_v1.1.py
+vendor/2wikimultihop_evaluate_v1.1.py
 docs/hotpotqa_evaluation.md
 docs/twowiki_evaluation.md
-notebooks/benchmark_hotpot.py        # [redacted benchmark] benchmark notebook
+notebooks/benchmark_hotpot.py        # HotpotQA benchmark notebook
 examples/hotpotqa.md                 # references excluded hotpot scripts
 examples/twowiki.md                  # references excluded twowiki scripts
 ```
@@ -133,7 +133,7 @@ because public users can't read `wikibricks-dev`.
    `mcp__plugin_wikibricks-recorder_wiki__*` in a regular session
    (no `--plugin-dir` flag).
 5. **Strip the `## Evaluation` section from `README.md`** on the public
-   mirror. The section cites [redacted benchmark] + [redacted benchmark] scores with
+   mirror. The section cites HotpotQA + 2WikiMultiHopQA scores with
    links to `docs/hotpotqa_evaluation.md` / `docs/twowiki_evaluation.md`
    — both dev-only — so the links would 404 on public. Dev keeps the
    section.
@@ -158,7 +158,7 @@ because public users can't read `wikibricks-dev`.
    is a *consumer-side* tool, not a library surface, and is allowed.
 3. **No REST API calls from user-facing code.** Always use the Databricks SDK
    (`databricks.sdk.WorkspaceClient`). The only exception is the vendored
-   [redacted benchmark] eval script.
+   2WikiMultiHopQA eval script.
 4. **No hardcoded workspace IDs in the repo.** `databricks.yml` uses generic
    defaults (`catalog=main`, no `warehouse_id` default); the app reads env
    vars with no workspace-specific fallbacks. Workspace specifics go in
@@ -231,9 +231,10 @@ Adding, renaming, or removing a method is a breaking change — bump the minor
 version and document it in CHANGELOG. Current methods:
 
 - `write_page`, `bulk_write_pages`, `read_page`, `list_pages`, `history`
-- `search` (modes: `HYBRID` / `ANN` / `FULL_TEXT`)
+- `search` (modes: `HYBRID` / `ANN` / `FULL_TEXT`) — logs `{returned_paths, k, mode}` to `wiki_log.details` for citation tracking
 - `ingest_source`, `promote_answer`, `materialize_index`, `sync_index`
 - `propose_edges`, `commit_edges`, `graph_neighbors`, `fix_broken_links`
+- `upsert_vocabulary(observations, approve_threshold)`, `append_page_tags(path, tags)` — used by `notebooks/wiki_tag.py`
 - `_log` (private, used by notebooks; `spec_set` allows it)
 
 UC functions exposed via MCP (defined in `src/wikibricks/ops.py`):
@@ -262,6 +263,7 @@ framework to give an agent direct promote-to-memory capability.
 | `curate_run` | End-of-run summary from the curate notebook |
 | `segregate` | A page was split into a parent + N chunk children |
 | `segregate_skip` | An oversize page could not be split (single paragraph too large) |
+| `auto_tag` | The `wiki_tag` task proposed + committed LLM tags for a page; `details` carries `{proposed, committed, deduped_against_vocab, model, raw_truncated}` |
 
 Never invent new op_types silently — add a row to this table and to the
 `wiki_log` section in README.md.

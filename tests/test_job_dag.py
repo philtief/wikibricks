@@ -23,6 +23,7 @@ REPO_ROOT = Path(__file__).parent.parent
 CURATE_NB = REPO_ROOT / "notebooks" / "wiki_curate.py"
 PROMOTE_NB = REPO_ROOT / "notebooks" / "promote_from_traces.py"
 SEGREGATE_NB = REPO_ROOT / "notebooks" / "wiki_segregate.py"
+TAG_NB = REPO_ROOT / "notebooks" / "wiki_tag.py"
 
 
 class NotebookExit(Exception):
@@ -52,7 +53,9 @@ def _make_spec_wiki() -> MagicMock:
     wiki.promote_answer.return_value = "promoted/foo"
     wiki.history.return_value = []
     wiki.sync_index.return_value = None
-    # `_log` is private but both notebooks call it; spec_set allows because it
+    wiki.upsert_vocabulary.return_value = 0
+    wiki.append_page_tags.return_value = None
+    # `_log` is private but notebooks call it; spec_set allows because it
     # exists on the class.
     return wiki
 
@@ -211,3 +214,22 @@ class TestJobDagSchemaContract:
         assert not missing, (
             f"segregate uses methods missing from WikiClient: {missing}"
         )
+
+    def test_all_wiki_methods_used_by_tag_exist_on_class(self):
+        """Same guard for the tag notebook."""
+        expected = {"upsert_vocabulary", "append_page_tags", "_log"}
+        missing = expected - set(dir(WikiClient))
+        assert not missing, (
+            f"tag uses methods missing from WikiClient: {missing}"
+        )
+
+    def test_tag_notebook_parses_and_runs_against_spec_set_wiki(self):
+        """The tag notebook should exit cleanly when there are no candidates,
+        proving its import block and pre-loop SQL run against the contract."""
+        wiki = _make_spec_wiki()
+        ws = _make_ws()
+        dbutils = _make_dbutils()
+        _exec_notebook(TAG_NB, _make_spark_curate(), ws, wiki, dbutils)
+        # Empty candidates -> no vocab writes
+        wiki.upsert_vocabulary.assert_not_called()
+        wiki.append_page_tags.assert_not_called()

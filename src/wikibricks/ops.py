@@ -20,6 +20,7 @@ SOURCES_TABLE = f"{CATALOG}.{SCHEMA}.sources"
 LOG_TABLE = f"{CATALOG}.{SCHEMA}.wiki_log"
 PAGES_VS_SOURCE_TABLE = f"{CATALOG}.{SCHEMA}.pages_vs_source"
 PROMOTE_CHECKPOINT_TABLE = f"{CATALOG}.{SCHEMA}.promote_checkpoint"
+VOCABULARY_TABLE = f"{CATALOG}.{SCHEMA}.wiki_vocabulary"
 VS_INDEX = f"{CATALOG}.{SCHEMA}.pages_index"
 VS_ENDPOINT = "wiki-vs-endpoint"
 EMBEDDING_MODEL = "databricks-bge-large-en"
@@ -142,12 +143,51 @@ def create_tables_sql():
         USING DELTA
         TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
         """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {VOCABULARY_TABLE} (
+            slug        STRING    NOT NULL,
+            source      STRING    NOT NULL,
+            count       BIGINT    NOT NULL DEFAULT 1,
+            first_seen  TIMESTAMP DEFAULT current_timestamp(),
+            last_seen   TIMESTAMP DEFAULT current_timestamp(),
+            status      STRING    NOT NULL DEFAULT 'pending'
+        )
+        USING DELTA
+        TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
+        """,
     ]
 
 
 def create_schema_sql():
     """Return SQL to create the wiki schema."""
     return f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}"
+
+
+def migrate_tables_sql():
+    """Idempotent ALTER TABLE statements that reconcile pre-v0.5.0 wikis
+    with the current canonical DDL.
+
+    `CREATE TABLE IF NOT EXISTS` doesn't reconcile schema drift on existing
+    tables. When a wiki was deployed before v0.5.0 with a stricter (or
+    different-default) schema, INSERTs that rely on column defaults can
+    fail with NOT NULL constraint violations.
+
+    Each statement here is safe to re-run: ALTER COLUMN DROP NOT NULL and
+    SET DEFAULT are idempotent on already-migrated columns.
+
+    Current migrations:
+    - `wiki_vocabulary.first_seen` / `last_seen`: pre-v0.5.0 wikis declared
+      these `TIMESTAMP NOT NULL` (no default). Canonical v0.5.0 is
+      `TIMESTAMP DEFAULT current_timestamp()` (nullable). Drop NOT NULL +
+      set default so the auto-tag upsert path stays resilient if a future
+      INSERT omits these columns.
+    """
+    return [
+        f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN first_seen DROP NOT NULL",
+        f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN first_seen SET DEFAULT current_timestamp()",
+        f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN last_seen  DROP NOT NULL",
+        f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN last_seen  SET DEFAULT current_timestamp()",
+    ]
 
 
 def get_schema() -> str:
@@ -634,6 +674,31 @@ def create_index_view_sql():
            tags, version, updated_at
     FROM {PAGES_TABLE}
     ORDER BY path
+    """
+
+
+def create_agent_traces_view_sql():
+    """Return SQL to create the `agent_traces_v` view over `wiki_log`.
+
+    Shapes recorder search/read events into the schema the promote notebook
+    expects: (session_id, user_query, model_response, retrieved_paths,
+    timestamp). One row per search call, with retrieved_paths drawn from
+    the `returned_paths` JSON field populated by `WikiClient.search`.
+    """
+    return f"""
+    CREATE OR REPLACE VIEW {CATALOG}.{SCHEMA}.agent_traces_v AS
+    SELECT
+      log_id AS session_id,
+      query AS user_query,
+      CAST(NULL AS STRING) AS model_response,
+      transform(
+        from_json(details, 'STRUCT<returned_paths: ARRAY<STRING>>').returned_paths,
+        x -> x
+      ) AS retrieved_paths,
+      created_at AS timestamp
+    FROM {LOG_TABLE}
+    WHERE op_type = 'search'
+      AND details LIKE '%returned_paths%'
     """
 
 

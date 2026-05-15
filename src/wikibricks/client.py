@@ -15,6 +15,7 @@ from wikibricks.ops import (
     SOURCES_TABLE,
     VALID_LINK_ORIGINS,
     VALID_LINK_TYPES,
+    VOCABULARY_TABLE,
     VS_INDEX,
     delete_broken_links_sql,
     graph_neighbors_sql,
@@ -124,6 +125,10 @@ class WikiClient:
         FROM {PAGES_TABLE} WHERE path = '{path}'
         """
 
+        # Preserve `llm:`-prefixed tags across writes. Recorder owns mechanical
+        # tags (session, cwd:..., model:..., user:...); the auto-tag task owns
+        # `llm:*` tags via append_page_tags. Without this preservation, every
+        # write_page wiped llm: tags (Bug 3).
         merge_sql = f"""
         MERGE INTO {PAGES_TABLE} AS target
         USING (SELECT '{path}' AS path) AS source
@@ -135,7 +140,10 @@ class WikiClient:
             content_text = concat(
                 PARSE_JSON('{content_esc}'):summary::STRING, ' ',
                 PARSE_JSON('{content_esc}'):body::STRING),
-            tags = {tags_sql},
+            tags = array_distinct(array_union(
+                {tags_sql},
+                filter(COALESCE(target.tags, array()), t -> t LIKE 'llm:%')
+            )),
             source_ids = {src_sql},
             parent_id = {parent_sql},
             chunk_index = {chunk_sql},
@@ -271,7 +279,10 @@ class WikiClient:
             f"  content_text = concat("
             f"    PARSE_JSON(source.content_json):summary::STRING, ' ', "
             f"    PARSE_JSON(source.content_json):body::STRING), "
-            f"  tags = source.tags, "
+            f"  tags = array_distinct(array_union("
+            f"    source.tags, "
+            f"    filter(COALESCE(target.tags, array()), t -> t LIKE 'llm:%')"
+            f"  )), "
             f"  source_ids = source.source_ids, "
             f"  parent_id = source.parent_id, "
             f"  chunk_index = source.chunk_index, "
@@ -395,11 +406,22 @@ class WikiClient:
 
         resp = self.ws.vector_search_indexes.query_index(**kwargs)
         if not resp.result or not resp.result.data_array:
+            self._log("search", query=query, details=json.dumps({
+                "returned_paths": [], "k": num_results, "mode": mode,
+            }))
             return []
         # Vector Search API returns columns directly on manifest, not under .schema
         cols = [c.name for c in resp.manifest.columns]
-        self._log("search", query=query)
-        return [dict(zip(cols, row)) for row in resp.result.data_array]
+        results = [dict(zip(cols, row)) for row in resp.result.data_array]
+        # Citation tracking: log which paths were returned so the promote view
+        # over wiki_log can mine real agent traces (v0.5.0 — see health probe
+        # `citations_logged`).
+        self._log("search", query=query, details=json.dumps({
+            "returned_paths": [r.get("path") for r in results if r.get("path")],
+            "k": num_results,
+            "mode": mode,
+        }))
+        return results
 
     def history(self, path: str) -> list[dict]:
         """Get version history for a wiki page."""
@@ -478,6 +500,63 @@ class WikiClient:
 
         self._log("promote", path=path, query=query)
         return path
+
+    def upsert_vocabulary(
+        self,
+        observations: list[dict],
+        approve_threshold: int = 3,
+    ) -> int:
+        """Increment vocabulary counts for a batch of slug observations.
+
+        Each observation is `{"slug": str, "source": str}`. Existing slugs
+        have their `count` incremented and `last_seen` refreshed; new slugs
+        are inserted with `count=1` and `status='pending'`. Status flips to
+        `approved` once `count >= approve_threshold`.
+
+        Returns the number of observations processed.
+        """
+        if not observations:
+            return 0
+        rows = []
+        for obs in observations:
+            slug = self._escape(obs["slug"])
+            source = self._escape(obs.get("source") or "auto_tag")
+            rows.append(f"SELECT '{slug}' AS slug, '{source}' AS source")
+        union = " UNION ALL ".join(rows)
+        threshold = int(approve_threshold)
+        self._exec(
+            f"MERGE INTO {VOCABULARY_TABLE} AS t "
+            f"USING ({union}) AS s "
+            f"ON t.slug = s.slug "
+            f"WHEN MATCHED THEN UPDATE SET "
+            f"  count = t.count + 1, "
+            f"  last_seen = current_timestamp(), "
+            f"  status = CASE WHEN t.count + 1 >= {threshold} "
+            f"               THEN 'approved' ELSE t.status END "
+            f"WHEN NOT MATCHED THEN INSERT "
+            f"(slug, source, count, first_seen, last_seen, status) "
+            f"VALUES (s.slug, s.source, 1, "
+            f"        current_timestamp(), current_timestamp(), "
+            f"        CASE WHEN 1 >= {threshold} THEN 'approved' ELSE 'pending' END)"
+        )
+        return len(observations)
+
+    def append_page_tags(self, path: str, tags: list[str]) -> None:
+        """Append tags to `pages.tags`, deduped via array_distinct. Idempotent.
+
+        No-op when `tags` is empty.
+        """
+        if not tags:
+            return
+        path_esc = self._escape(path)
+        arr = ", ".join(f"'{self._escape(t)}'" for t in tags)
+        self._exec(
+            f"UPDATE {PAGES_TABLE} "
+            f"SET tags = array_distinct("
+            f"  array_union(COALESCE(tags, array()), array({arr}))"
+            f"), updated_at = current_timestamp() "
+            f"WHERE path = '{path_esc}'"
+        )
 
     def bulk_write_pages(
         self,

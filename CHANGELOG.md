@@ -7,6 +7,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-05-15
+
+### Added
+
+- **`wikibricks.tag_logic`** — pure helpers for LLM-driven auto-tagging:
+  `parse_tag_response`, `normalize_slug`, `dedupe_against_vocabulary`,
+  `should_approve`, `prefix_llm`, `build_tag_event`. Library stays
+  LLM-free; the LLM call lives in `notebooks/wiki_tag.py`.
+- **`WikiClient.upsert_vocabulary(observations, approve_threshold)`** —
+  batched MERGE into `wiki_vocabulary` with auto-approval at threshold.
+- **`WikiClient.append_page_tags(path, tags)`** — append tags to
+  `pages.tags`, deduped via `array_distinct(array_union(...))`.
+- **`notebooks/wiki_tag.py`** — new opt-in task in `wikibricks_curate`,
+  proposes 3-5 semantic tags per recent top-level page via FMAPI,
+  writes vocab + page tags, logs `auto_tag` events.
+- **`wikibricks.ops.VOCABULARY_TABLE`** + DDL in `create_tables_sql()`
+  for the `wiki_vocabulary` table.
+- **`wikibricks.ops.create_agent_traces_view_sql()`** — DDL for
+  `agent_traces_v` view over `wiki_log` (search rows with returned
+  paths). Promote consumes this view instead of the default
+  `agent_traces` table.
+- **`wikibricks.health`** + `scripts/wikibricks_health.py` — six-probe
+  health oracle for the v0.5.0 feature set (auto-tag coverage, vocab
+  growth, page-tag coverage, citations logged, promote end-to-end,
+  curate recency). Exits non-zero when any probe fails.
+- **`tests/test_job_yaml_contract.py`** — YAML-level contract test
+  asserting the four-task DAG and `traces_table` wiring.
+
+### Changed
+
+- **`WikiClient.search()`** now logs `{returned_paths, k, mode}` in
+  `wiki_log.details` (citation tracking). Enables the promote pipeline
+  to mine real agent traces and the health probe to count citations.
+- **`resources/wiki_curate_job.yml`** gains a `tag` task and points
+  promote's `traces_table` at `${var.catalog}.${var.schema}.agent_traces_v`.
+
 ## [0.3.1] - 2026-05-05
 
 ### Added
@@ -17,24 +53,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`wiki_curate` notebook** gains a `propose_concurrency` widget
   (default 8). The bundle resource sets the same default for scheduled
   runs.
-- **`tests/test_deploy_notebook.py::TestWikiSegregateNotebook`** — eight
-  drift guards over `notebooks/wiki_segregate.py` (parses-as-Python,
-  imports the segregate_logic helpers, filters to oversize parents
-  only, batched `write_pages`, etc.). Closes a previously-untested
-  notebook.
-- **`tests/test_job_dag.py`** — DAG contract test now also execs
-  `notebooks/wiki_segregate.py` against the spec_set'd `WikiClient`,
-  plus a static `test_all_wiki_methods_used_by_segregate_exist_on_class`
-  guard pinning `write_pages`, `sync_index`, `_log`.
 
 ### Performance
 
 - **`notebooks/wiki_curate.py` connect phase** now runs `propose_edges`
   in parallel up to `propose_concurrency` workers and commits all
   high-confidence edges in a single MERGE INTO links instead of one
-  MERGE per page. Live measurement on a personal wiki with 95
-  candidate pages: 21.6 min → 2.8 min wall time (7.7×). Per-call
-  propose_edges latency at 8 workers: 7.94s → 1.54s (5.2×).
+  MERGE per page. On the personal philipp wiki (~92 candidate pages
+  per run on serverless) this drops the connect phase from ~9 min to
+  ~1-2 min wall time.
 
 ### Fixed
 
@@ -42,19 +69,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   pages window to `parent_id IS NULL` and
   `created_by NOT IN ('segregate', 'promote')`. Segregate-produced
   chunk children dominated the prior 48h lookback after a single big
-  segregate run; the loop was processing stale chunks instead of new
-  agent writes.
+  segregate run (984 of 1074 "recent" pages on 2026-05-05); the loop
+  was processing stale chunks instead of new agent writes.
 - **`WikiClient.propose_edges`** accepts an optional `other_pages`
-  argument. Batch callers can pre-fetch `list_pages()` once and pass
-  it in, collapsing N list_pages SQL round-trips into 1. Default
-  behavior unchanged.
-
-### Install
-
-```
-/plugin marketplace add https://github.com/philtief/wikibricks.git
-/plugin install wikibricks-recorder@wikibricks
-```
+  argument. Batch callers can pre-fetch `list_pages()` once and pass it
+  in, collapsing N list_pages SQL round-trips into 1. Default behavior
+  unchanged.
 
 ## [0.3.0] - 2026-05-04
 
@@ -122,7 +142,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`wikibricks-recorder` Claude Code plugin** at `plugin/`. Users install
   via marketplace flow instead of hand-editing `~/.claude/settings.json`:
   ```
-  /plugin marketplace add https://github.com/philtief/wikibricks.git
+  /plugin marketplace add https://github.com/philtief/wikibricks-dev.git
   /plugin install wikibricks-recorder@wikibricks
   ```
   Plugin ships:
@@ -407,7 +427,7 @@ Databricks.
 - **Five Delta tables** (`pages`, `pages_history`, `links`, `sources`, `log`)
   created by the `deploy_wiki_store` notebook. CDF enabled on `pages`.
 - **Vector Search DELTA_SYNC index** (`pages_index`) over `pages.content_text`
-  using `[redacted-model]`. Three search modes: HYBRID (default), ANN,
+  using `databricks-bge-large-en`. Three search modes: HYBRID (default), ANN,
   FULL_TEXT.
 - **Seven UC functions** auto-exposed as MCP tools at
   `/api/2.0/mcp/functions/<catalog>/<schema>`: `fn_wiki_search`, `fn_wiki_read`,
@@ -419,7 +439,7 @@ Databricks.
 - **Typed links** between pages (`cites`, `related`, `supports`, `depends_on`,
   …) - cross-reference graph queryable in plain SQL.
 - **Domain-agnostic seed loaders** (`src/wikibricks/seeds/`): `sample`
-  (5 meta-pages), `hotpot` ([redacted benchmark], ~66k pages), `custom` (JSONL), `none`.
+  (5 meta-pages), `hotpot` (HotpotQA, ~66k pages), `custom` (JSONL), `none`.
 - **Databricks Asset Bundle** (`databricks.yml` + `resources/`) with
   `dev` / `staging` / `prod` targets. One-command deploy:
   `databricks bundle deploy --target dev`.
@@ -433,10 +453,10 @@ Databricks.
 - **Observability dashboard** (`resources/observability_dashboard.yml`) -
   pages, writes, reads, and lint findings over time.
 - **Evaluation harness**:
-  - [redacted benchmark] fetch + seed + retrieval benchmark (`scripts/hotpot_*.py`,
+  - HotpotQA fetch + seed + retrieval benchmark (`scripts/hotpot_*.py`,
     `notebooks/benchmark_hotpot.py`). Produces `benchmark_results.json` and
     `hotpotqa_results.html`.
-  - [redacted benchmark] fetch + seed + retrieval + generation + eval
+  - 2WikiMultiHopQA fetch + seed + retrieval + generation + eval
     (`scripts/twowiki_*.py`), including an 8-variant cheap-lever ablation
     (`scripts/twowiki_variants.py`) and a Delta-checkpointed batch loop
     (`scripts/twowiki_batch_loop.sh`). Vendored official v1.1 evaluator.
@@ -444,6 +464,28 @@ Databricks.
 - **Documentation**: `README.md`, `examples/hotpotqa.md`,
   `examples/twowiki.md`, `docs/hotpotqa_evaluation.md`,
   `docs/twowiki_evaluation.md`, `docs/img/architecture.{mmd,svg,png}`.
+
+### Benchmarks
+
+- **HotpotQA retrieval pilot** - 500-query HYBRID recall@10 ≈ 89% on a
+  66,569-page corpus. Retrieval-only, not a HotpotQA leaderboard metric.
+- **2WikiMultiHopQA open-retrieval** - preliminary 350-query ablation. Best
+  variant (Sonnet 4.6 + HYBRID + K=10) reaches **Joint F1 21.2** under the
+  official v1.1 evaluator. This matches the 2020 paper's own open-retrieval
+  baseline (~20); modern 2024-2025 open-retrieval SOTA is 50-65 (task-tuned
+  retrievers, iterative multi-hop, rerankers, fine-tuned heads - all outside
+  WikiBricks' scope). See [`docs/twowiki_evaluation.md`](docs/twowiki_evaluation.md)
+  for full framing.
+
+### Limitations
+
+- Off-the-shelf embeddings only (`databricks-bge-large-en`); no task-tuned
+  retriever.
+- Single-shot retrieval; no iterative multi-hop.
+- No cross-encoder reranker.
+- Evaluation harness uses a vendored copy of
+  `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
+  on demand by `scripts/fetch_twowiki.py`.
 
 [Unreleased]: https://github.com/philtief/wikibricks/compare/v0.3.1...HEAD
 [0.3.1]: https://github.com/philtief/wikibricks/compare/v0.3.0...v0.3.1

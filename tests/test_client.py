@@ -6,7 +6,13 @@ import pytest
 from databricks.sdk.service.sql import StatementState, StatementStatus
 
 from wikibricks.client import WikiClient
-from wikibricks.ops import HISTORY_TABLE, LOG_TABLE, PAGES_TABLE, SOURCES_TABLE
+from wikibricks.ops import (
+    HISTORY_TABLE,
+    LOG_TABLE,
+    PAGES_TABLE,
+    SOURCES_TABLE,
+    VOCABULARY_TABLE,
+)
 
 
 def _col(name):
@@ -193,6 +199,47 @@ class TestSearch:
 
         assert wiki.search("nothing") == []
 
+    def test_search_logs_returned_paths_in_details(self):
+        # Citation tracking: the v0.5.0 promote/agent_traces view depends on
+        # `wiki_log` rows where op_type='search' AND details contains
+        # `returned_paths`. The search call must emit this JSON.
+        ws = MagicMock()
+        resp = MagicMock()
+        resp.result.data_array = [
+            ["id-1", "topics/foo", "Foo", "concept", "content", "[]", "1"],
+            ["id-2", "topics/bar", "Bar", "concept", "content", "[]", "1"],
+        ]
+        resp.manifest.columns = [_col(c) for c in
+                                  ["page_id", "path", "title", "page_type",
+                                   "content_text", "tags", "version"]]
+        ws.vector_search_indexes.query_index.return_value = resp
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.search("test query", num_results=7)
+
+        # The _log INSERT into wiki_log is the last execute_statement call.
+        log_call = ws.statement_execution.execute_statement.call_args_list[-1]
+        sql = log_call.kwargs["statement"]
+        assert "returned_paths" in sql
+        assert "topics/foo" in sql
+        assert "topics/bar" in sql
+        # k and mode also embedded for analytics
+        assert '"k": 7' in sql or "'k': 7" in sql
+        assert "HYBRID" in sql
+
+    def test_search_logs_empty_paths_when_no_results(self):
+        # Even on empty results, the search must log so we know it ran. The
+        # health probe counts these against the `citations_logged` threshold.
+        ws = MagicMock()
+        resp = MagicMock()
+        resp.result = None
+        ws.vector_search_indexes.query_index.return_value = resp
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.search("nothing")
+
+        log_call = ws.statement_execution.execute_statement.call_args_list[-1]
+        sql = log_call.kwargs["statement"]
+        assert "returned_paths" in sql
+
 
 class TestHistory:
     def test_returns_version_list(self):
@@ -240,6 +287,93 @@ class TestWritePageSourceIds:
         merge_call = ws.statement_execution.execute_statement.call_args_list[1]
         sql = merge_call.kwargs["statement"]
         assert "NULL" in sql
+
+
+class TestWritePagePreservesLlmTags:
+    """Bug 3 regression — write_page must preserve `llm:`-prefixed tags from
+    prior versions.
+
+    Background: the recorder writes session pages with mechanical tags only
+    (session, cwd:..., model:..., user:...). The wiki_tag task adds llm:* tags
+    via WikiClient.append_page_tags. Before the fix, every subsequent
+    write_page call wiped llm: tags because the MERGE UPDATE clause did a full
+    replacement of `tags`. After the fix, the MERGE preserves llm:* tags via
+    filter() + array_union.
+    """
+
+    def test_update_branch_preserves_existing_llm_tags_via_filter(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.write_page("p", "T", '{"summary":"s","body":"b"}',
+                        tags=["session", "cwd:x"])
+        merge_sql = ws.statement_execution.execute_statement.call_args_list[1].kwargs["statement"]
+        # Caller's tags must still appear
+        assert "'session'" in merge_sql
+        assert "'cwd:x'" in merge_sql
+        # The UPDATE branch must union with filter(COALESCE(target.tags(...llm:%) on existing tags
+        assert "filter(COALESCE(target.tags" in merge_sql
+        assert "llm:" in merge_sql
+        # And produce a deduped union (so caller's tags and llm: tags merge safely)
+        assert "array_union" in merge_sql
+        assert "array_distinct" in merge_sql
+
+    def test_update_branch_uses_target_tags_for_preservation(self):
+        # The preservation must read from `target.tags` (the pre-merge row),
+        # not from a new constant. Otherwise the merge would always preserve
+        # an empty array.
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.write_page("p", "T", '{"summary":"s","body":"b"}')
+        merge_sql = ws.statement_execution.execute_statement.call_args_list[1].kwargs["statement"]
+        assert "target.tags" in merge_sql
+
+    def test_insert_branch_does_not_need_preservation(self):
+        # New pages have no prior tags — only the UPDATE branch needs the
+        # preservation dance. INSERT branch should be plain.
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.write_page("p", "T", '{"summary":"s","body":"b"}', tags=["session"])
+        merge_sql = ws.statement_execution.execute_statement.call_args_list[1].kwargs["statement"]
+        # Confirm there's only ONE filter(COALESCE(target.tags call (in the UPDATE branch).
+        assert merge_sql.count("filter(COALESCE(target.tags") == 1
+
+    def test_no_tags_arg_still_preserves_llm(self):
+        # Even when caller passes no tags, llm: tags on the existing row stay.
+        # `tags = array_distinct(array_union(ARRAY(), filter(COALESCE(target.tags(target.tags, ...)))`
+        # i.e. caller-empty + preserved-llm = just the llm: tags.
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.write_page("p", "T", '{"summary":"s","body":"b"}')  # no tags
+        merge_sql = ws.statement_execution.execute_statement.call_args_list[1].kwargs["statement"]
+        # filter(COALESCE(target.tags still appears even with empty caller tags
+        assert "filter(COALESCE(target.tags" in merge_sql
+
+
+class TestWritePagesBatchPreservesLlmTags:
+    """Bug 3 regression — write_pages (batched path used by segregate)
+    must also preserve llm: tags.
+    """
+
+    def test_batch_merge_includes_filter_for_llm_preservation(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.write_pages([
+            {"path": "p1", "title": "T1", "content": {"summary": "s", "body": "b"},
+             "tags": ["session"]},
+            {"path": "p2", "title": "T2", "content": {"summary": "s", "body": "b"},
+             "tags": ["chunk"]},
+        ])
+        # The MERGE call is the second statement (after archive)
+        merge_sql = ws.statement_execution.execute_statement.call_args_list[1].kwargs["statement"]
+        assert "MERGE INTO" in merge_sql
+        assert "filter(COALESCE(target.tags" in merge_sql
+        assert "llm:" in merge_sql
+        assert "array_union" in merge_sql
 
 
 class TestWritePageChunks:
@@ -431,6 +565,106 @@ class TestMaterializeIndex:
         wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
         result = wiki.materialize_index()
         assert "0 pages" in result
+
+
+class TestUpsertVocabulary:
+    def test_empty_observations_skips_sql(self):
+        ws = MagicMock()
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        assert wiki.upsert_vocabulary([]) == 0
+        ws.statement_execution.execute_statement.assert_not_called()
+
+    def test_emits_merge_against_vocab_table(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.upsert_vocabulary([{"slug": "row-level-security", "source": "auto_tag"}])
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "MERGE INTO" in sql
+        assert VOCABULARY_TABLE in sql
+        assert "row-level-security" in sql
+
+    def test_approve_threshold_baked_into_sql(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.upsert_vocabulary([{"slug": "x", "source": "auto_tag"}], approve_threshold=5)
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        # Both the matched (count+1) and not-matched (count=1) branches must
+        # carry the threshold so the status flip is consistent.
+        assert ">= 5" in sql
+        assert "'approved'" in sql
+        assert "'pending'" in sql
+
+    def test_default_source_is_auto_tag(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.upsert_vocabulary([{"slug": "x"}])  # no source
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "auto_tag" in sql
+
+    def test_batches_multiple_observations_into_one_statement(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        n = wiki.upsert_vocabulary([
+            {"slug": "a", "source": "auto_tag"},
+            {"slug": "b", "source": "auto_tag"},
+            {"slug": "c", "source": "auto_tag"},
+        ])
+        assert n == 3
+        assert ws.statement_execution.execute_statement.call_count == 1
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "UNION ALL" in sql
+        for slug in ("a", "b", "c"):
+            assert f"'{slug}'" in sql
+
+    def test_escapes_single_quotes_in_slug(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        # Should not raise / inject — _escape uses backslash escape (existing convention).
+        wiki.upsert_vocabulary([{"slug": "o'brien", "source": "auto_tag"}])
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "o\\'brien" in sql
+
+
+class TestAppendPageTags:
+    def test_empty_tags_is_noop(self):
+        ws = MagicMock()
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.append_page_tags("topics/foo", [])
+        ws.statement_execution.execute_statement.assert_not_called()
+
+    def test_emits_update_with_array_union_distinct(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.append_page_tags("topics/foo", ["llm:row-level-security", "llm:delta-lake"])
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert PAGES_TABLE in sql
+        assert "array_distinct" in sql
+        assert "array_union" in sql
+        assert "WHERE path = 'topics/foo'" in sql
+        assert "llm:row-level-security" in sql
+        assert "llm:delta-lake" in sql
+
+    def test_updates_updated_at(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.append_page_tags("p", ["llm:x"])
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "updated_at = current_timestamp()" in sql
+
+    def test_escapes_single_quotes_in_path(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.append_page_tags("topics/o'brien", ["llm:foo"])
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "o\\'brien" in sql
 
 
 class TestBulkWritePages:

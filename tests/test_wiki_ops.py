@@ -20,6 +20,7 @@ from wikibricks.ops import (
     VS_INDEX,
     add_link_sql,
     broken_links_sql,
+    create_agent_traces_view_sql,
     create_index_view_sql,
     create_schema_sql,
     create_tables_sql,
@@ -30,6 +31,7 @@ from wikibricks.ops import (
     duplicate_paths_sql,
     get_schema,
     graph_neighbors_sql,
+    migrate_tables_sql,
     orphan_pages_sql,
     stale_pages_sql,
     write_page_sql,
@@ -81,9 +83,9 @@ class TestEnvOverride:
 
 
 class TestCreateTablesSql:
-    def test_returns_seven_statements(self):
+    def test_returns_eight_statements(self):
         stmts = create_tables_sql()
-        assert len(stmts) == 7
+        assert len(stmts) == 8
 
     def test_promote_checkpoint_table(self):
         from wikibricks import PROMOTE_CHECKPOINT_TABLE
@@ -93,6 +95,18 @@ class TestCreateTablesSql:
         cp_sql = next(s for s in stmts if PROMOTE_CHECKPOINT_TABLE in s)
         assert "last_watermark_ts" in cp_sql
         assert "checkpoint_id" in cp_sql
+
+    def test_vocabulary_table(self):
+        from wikibricks.ops import VOCABULARY_TABLE
+        stmts = create_tables_sql()
+        joined = "\n".join(stmts)
+        assert VOCABULARY_TABLE in joined
+        vocab_sql = next(s for s in stmts if VOCABULARY_TABLE in s)
+        assert "slug" in vocab_sql
+        assert "status" in vocab_sql
+        assert "count" in vocab_sql
+        assert "first_seen" in vocab_sql
+        assert "last_seen" in vocab_sql
 
     def test_pages_vs_source_projection_table(self):
         stmts = create_tables_sql()
@@ -587,6 +601,61 @@ class TestCreateIndexViewSql:
     def test_orders_by_path(self):
         sql = create_index_view_sql()
         assert "ORDER BY path" in sql
+
+
+class TestCreateAgentTracesViewSql:
+    def test_creates_view(self):
+        sql = create_agent_traces_view_sql()
+        assert "CREATE OR REPLACE VIEW" in sql
+        assert f"{CATALOG}.{SCHEMA}.agent_traces_v" in sql
+
+    def test_selects_from_wiki_log(self):
+        sql = create_agent_traces_view_sql()
+        assert LOG_TABLE in sql
+
+    def test_columns_match_promote_notebook_contract(self):
+        # The promote notebook reads:
+        #   session_id, user_query, model_response, retrieved_paths, timestamp
+        # Drift here breaks the promote pipeline silently.
+        sql = create_agent_traces_view_sql()
+        for col in ("session_id", "user_query", "model_response",
+                    "retrieved_paths", "timestamp"):
+            assert col in sql, f"missing column {col} in agent_traces_v"
+
+    def test_filters_to_search_with_returned_paths(self):
+        sql = create_agent_traces_view_sql()
+        assert "op_type = 'search'" in sql
+        assert "returned_paths" in sql
+
+
+class TestMigrateTablesSql:
+    def test_returns_a_list_of_statements(self):
+        stmts = migrate_tables_sql()
+        assert isinstance(stmts, list)
+        assert len(stmts) >= 4  # first_seen + last_seen × (drop null + set default)
+
+    def test_vocabulary_first_seen_migration_present(self):
+        from wikibricks.ops import VOCABULARY_TABLE
+        stmts = migrate_tables_sql()
+        joined = "\n".join(stmts)
+        assert VOCABULARY_TABLE in joined
+        assert "first_seen DROP NOT NULL" in joined
+        assert "first_seen SET DEFAULT current_timestamp()" in joined
+
+    def test_vocabulary_last_seen_migration_present(self):
+        stmts = migrate_tables_sql()
+        joined = "\n".join(stmts)
+        assert "last_seen  DROP NOT NULL" in joined or "last_seen DROP NOT NULL" in joined
+        assert ("last_seen  SET DEFAULT current_timestamp()" in joined
+                or "last_seen SET DEFAULT current_timestamp()" in joined)
+
+    def test_each_statement_is_a_single_alter(self):
+        # No multi-statement strings — sdk_redeploy iterates over the list.
+        for stmt in migrate_tables_sql():
+            assert stmt.count(";") == 0, f"unexpected semicolon in: {stmt}"
+            assert stmt.strip().startswith("ALTER TABLE"), (
+                f"non-ALTER statement: {stmt}"
+            )
 
 
 class TestOrphanPagesSql:

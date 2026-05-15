@@ -16,9 +16,8 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.3.1-py3-none-any.whl
-# MAGIC # ^ Update path to where the wheel lives in your workspace.
-# MAGIC %restart_python
+# The `wikibricks` wheel is installed via the serverless environment
+# `dependencies` in resources/wiki_curate_job.yml. No %pip install here.
 
 # COMMAND ----------
 

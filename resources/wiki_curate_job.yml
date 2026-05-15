@@ -3,7 +3,7 @@ resources:
     wikibricks_curate:
       name: wikibricks_curate
       description: >
-        Default WikiBricks maintenance pipeline. Three tasks:
+        Default WikiBricks maintenance pipeline. Four tasks:
           1. curate — deterministic (VS nearest-neighbor + exact-title matching,
              lint, broken-link repair, oversize/empty/duplicate health check).
              No LLM. This is the library contract.
@@ -12,7 +12,10 @@ resources:
              an LLM (${var.llm_model}) only for the per-page summary and
              chunk titles. Opt-out by removing this task block; curate stays
              green on its own. Exits early when no pages need splitting.
-          3. promote — trace-driven canonical-answer synthesis. Uses an LLM
+          3. tag — proposes 3-5 semantic tags per recent top-level page via an
+             LLM (${var.llm_model}), MERGEs them into wiki_vocabulary, and
+             appends llm:-prefixed tags to pages.tags. Opt-out by removing.
+          4. promote — trace-driven canonical-answer synthesis. Uses an LLM
              (${var.llm_model}). Opt-out by removing this task block; the curate
              task stays green on its own.
       max_concurrent_runs: 1
@@ -51,6 +54,22 @@ resources:
               max_pages_per_run: "20"
           environment_key: serverless
           timeout_seconds: 1800
+        - task_key: tag
+          depends_on:
+            - task_key: curate
+          notebook_task:
+            notebook_path: ../notebooks/wiki_tag.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              warehouse_id: ${var.warehouse_id}
+              tag_endpoint: ${var.llm_model}
+              max_pages_per_run: "20"
+              tag_concurrency: "4"
+              approve_threshold: "3"
+              max_tags_per_page: "5"
+          environment_key: serverless
+          timeout_seconds: 1800
         - task_key: promote
           depends_on:
             - task_key: curate
@@ -60,6 +79,7 @@ resources:
               catalog: ${var.catalog}
               schema: ${var.schema}
               warehouse_id: ${var.warehouse_id}
+              traces_table: ${var.catalog}.${var.schema}.agent_traces_v
               judge_endpoint: ${var.llm_model}
               embed_endpoint: ${var.embed_model}
               min_cluster_members: "5"
@@ -73,5 +93,7 @@ resources:
         - environment_key: serverless
           spec:
             client: "2"
+            dependencies:
+              - /Volumes/${var.catalog}/${var.schema}/wheels/wikibricks-${var.version}-py3-none-any.whl
       queue:
         enabled: true
