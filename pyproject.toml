@@ -1,6 +1,6 @@
 [project]
 name = "wikibricks"
-version = "0.6.0"
+version = "0.6.1"
 description = "Delta + Vector Search wiki store for AI agents on Databricks"
 requires-python = ">=3.10"
 dependencies = [

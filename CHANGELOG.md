@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-05-15
+
+### Fixed
+
+- **`migrate_tables_sql`** — replace `ALTER TABLE ... ADD COLUMN IF NOT
+  EXISTS` (rejected by Databricks SQL with PARSE_SYNTAX_ERROR) with the
+  one-shot `ADD COLUMNS (valid_from TIMESTAMP, valid_until TIMESTAMP)`
+  form. Idempotency on re-run is provided by `sdk_redeploy`'s
+  continue-on-failure handling (logs FAILED on the second run, moves on)
+  rather than by the SQL itself. v0.6.0 tag had the broken syntax; v0.6.1
+  is the one to install for a fresh deploy.
+
+### Docs
+
+- **README**: corrected the bi-temporal section. History is persisted in
+  the closed rows themselves (which survive `OPTIMIZE`/`VACUUM`), not via
+  Delta time travel — time travel is retention-bounded and is not used by
+  any of the bi-temporal read paths.
+
+
 ## [0.6.0] - 2026-05-15
 
 ### Added
