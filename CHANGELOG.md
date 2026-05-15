@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-05-15
+
+### Added
+
+- **`examples/team_wiki/`** — multi-agent team-wiki walkthrough.
+  README explains the shared-wiki pattern (one catalog/schema, many
+  writers, UC-governed). `simulate_team_activity.py` script writes
+  ~9 sample pages across three fake users for screenshots/demos.
+- **`examples/audit_demo/`** — bi-temporal audit demo.
+  `audit_demo.py` writes a four-page graph through three event windows
+  (Munich → London → Berlin) with backdated `valid_from` / `valid_until`
+  values, then queries it from three points in time. `post.md` is a
+  Medium-ready essay explaining bi-temporal memory and why
+  wikibricks on Delta + UC differs from Mem0 / Letta / Graphiti.
+
+
 ## [0.7.1] - 2026-05-15
 
 ### Added
