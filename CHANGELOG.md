@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-05-15
+
+### Added
+
+- **Bi-temporal links (Track 1)** — `links` table gains `valid_from` and
+  `valid_until` columns. `WikiClient.commit_edges` is now append-only:
+  each new edge closes any prior currently-open row for the same
+  `(source_page_id, target_page_id, link_type)` (sets `valid_until =
+  current_timestamp()`) and INSERTs a fresh row. Matches Graphiti's
+  bi-temporal model on a Delta substrate. Reads filter by validity
+  automatically.
+- **`WikiClient.graph_neighbors_at(path, at_timestamp, depth, link_types)`**
+  — point-in-time graph traversal. Returns neighbors that were valid at
+  `at_timestamp` (ISO 8601 string).
+- **`WikiClient.link_history(src_path, dst_path)`** — full chronological
+  version trace of edges between two pages, oldest first. Each row carries
+  `link_type`, `confidence`, `origin`, `valid_from`, `valid_until`.
+- **Karpathy-pattern importer (Track 3)** — `python -m wikibricks.import_karpathy
+  <dir>` walks a folder of markdown files, parses YAML frontmatter, extracts
+  `[[wikilinks]]` and `relationship::[[target]]` typed edges, and writes
+  them through `bulk_write_pages` + `commit_edges`. Supports Obsidian /
+  Foam / Dendron-style markdown with zero runtime dependencies beyond
+  stdlib. `--dry-run` reports without writing.
+- **`wikibricks.karpathy_logic`** — pure helpers: `parse_frontmatter`,
+  `extract_wikilinks`, `extract_typed_edges`, `wiki_path_for`. LLM-free.
+- **`examples/karpathy_wiki/`** — example fixture with 6 markdown files
+  demonstrating the Karpathy three-folder pattern (`raw/`, `wiki/`,
+  `index.md`) plus a typed-edge example (`cites::[[Apache Spark]]`).
+
+### Changed
+
+- **`WikiClient.commit_edges` SQL shape** changed from MERGE-with-update
+  to UPDATE-close-then-INSERT. Two batched round-trips regardless of N.
+- **`graph_neighbors`** now filters `WHERE l.valid_until IS NULL` by
+  default. Use `graph_neighbors_at(t)` for historical state.
+- **Schema migration**: `migrate_tables_sql()` adds `ALTER TABLE links
+  ADD COLUMNS (valid_from, valid_until)` + a backfill UPDATE. Idempotent
+  on re-run (Databricks SQL has no `ADD COLUMN IF NOT EXISTS`; sdk_redeploy
+  continues past "column already exists" errors).
+
 ## [0.5.1] - 2026-05-15
 
 ### Fixed

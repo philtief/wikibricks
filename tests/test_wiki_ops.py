@@ -649,13 +649,26 @@ class TestMigrateTablesSql:
         assert ("last_seen  SET DEFAULT current_timestamp()" in joined
                 or "last_seen SET DEFAULT current_timestamp()" in joined)
 
-    def test_each_statement_is_a_single_alter(self):
+    def test_each_statement_is_single_and_idempotent(self):
         # No multi-statement strings — sdk_redeploy iterates over the list.
+        # Migrations may be ALTER TABLE or one-shot data backfills (UPDATE ...
+        # WHERE col IS NULL). Both must be idempotent.
         for stmt in migrate_tables_sql():
             assert stmt.count(";") == 0, f"unexpected semicolon in: {stmt}"
-            assert stmt.strip().startswith("ALTER TABLE"), (
-                f"non-ALTER statement: {stmt}"
+            head = stmt.strip().split()[0].upper()
+            assert head in ("ALTER", "UPDATE"), (
+                f"unexpected migration verb: {stmt}"
             )
+
+    def test_links_bitemporal_migration_present(self):
+        # v0.6.0 (Track 1) migration: pre-v0.6.0 links table has no validity
+        # columns. ADD COLUMN IF NOT EXISTS is idempotent; backfill NULL
+        # valid_from rows so reads filtering by valid_until still work.
+        stmts = migrate_tables_sql()
+        joined = "\n".join(stmts)
+        assert "ADD COLUMN IF NOT EXISTS valid_from" in joined
+        assert "ADD COLUMN IF NOT EXISTS valid_until" in joined
+        assert "valid_from IS NULL" in joined  # backfill predicate
 
 
 class TestOrphanPagesSql:

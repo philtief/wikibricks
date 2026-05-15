@@ -699,14 +699,22 @@ class WikiClient:
         return list(candidates.values())
 
     def commit_edges(self, edges: list[dict]) -> int:
-        """Batch-MERGE edges into the links table in a single statement.
+        """Batch-write edges with bi-temporal semantics (v0.6.0).
 
         Each edge dict must contain: source_page_id, target_page_id, link_type,
         confidence, origin. Invalid rows are skipped silently.
 
-        Collapses N edges into ONE MERGE with a multi-row VALUES source — at
-        scale (60 edges/page × 66 pages/run) this reduces 3960 round-trips to
-        66, which is the difference between a 3-hour run and a 3-minute run.
+        Append-only write pattern. For each new edge:
+        1. UPDATE any currently-open row with the same
+           ``(source_page_id, target_page_id, link_type)`` to set
+           ``valid_until = current_timestamp()``. This closes the prior fact
+           without overwriting it (history preserved in Delta + the closed row).
+        2. INSERT the new row with ``valid_from = current_timestamp()`` and
+           ``valid_until = NULL``.
+
+        Both happen as two batched statements so an N-edge call is two SQL
+        round-trips regardless of N. Reads through ``graph_neighbors`` and
+        ``graph_neighbors_at`` filter on validity automatically.
         """
         valid: list[tuple[str, str, str, float, str]] = []
         for e in edges:
@@ -724,21 +732,33 @@ class WikiClient:
         if not valid:
             return 0
 
+        # Step 1 — close any currently-open rows for the keys we're about to insert.
+        # Build a VALUES-driven UPDATE so the close-out is single-statement.
+        keys_sql = ", ".join(
+            f"('{src}', '{tgt}', '{lt}')" for src, tgt, lt, _, _ in valid
+        )
+        try:
+            self._exec(
+                f"UPDATE {LINKS_TABLE} "
+                f"SET valid_until = current_timestamp() "
+                f"WHERE valid_until IS NULL "
+                f"  AND (source_page_id, target_page_id, link_type) IN ({keys_sql})"
+            )
+        except Exception:
+            return 0
+
+        # Step 2 — INSERT new rows. valid_from defaults to current_timestamp();
+        # valid_until stays NULL ("currently valid").
         rows_sql = ", ".join(
-            f"('{src}', '{tgt}', '{lt}', CAST({conf} AS FLOAT), '{origin}')"
+            f"('{src}', '{tgt}', '{lt}', CAST({conf} AS FLOAT), '{origin}', "
+            f"current_timestamp(), NULL)"
             for src, tgt, lt, conf, origin in valid
         )
         try:
             self._exec(
-                f"MERGE INTO {LINKS_TABLE} AS t "
-                f"USING (SELECT * FROM (VALUES {rows_sql}) "
-                f"AS v(src, tgt, lt, conf, org)) AS s "
-                f"ON t.source_page_id = s.src AND t.target_page_id = s.tgt "
-                f"AND t.link_type = s.lt "
-                f"WHEN MATCHED THEN UPDATE SET confidence = s.conf, origin = s.org "
-                f"WHEN NOT MATCHED THEN INSERT "
-                f"(source_page_id, target_page_id, link_type, confidence, origin) "
-                f"VALUES (s.src, s.tgt, s.lt, s.conf, s.org)"
+                f"INSERT INTO {LINKS_TABLE} "
+                f"(source_page_id, target_page_id, link_type, confidence, origin, "
+                f" valid_from, valid_until) VALUES {rows_sql}"
             )
         except Exception:
             return 0
@@ -761,6 +781,55 @@ class WikiClient:
             return []
         sql = graph_neighbors_sql(page["page_id"], depth=depth, link_types=link_types)
         resp = self._exec(sql)
+        rows = resp.result.data_array if resp.result else []
+        if not rows:
+            return []
+        cols = [c.name for c in self._manifest_columns(resp.manifest)]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def graph_neighbors_at(
+        self,
+        path: str,
+        at_timestamp: str,
+        depth: int = 1,
+        link_types: list[str] | None = None,
+    ) -> list[dict]:
+        """Return outgoing neighbors that were valid at ``at_timestamp``.
+
+        Bi-temporal point query (v0.6.0). Useful for reproducing the agent's
+        view of the world at a specific moment, debugging why an answer used
+        a particular set of edges, or auditing historical reasoning paths.
+        """
+        page = self.read_page(path)
+        if not page or not page.get("page_id"):
+            return []
+        sql = graph_neighbors_sql(
+            page["page_id"], depth=depth, link_types=link_types,
+            at_timestamp=at_timestamp,
+        )
+        resp = self._exec(sql)
+        rows = resp.result.data_array if resp.result else []
+        if not rows:
+            return []
+        cols = [c.name for c in self._manifest_columns(resp.manifest)]
+        return [dict(zip(cols, row)) for row in rows]
+
+    def link_history(self, src_path: str, dst_path: str) -> list[dict]:
+        """Return the full chronological version trace of edges between two pages.
+
+        Yields one row per edge version, oldest first. Each row carries the
+        ``link_type``, ``confidence``, ``origin``, ``valid_from``, and
+        ``valid_until`` (None = currently valid).
+        """
+        resp = self._exec(
+            f"SELECT l.link_type, l.confidence, l.origin, l.valid_from, l.valid_until "
+            f"FROM {LINKS_TABLE} l "
+            f"JOIN {PAGES_TABLE} s ON s.page_id = l.source_page_id "
+            f"JOIN {PAGES_TABLE} d ON d.page_id = l.target_page_id "
+            f"WHERE s.path = '{self._escape(src_path)}' "
+            f"  AND d.path = '{self._escape(dst_path)}' "
+            f"ORDER BY valid_from"
+        )
         rows = resp.result.data_array if resp.result else []
         if not rows:
             return []

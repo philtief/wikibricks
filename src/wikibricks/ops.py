@@ -82,12 +82,14 @@ def create_tables_sql():
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {LINKS_TABLE} (
-            source_page_id  STRING  NOT NULL,
-            target_page_id  STRING  NOT NULL,
-            link_type       STRING  NOT NULL DEFAULT 'related',
-            confidence      FLOAT   NOT NULL DEFAULT 1.0,
-            origin          STRING  NOT NULL DEFAULT 'manual',
-            created_at      TIMESTAMP DEFAULT current_timestamp()
+            source_page_id  STRING    NOT NULL,
+            target_page_id  STRING    NOT NULL,
+            link_type       STRING    NOT NULL DEFAULT 'related',
+            confidence      FLOAT     NOT NULL DEFAULT 1.0,
+            origin          STRING    NOT NULL DEFAULT 'manual',
+            created_at      TIMESTAMP DEFAULT current_timestamp(),
+            valid_from      TIMESTAMP DEFAULT current_timestamp(),
+            valid_until     TIMESTAMP
         )
         USING DELTA
         TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
@@ -181,12 +183,23 @@ def migrate_tables_sql():
       `TIMESTAMP DEFAULT current_timestamp()` (nullable). Drop NOT NULL +
       set default so the auto-tag upsert path stays resilient if a future
       INSERT omits these columns.
+    - `links.valid_from` / `valid_until` (v0.6.0 bi-temporal): pre-v0.6.0
+      wikis had a single-temporal `links` table. ADD COLUMN IF NOT EXISTS
+      so existing edges become "valid since now, not superseded". Future
+      writes through `commit_edges` use the append-only bi-temporal path.
     """
     return [
         f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN first_seen DROP NOT NULL",
         f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN first_seen SET DEFAULT current_timestamp()",
         f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN last_seen  DROP NOT NULL",
         f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN last_seen  SET DEFAULT current_timestamp()",
+        f"ALTER TABLE {LINKS_TABLE} ADD COLUMN IF NOT EXISTS valid_from TIMESTAMP",
+        f"ALTER TABLE {LINKS_TABLE} ALTER COLUMN valid_from SET DEFAULT current_timestamp()",
+        f"ALTER TABLE {LINKS_TABLE} ADD COLUMN IF NOT EXISTS valid_until TIMESTAMP",
+        # Backfill: any existing row with NULL valid_from gets the current
+        # timestamp as its conservative "we don't know when this started"
+        # value. Idempotent — re-runs do nothing.
+        f"UPDATE {LINKS_TABLE} SET valid_from = current_timestamp() WHERE valid_from IS NULL",
     ]
 
 
@@ -764,12 +777,18 @@ def delete_broken_links_sql():
     """
 
 
-def graph_neighbors_sql(page_id, depth=1, link_types=None):
+def graph_neighbors_sql(page_id, depth=1, link_types=None, at_timestamp=None):
     """Return SQL for outgoing link neighbors of a page up to `depth` hops.
 
     Depth-limited BFS implemented as UNION ALL over depth levels (up to 3).
     Returns: source_page_id, target_page_id, target_path, target_title, link_type,
              confidence, origin, hop.
+
+    Bi-temporal filter (v0.6.0):
+    - `at_timestamp=None` (default): only currently-valid edges
+      (`valid_until IS NULL`).
+    - `at_timestamp='<iso>'`: edges valid at that timestamp
+      (`valid_from <= ts AND (valid_until IS NULL OR valid_until > ts)`).
     """
     if depth < 1 or depth > 3:
         raise ValueError(f"depth must be in [1, 3], got {depth}")
@@ -779,6 +798,14 @@ def graph_neighbors_sql(page_id, depth=1, link_types=None):
         types_csv = ",".join(f"'{lt}'" for lt in link_types)
         type_filter = f" AND l.link_type IN ({types_csv})"
 
+    if at_timestamp is None:
+        validity_filter = " AND l.valid_until IS NULL"
+    else:
+        validity_filter = (
+            f" AND l.valid_from <= '{at_timestamp}'"
+            f" AND (l.valid_until IS NULL OR l.valid_until > '{at_timestamp}')"
+        )
+
     def _hop(level, source_expr):
         return f"""
         SELECT l.source_page_id, l.target_page_id,
@@ -786,7 +813,7 @@ def graph_neighbors_sql(page_id, depth=1, link_types=None):
                l.link_type, l.confidence, l.origin, {level} AS hop
         FROM {LINKS_TABLE} l
         JOIN {PAGES_TABLE} p ON p.page_id = l.target_page_id
-        WHERE l.source_page_id IN ({source_expr}){type_filter}
+        WHERE l.source_page_id IN ({source_expr}){type_filter}{validity_filter}
         """
 
     seed = f"'{page_id}'"

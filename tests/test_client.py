@@ -896,7 +896,10 @@ class TestProposeEdges:
 
 
 class TestCommitEdges:
-    def test_merges_valid_edges(self):
+    def test_writes_valid_edges(self):
+        # Bi-temporal model (v0.6.0): commit_edges produces two batched
+        # statements — an UPDATE that closes any prior open rows for the
+        # same (src, tgt, link_type) keys, and an INSERT for the new rows.
         ws = MagicMock()
         ws.statement_execution.execute_statement.return_value = _mock_response([])
         wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
@@ -910,7 +913,10 @@ class TestCommitEdges:
         assert written == 2
         calls = [c.kwargs["statement"] for c in
                  ws.statement_execution.execute_statement.call_args_list]
-        assert any("MERGE INTO" in s for s in calls)
+        assert any("UPDATE" in s and "valid_until = current_timestamp()" in s
+                   for s in calls)
+        assert any(s.strip().startswith("INSERT INTO") and "VALUES" in s
+                   for s in calls)
 
     def test_skips_invalid_link_type(self):
         ws = MagicMock()
@@ -994,6 +1000,145 @@ class TestGraphNeighbors:
         wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
         with pytest.raises(ValueError):
             wiki.graph_neighbors("topics/a", depth=5)
+
+
+class TestCommitEdgesBiTemporal:
+    """Track 1 (v0.6.0): edges carry validity intervals.
+
+    commit_edges no longer does a content-update MERGE. Edges are
+    append-only: a new edge for an existing (src, dst, link_type) closes
+    the old row's valid_until and inserts a new row. This matches
+    Graphiti's bi-temporal model on a Delta substrate.
+    """
+
+    def test_new_edges_get_valid_from_default_and_null_valid_until(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.commit_edges([
+            {"source_page_id": "a", "target_page_id": "b",
+             "link_type": "related", "confidence": 0.9, "origin": "auto-vs"},
+        ])
+        statements = [c.kwargs["statement"]
+                       for c in ws.statement_execution.execute_statement.call_args_list]
+        insert_sql = "\n".join(statements)
+        # New row must initialise valid_from = current_timestamp()
+        assert "valid_from" in insert_sql
+        assert "current_timestamp()" in insert_sql
+        # valid_until is left NULL (currently valid)
+        assert "valid_until" in insert_sql
+
+    def test_supersede_closes_previous_validity_window(self):
+        # When a new edge for an existing (src, dst, link_type) lands, the
+        # prior open row must get valid_until = current_timestamp() so the
+        # graph reads correctly point at the new row.
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.commit_edges([
+            {"source_page_id": "a", "target_page_id": "b",
+             "link_type": "related", "confidence": 0.95, "origin": "manual"},
+        ])
+        sql = "\n".join(c.kwargs["statement"]
+                        for c in ws.statement_execution.execute_statement.call_args_list)
+        assert "UPDATE" in sql
+        assert "valid_until = current_timestamp()" in sql
+        # The close-out targets currently-open rows for the same key.
+        assert "valid_until IS NULL" in sql
+
+
+class TestGraphNeighborsFiltersValid:
+    """Reads only return currently-valid edges by default."""
+
+    def _setup(self, ws):
+        page_row = ["page-a", "topics/a", "A", "concept", "c", [], "agent", "t", "t", 1]
+        page_cols = ["page_id", "path", "title", "page_type", "content_text",
+                     "tags", "created_by", "created_at", "updated_at", "version"]
+        neighbor_cols = ["source_page_id", "target_page_id", "target_path",
+                         "target_title", "link_type", "confidence", "origin", "hop"]
+
+        def handler(**kwargs):
+            sql = kwargs["statement"].strip()
+            if sql.startswith("SELECT page_id, path, title"):
+                return _mock_response([page_row], columns=page_cols)
+            return _mock_response([], columns=neighbor_cols)
+
+        ws.statement_execution.execute_statement.side_effect = handler
+
+    def test_graph_neighbors_filters_to_currently_valid(self):
+        ws = MagicMock()
+        self._setup(ws)
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.graph_neighbors("topics/a", depth=1)
+        # Find the BFS query (it joins LINKS_TABLE)
+        joins = [c.kwargs["statement"]
+                 for c in ws.statement_execution.execute_statement.call_args_list
+                 if "links l" in c.kwargs["statement"].lower()
+                 or "links " in c.kwargs["statement"].lower()]
+        assert any("valid_until IS NULL" in s for s in joins), (
+            f"no neighbor SQL filters by valid_until IS NULL; got: {joins}"
+        )
+
+
+class TestGraphNeighborsAt:
+    """`graph_neighbors_at(path, at_timestamp)` returns the state of the
+    graph as of a specific timestamp — the bi-temporal point query."""
+
+    def test_filters_by_validity_interval_for_given_timestamp(self):
+        ws = MagicMock()
+        page_row = ["page-a", "topics/a", "A", "concept", "c", [], "agent", "t", "t", 1]
+        page_cols = ["page_id", "path", "title", "page_type", "content_text",
+                     "tags", "created_by", "created_at", "updated_at", "version"]
+
+        def handler(**kwargs):
+            sql = kwargs["statement"].strip()
+            if sql.startswith("SELECT page_id, path, title"):
+                return _mock_response([page_row], columns=page_cols)
+            return _mock_response([], columns=["source_page_id", "target_page_id",
+                "target_path", "target_title", "link_type", "confidence",
+                "origin", "hop"])
+
+        ws.statement_execution.execute_statement.side_effect = handler
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.graph_neighbors_at("topics/a", at_timestamp="2026-01-15T12:00:00", depth=1)
+        # The BFS query is the one with LINKS_TABLE join.
+        joins = [c.kwargs["statement"]
+                 for c in ws.statement_execution.execute_statement.call_args_list
+                 if "links l" in c.kwargs["statement"].lower()
+                 or "links " in c.kwargs["statement"].lower()]
+        assert joins, "expected at least one neighbor join SQL"
+        sql = joins[0]
+        assert "'2026-01-15T12:00:00'" in sql
+        assert "valid_from" in sql
+        assert "valid_until" in sql
+
+
+class TestLinkHistory:
+    """`link_history(src_path, dst_path)` returns the full chronological
+    trace of edge versions between two pages."""
+
+    def test_returns_versions_ordered_by_valid_from(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response(
+            rows=[
+                ["related", 0.9, "auto-vs", "2026-01-01", "2026-02-01"],
+                ["related", 0.95, "manual",   "2026-02-01", None],
+            ],
+            columns=["link_type", "confidence", "origin", "valid_from", "valid_until"],
+        )
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        history = wiki.link_history("topics/a", "topics/b")
+        assert len(history) == 2
+        assert history[0]["confidence"] == 0.9
+        assert history[1]["valid_until"] is None
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "ORDER BY valid_from" in sql
+
+    def test_empty_when_no_versions(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        assert wiki.link_history("topics/a", "topics/b") == []
 
 
 class TestFixBrokenLinks:

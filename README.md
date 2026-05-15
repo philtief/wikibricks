@@ -64,7 +64,7 @@ In any Claude Code session:
 Then once per machine:
 
 ```bash
-uvx --from "git+https://github.com/philtief/wikibricks.git@v0.5.1" \
+uvx --from "git+https://github.com/philtief/wikibricks.git@v0.6.0" \
     wiki-init personal      # | team-create | team-join
 ```
 
@@ -197,9 +197,9 @@ SQL functions can't perform writes.
 uv sync                              # core library
 uv sync --extra dev                  # +pytest, ruff, streamlit, pyyaml
 uv sync --extra recorder             # also install the recorder package
-uv run pytest                        # 583 tests, no workspace needed
+uv run pytest                        # 620 tests, no workspace needed
 uv run ruff check src tests scripts
-uv build                             # → dist/wikibricks-0.5.1-py3-none-any.whl
+uv build                             # → dist/wikibricks-0.6.0-py3-none-any.whl
 ```
 
 For the recorder, see [`plugin/README.md`](plugin/README.md). For
@@ -208,6 +208,56 @@ overrides), see [`docs/`](docs/) and the bundle config in
 [`databricks.yml`](databricks.yml). Coding agents should read
 [`AGENTS.md`](AGENTS.md) for repo conventions, hard rules, release
 checklist, and the dev → public sync checklist.
+
+## Bi-temporal edges (v0.6.0)
+
+Every row in `links` carries `valid_from` and `valid_until` timestamps.
+`commit_edges` is append-only: a new edge for an existing
+`(source_page_id, target_page_id, link_type)` closes the prior open row
+(`valid_until = current_timestamp()`) and inserts a new row with
+`valid_from = current_timestamp()` and `valid_until = NULL`. Reads
+through `graph_neighbors` automatically filter to currently-valid edges.
+
+Two new methods exercise the temporal dimension:
+
+```python
+# Outgoing neighbors as they were at a specific instant.
+wiki.graph_neighbors_at("topics/databricks",
+                        at_timestamp="2026-01-15T12:00:00", depth=1)
+
+# Full version trace of edges between two pages — oldest first.
+wiki.link_history("topics/databricks", "topics/apache-spark")
+# [{link_type: "related", confidence: 0.9, ..., valid_from: ..., valid_until: ...}, ...]
+```
+
+This is the same shape as Graphiti's bi-temporal model<sup>1</sup>, on a
+Delta + Unity Catalog substrate.
+
+<sup>1</sup> [Zep: A Temporal Knowledge Graph Architecture for Agent Memory](https://arxiv.org/abs/2501.13956)
+
+## Importing a Karpathy-style markdown wiki (v0.6.0)
+
+If you already have a folder of markdown notes following Andrej
+Karpathy's [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
+(or the LLM Wiki v2 typed-edge extension), import it directly:
+
+```bash
+uv run python -m wikibricks.import_karpathy ./my-notes/ \
+    --profile <databricks-profile> \
+    --catalog <catalog> --schema <schema> --warehouse-id <wh>
+
+# Preview without writing:
+uv run python -m wikibricks.import_karpathy ./my-notes/ --dry-run
+```
+
+Path mapping: `wiki/foo.md` → `topics/foo`, `raw/bar.md` → `sources/bar`,
+or a frontmatter `path:` override. YAML frontmatter (`title`, `tags`) is
+parsed natively. Plain `[[wikilinks]]` become `link_type='related'`;
+`relationship::[[Target]]` typed edges preserve the relationship as the
+link type if it matches the library's `VALID_LINK_TYPES`, else fall
+back to `related` with the relationship name kept as a tag.
+
+Live example fixture at [`examples/karpathy_wiki/`](examples/karpathy_wiki/).
 
 ## What this is not
 
