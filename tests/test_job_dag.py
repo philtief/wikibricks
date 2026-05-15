@@ -55,6 +55,7 @@ def _make_spec_wiki() -> MagicMock:
     wiki.sync_index.return_value = None
     wiki.upsert_vocabulary.return_value = 0
     wiki.append_page_tags.return_value = None
+    wiki.update_graph_scores.return_value = 0
     # `_log` is private but notebooks call it; spec_set allows because it
     # exists on the class.
     return wiki
@@ -233,3 +234,11 @@ class TestJobDagSchemaContract:
         # Empty candidates -> no vocab writes
         wiki.upsert_vocabulary.assert_not_called()
         wiki.append_page_tags.assert_not_called()
+
+    def test_all_wiki_methods_used_by_graph_analytics_exist_on_class(self):
+        """Contract guard for the v0.7.0 graph_analytics task."""
+        expected = {"update_graph_scores", "_log"}
+        missing = expected - set(dir(WikiClient))
+        assert not missing, (
+            f"graph_analytics uses methods missing from WikiClient: {missing}"
+        )

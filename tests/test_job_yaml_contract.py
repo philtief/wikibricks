@@ -25,10 +25,10 @@ def _task(job: dict, key: str) -> dict:
 
 
 class TestJobTaskDag:
-    def test_four_tasks_present(self):
+    def test_five_tasks_present(self):
         job = _load_job()
         keys = sorted(t["task_key"] for t in job["tasks"])
-        assert keys == ["curate", "promote", "segregate", "tag"]
+        assert keys == ["curate", "graph_analytics", "promote", "segregate", "tag"]
 
     def test_segregate_depends_on_curate(self):
         job = _load_job()
@@ -40,6 +40,12 @@ class TestJobTaskDag:
         job = _load_job()
         tag = _task(job, "tag")
         deps = [d["task_key"] for d in tag.get("depends_on", [])]
+        assert deps == ["curate"]
+
+    def test_graph_analytics_depends_on_curate(self):
+        job = _load_job()
+        ga = _task(job, "graph_analytics")
+        deps = [d["task_key"] for d in ga.get("depends_on", [])]
         assert deps == ["curate"]
 
     def test_promote_depends_on_curate(self):
@@ -78,6 +84,21 @@ class TestPromoteWiredToTracesView:
         )
 
 
+class TestGraphAnalyticsTask:
+    """Bug-prevention contract for v0.7.0 graph analytics task."""
+
+    def test_uses_wiki_graph_analytics_notebook(self):
+        job = _load_job()
+        ga = _task(job, "graph_analytics")
+        assert ga["notebook_task"]["notebook_path"].endswith("wiki_graph_analytics.py")
+
+    def test_passes_damping_and_min_nodes(self):
+        job = _load_job()
+        params = _task(job, "graph_analytics")["notebook_task"]["base_parameters"]
+        for key in ("catalog", "schema", "warehouse_id", "damping", "community_min_nodes"):
+            assert key in params, f"graph_analytics task missing {key}"
+
+
 class TestServerlessLibrariesContract:
     """Bug 2 contract — wikibricks wheel installs via serverless env, not %pip in notebooks.
 
@@ -95,6 +116,15 @@ class TestServerlessLibrariesContract:
         deps = envs["serverless"]["spec"].get("dependencies", [])
         assert any("wikibricks" in d and ".whl" in d for d in deps), (
             f"serverless env must declare a wikibricks wheel dependency; got: {deps}"
+        )
+
+    def test_serverless_env_installs_igraph(self):
+        # v0.7.0 — graph_analytics task needs igraph at runtime.
+        job = _load_job()
+        envs = {e["environment_key"]: e for e in job["environments"]}
+        deps = envs["serverless"]["spec"].get("dependencies", [])
+        assert any("igraph" in d for d in deps), (
+            f"serverless env must declare igraph; got: {deps}"
         )
 
     def test_serverless_dep_path_uses_bundle_variables(self):

@@ -387,13 +387,26 @@ class WikiClient:
         self._log("read", path=path)
         return dict(zip(cols, rows[0]))
 
-    def search(self, query: str, mode: str = "HYBRID", num_results: int = 5) -> list[dict]:
+    def search(
+        self,
+        query: str,
+        mode: str = "HYBRID",
+        num_results: int = 5,
+        rerank_with_pagerank: bool = False,
+    ) -> list[dict]:
         """Search wiki pages via Vector Search.
 
         Args:
             query: Search query text.
             mode: One of ANN, FULL_TEXT, HYBRID.
             num_results: Max results to return.
+            rerank_with_pagerank: When True, fetch each result's `hub_score`
+                from `pages` and reorder via Reciprocal Rank Fusion (k=60)
+                across vector-search rank and PageRank rank. Defaults to
+                False — backward-compatible with v0.6.x callers. Pages
+                without a hub_score (newly written, not yet analytics-scored)
+                contribute 0 to the PageRank ranker but still appear via
+                their VS rank.
         """
         kwargs = {
             "index_name": VS_INDEX,
@@ -410,9 +423,12 @@ class WikiClient:
                 "returned_paths": [], "k": num_results, "mode": mode,
             }))
             return []
-        # Vector Search API returns columns directly on manifest, not under .schema
         cols = [c.name for c in resp.manifest.columns]
         results = [dict(zip(cols, row)) for row in resp.result.data_array]
+
+        if rerank_with_pagerank and results:
+            results = self._rerank_by_rrf(results)
+
         # Citation tracking: log which paths were returned so the promote view
         # over wiki_log can mine real agent traces (v0.5.0 — see health probe
         # `citations_logged`).
@@ -420,8 +436,77 @@ class WikiClient:
             "returned_paths": [r.get("path") for r in results if r.get("path")],
             "k": num_results,
             "mode": mode,
+            "reranked": rerank_with_pagerank,
         }))
         return results
+
+    def _rerank_by_rrf(self, results: list[dict]) -> list[dict]:
+        """Reorder VS results via Reciprocal Rank Fusion with PageRank.
+
+        Pulls `hub_score` for each result's `page_id`, builds two rankings
+        (VS rank + PageRank rank), fuses with RRF (k=60). Pages with NULL
+        hub_score sit at the bottom of the PageRank ranking. Returns the
+        same list of dicts re-ordered.
+        """
+        from wikibricks.graph_logic import rrf_fuse
+
+        page_ids = [r["page_id"] for r in results if r.get("page_id")]
+        if not page_ids:
+            return results
+
+        # VS ranking (already best-first from the query response)
+        vs_ranking = page_ids
+
+        # PageRank ranking — pull current hub_scores for these page_ids
+        ids_sql = ", ".join(f"'{self._escape(pid)}'" for pid in page_ids)
+        resp = self._exec(
+            f"SELECT page_id, COALESCE(hub_score, 0.0) AS hub_score "
+            f"FROM {PAGES_TABLE} "
+            f"WHERE page_id IN ({ids_sql})"
+        )
+        rows = resp.result.data_array if resp.result else []
+        hub_by_id = {r[0]: float(r[1]) for r in rows}
+        pr_ranking = sorted(page_ids, key=lambda pid: -hub_by_id.get(pid, 0.0))
+
+        fused = rrf_fuse([vs_ranking, pr_ranking], k=60)
+        return sorted(
+            results,
+            key=lambda r: -fused.get(r.get("page_id"), 0.0),
+        )
+
+    def update_graph_scores(self, scores: list[dict]) -> int:
+        """Batch-MERGE PageRank hub_scores and community_ids into pages.
+
+        Each dict: `{"page_id": str, "hub_score": float | None,
+                     "community_id": int | None}`. NULL-safe — missing keys
+        become NULL via COALESCE. Returns the number of rows processed.
+
+        Called by `notebooks/wiki_graph_analytics.py` after each curate run.
+        """
+        if not scores:
+            return 0
+
+        rows = []
+        for s in scores:
+            pid = self._escape(s["page_id"])
+            hub = s.get("hub_score")
+            cid = s.get("community_id")
+            hub_sql = f"CAST({float(hub)} AS DOUBLE)" if hub is not None else "NULL"
+            cid_sql = f"CAST({int(cid)} AS INT)" if cid is not None else "NULL"
+            rows.append(f"('{pid}', {hub_sql}, {cid_sql})")
+        union = ", ".join(rows)
+
+        self._exec(
+            f"MERGE INTO {PAGES_TABLE} AS t "
+            f"USING (SELECT * FROM (VALUES {union}) "
+            f"AS v(page_id, hub_score, community_id)) AS s "
+            f"ON t.page_id = s.page_id "
+            f"WHEN MATCHED THEN UPDATE SET "
+            f"  hub_score = s.hub_score, "
+            f"  community_id = s.community_id, "
+            f"  updated_at = current_timestamp()"
+        )
+        return len(scores)
 
     def history(self, path: str) -> list[dict]:
         """Get version history for a wiki page."""

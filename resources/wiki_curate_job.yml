@@ -54,6 +54,19 @@ resources:
               max_pages_per_run: "20"
           environment_key: serverless
           timeout_seconds: 1800
+        - task_key: graph_analytics
+          depends_on:
+            - task_key: curate
+          notebook_task:
+            notebook_path: ../notebooks/wiki_graph_analytics.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              warehouse_id: ${var.warehouse_id}
+              damping: "0.85"
+              community_min_nodes: "5"
+          environment_key: serverless
+          timeout_seconds: 1800
         - task_key: tag
           depends_on:
             - task_key: curate
@@ -95,5 +108,6 @@ resources:
             client: "2"
             dependencies:
               - /Volumes/${var.catalog}/${var.schema}/wheels/wikibricks-${var.version}-py3-none-any.whl
+              - "igraph>=0.11,<2.0"
       queue:
         enabled: true

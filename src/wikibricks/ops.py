@@ -47,6 +47,9 @@ def create_tables_sql():
             health_status     STRING        DEFAULT 'unknown',
             health_score      DOUBLE,
             last_health_check TIMESTAMP,
+            memory_class      STRING        DEFAULT 'semantic',
+            hub_score         DOUBLE,
+            community_id      INT,
             created_by        STRING        NOT NULL,
             created_at        TIMESTAMP     DEFAULT current_timestamp(),
             updated_at        TIMESTAMP     DEFAULT current_timestamp(),
@@ -187,6 +190,12 @@ def migrate_tables_sql():
       wikis had a single-temporal `links` table. ADD COLUMN IF NOT EXISTS
       so existing edges become "valid since now, not superseded". Future
       writes through `commit_edges` use the append-only bi-temporal path.
+    - `pages.memory_class` / `hub_score` / `community_id` (v0.7.0): pre-v0.7.0
+      wikis lacked the taxonomy column and the graph-analytics score columns.
+      ADD COLUMNS in one batch + backfill `memory_class='semantic'` for any
+      NULL rows. `hub_score` and `community_id` are populated on the next
+      curate run by the wiki_graph_analytics task; until then they stay NULL
+      and search rerank falls back to vector-only.
     """
     return [
         f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN first_seen DROP NOT NULL",
@@ -203,6 +212,15 @@ def migrate_tables_sql():
         # timestamp as its conservative "we don't know when this started"
         # value. Idempotent — re-runs touch 0 rows.
         f"UPDATE {LINKS_TABLE} SET valid_from = current_timestamp() WHERE valid_from IS NULL",
+        # v0.7.0 — pages taxonomy + graph analytics columns. First-run adds
+        # all three in one ALTER; re-runs fail with "column already exists"
+        # and sdk_redeploy continues past them.
+        f"ALTER TABLE {PAGES_TABLE} ADD COLUMNS (memory_class STRING, hub_score DOUBLE, community_id INT)",
+        f"ALTER TABLE {PAGES_TABLE} ALTER COLUMN memory_class SET DEFAULT 'semantic'",
+        # Backfill: any existing row without a memory_class gets 'semantic'
+        # (the most common case). Other classes are set by the agent/recorder
+        # on subsequent writes.
+        f"UPDATE {PAGES_TABLE} SET memory_class = 'semantic' WHERE memory_class IS NULL",
     ]
 
 

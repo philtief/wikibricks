@@ -27,7 +27,7 @@ functions, and the daily curate Lakeflow Job. Team owners run once and
 ```bash
 /plugin marketplace add https://github.com/philtief/wikibricks.git
 /plugin install wikibricks-recorder@wikibricks
-uvx --from "git+https://github.com/philtief/wikibricks.git@v0.6.2" \
+uvx --from "git+https://github.com/philtief/wikibricks.git@v0.7.0" \
     wiki-init personal             # | team-create | team-join
 ```
 
@@ -69,7 +69,7 @@ Env vars win over `~/.wikibricks-recorder.toml` when both are set.
 
 | Variable                  | Default                                          | Purpose                                                          |
 | :------------------------ | :----------------------------------------------- | :--------------------------------------------------------------- |
-| `WIKIBRICKS_PLUGIN_REF`   | `v0.6.2`                                         | Git ref the launcher installs. Override for bleeding-edge.       |
+| `WIKIBRICKS_PLUGIN_REF`   | `v0.7.0`                                         | Git ref the launcher installs. Override for bleeding-edge.       |
 | `WIKIBRICKS_PLUGIN_GIT`   | `https://github.com/philtief/wikibricks.git` | Git URL the launcher installs from.                              |
 | `WIKIBRICKS_RECORDER_DIR` | `~/.wikibricks_recorder/`                        | Where session event logs are buffered before flush.              |
 | `WIKIBRICKS_CATALOG`      | from TOML                                        | UC catalog the recorder writes to.                               |

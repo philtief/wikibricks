@@ -660,6 +660,23 @@ class TestMigrateTablesSql:
                 f"unexpected migration verb: {stmt}"
             )
 
+    def test_pages_v070_graph_columns_migration_present(self):
+        # v0.7.0 — taxonomy + graph analytics. memory_class default,
+        # hub_score/community_id NULL-able until first analytics run.
+        stmts = migrate_tables_sql()
+        joined = "\n".join(stmts)
+        assert "ADD COLUMNS (memory_class STRING, hub_score DOUBLE, community_id INT)" in joined
+        assert "memory_class IS NULL" in joined  # backfill predicate
+        assert "memory_class SET DEFAULT 'semantic'" in joined
+
+    def test_pages_table_has_memory_class_and_graph_columns(self):
+        stmts = create_tables_sql()
+        pages_sql = stmts[0]
+        for col in ("memory_class", "hub_score", "community_id"):
+            assert col in pages_sql, f"missing {col} in canonical pages DDL"
+        # Default for memory_class is 'semantic'
+        assert "memory_class      STRING        DEFAULT 'semantic'" in pages_sql
+
     def test_links_bitemporal_migration_present(self):
         # v0.6.0 (Track 1) migration: pre-v0.6.0 links table has no validity
         # columns. Databricks SQL has no `ADD COLUMN IF NOT EXISTS`, so the

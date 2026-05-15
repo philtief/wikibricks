@@ -1002,6 +1002,134 @@ class TestGraphNeighbors:
             wiki.graph_neighbors("topics/a", depth=5)
 
 
+class TestUpdateGraphScores:
+    """v0.7.0 — `WikiClient.update_graph_scores` batch-merges PageRank hub_scores
+    and community_ids into the pages table. Called by the wiki_graph_analytics
+    notebook after each curate run."""
+
+    def test_empty_list_is_noop(self):
+        ws = MagicMock()
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        assert wiki.update_graph_scores([]) == 0
+        ws.statement_execution.execute_statement.assert_not_called()
+
+    def test_single_score_emits_merge_into_pages(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        n = wiki.update_graph_scores([
+            {"page_id": "p1", "hub_score": 0.123, "community_id": 7}
+        ])
+        assert n == 1
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "MERGE INTO" in sql
+        assert PAGES_TABLE in sql
+        assert "p1" in sql
+        assert "0.123" in sql
+        assert "7" in sql
+
+    def test_null_values_pass_through_as_sql_null(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.update_graph_scores([
+            {"page_id": "p1", "hub_score": None, "community_id": None}
+        ])
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert ", NULL," in sql or ", NULL)" in sql  # at least one NULL literal
+
+    def test_batches_multiple_pages_into_one_statement(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        n = wiki.update_graph_scores([
+            {"page_id": "p1", "hub_score": 0.1, "community_id": 1},
+            {"page_id": "p2", "hub_score": 0.2, "community_id": 1},
+            {"page_id": "p3", "hub_score": 0.3, "community_id": 2},
+        ])
+        assert n == 3
+        assert ws.statement_execution.execute_statement.call_count == 1
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        for pid in ("p1", "p2", "p3"):
+            assert pid in sql
+
+
+class TestSearchRerankWithPagerank:
+    """v0.7.0 — `search(rerank_with_pagerank=True)` blends VS rank and
+    PageRank rank via Reciprocal Rank Fusion (k=60). Backward-compat:
+    default is False, no behavior change for existing callers."""
+
+    def _vs_resp(self, rows, columns):
+        resp = MagicMock()
+        resp.result.data_array = rows
+        resp.manifest.columns = [_col(c) for c in columns]
+        return resp
+
+    def test_default_off_does_not_query_pages_for_hub_score(self):
+        # Backward-compat: no pages query when rerank flag is False.
+        ws = MagicMock()
+        ws.vector_search_indexes.query_index.return_value = self._vs_resp(
+            [["id-1", "topics/foo", "Foo", "concept", "c", "[]", "1"]],
+            ["page_id", "path", "title", "page_type", "content_text", "tags", "version"],
+        )
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.search("q", rerank_with_pagerank=False)
+        # Only the _log INSERT runs on execute_statement (search doesn't query pages).
+        for c in ws.statement_execution.execute_statement.call_args_list:
+            sql = c.kwargs["statement"]
+            assert "hub_score" not in sql, f"unexpected hub_score query: {sql}"
+
+    def test_flag_on_queries_pages_for_hub_score(self):
+        # VS ranks [id-1, id-2, id-3]; PageRank scores rank [id-3, id-1, id-2]
+        # (id-3 is the most-cited page). RRF with k=60:
+        #   id-1: 1/61 + 1/62 = 0.03252  ← VS#1 + PR#2 → fused #1
+        #   id-3: 1/63 + 1/61 = 0.03226  ← VS#3 + PR#1 → fused #2 (moved up)
+        #   id-2: 1/62 + 1/63 = 0.03200  ← VS#2 + PR#3 → fused #3 (moved down)
+        # Demonstrates rerank moves a highly-cited page up the list.
+        ws = MagicMock()
+        ws.vector_search_indexes.query_index.return_value = self._vs_resp(
+            [
+                ["id-1", "topics/foo", "Foo", "concept", "c", "[]", "1"],
+                ["id-2", "topics/bar", "Bar", "concept", "c", "[]", "1"],
+                ["id-3", "topics/qux", "Qux", "concept", "c", "[]", "1"],
+            ],
+            ["page_id", "path", "title", "page_type", "content_text", "tags", "version"],
+        )
+
+        def handler(**kwargs):
+            sql = kwargs.get("statement", "")
+            if "hub_score" in sql:
+                return _mock_response(
+                    rows=[["id-1", 0.20], ["id-2", 0.05], ["id-3", 0.90]],
+                    columns=["page_id", "hub_score"],
+                )
+            return _mock_response([])  # _log INSERT
+
+        ws.statement_execution.execute_statement.side_effect = handler
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        results = wiki.search("q", rerank_with_pagerank=True)
+        assert [r["page_id"] for r in results] == ["id-1", "id-3", "id-2"]
+
+    def test_log_records_reranked_flag(self):
+        ws = MagicMock()
+        ws.vector_search_indexes.query_index.return_value = self._vs_resp(
+            [["id-1", "topics/foo", "Foo", "concept", "c", "[]", "1"]],
+            ["page_id", "path", "title", "page_type", "content_text", "tags", "version"],
+        )
+        ws.statement_execution.execute_statement.return_value = _mock_response(
+            rows=[["id-1", 0.5]], columns=["page_id", "hub_score"],
+        )
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki.search("q", rerank_with_pagerank=True)
+        log_calls = [c.kwargs["statement"]
+                     for c in ws.statement_execution.execute_statement.call_args_list
+                     if "wiki_log" in c.kwargs["statement"]]
+        assert any('"reranked": true' in s.lower() or '"reranked":true' in s.lower()
+                   or '"reranked": true' in s for s in log_calls), (
+            f"reranked flag not in log details; calls: {log_calls}"
+        )
+
+
 class TestCommitEdgesBiTemporal:
     """Track 1 (v0.6.0): edges carry validity intervals.
 

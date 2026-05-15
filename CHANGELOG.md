@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-05-15
+
+### Added
+
+- **`wikibricks.graph_logic`** — pure helpers for graph analytics:
+  `build_igraph`, `compute_pagerank`, `compute_communities`, `rrf_fuse`.
+  LLM-free; igraph as a runtime dependency.
+- **`pages.hub_score`** — PageRank (PRPACK, damping=0.85) over the directed
+  graph of currently-valid edges. Reflects authority flow per the `cites`
+  relationship.
+- **`pages.community_id`** — Leiden community assignment computed on the
+  undirected projection of the graph. NULL for tiny graphs (<5 nodes) where
+  community detection is not informative.
+- **`pages.memory_class`** — taxonomy column (`episodic`, `semantic`,
+  `procedural`, `synthesis`). Default `'semantic'`. Aligns with the
+  community-standard memory-class vocabulary (atlan, mem0, appscale).
+- **`WikiClient.update_graph_scores(scores)`** — batch MERGE of
+  `(page_id, hub_score, community_id)` into pages. Used by the new
+  notebook task. NULL-safe.
+- **`WikiClient.search(rerank_with_pagerank=True)`** — optional flag that
+  pulls each result's `hub_score` and reorders via Reciprocal Rank Fusion
+  (k=60) across vector-search rank and PageRank rank. Default off —
+  backward-compatible.
+- **`notebooks/wiki_graph_analytics.py`** — new opt-in task in
+  `wikibricks_curate`, depends on `curate`. Reads currently-valid edges
+  (bi-temporal filter `WHERE valid_until IS NULL`), builds igraph,
+  computes PageRank + Leiden, writes scores back. Logs a `graph_analytics`
+  event to `wiki_log`.
+- **`[graph]` optional install extra** in `pyproject.toml`:
+  `uv pip install wikibricks[graph]` for the igraph dependency.
+- **Migration**: `migrate_tables_sql()` adds three columns to `pages` in
+  one ALTER batch + backfills `memory_class='semantic'` for existing rows.
+
+### Changed
+
+- **Bundle deploy** installs `igraph>=0.11,<2.0` into the serverless env
+  alongside the wikibricks wheel.
+- **Default `version` bundle variable** bumped from `0.5.0` to `0.7.0`
+  so the env-dep wheel path resolves correctly out of the box.
+
+
 ## [0.6.2] - 2026-05-15
 
 ### Fixed

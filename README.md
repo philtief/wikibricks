@@ -209,6 +209,35 @@ overrides), see [`docs/`](docs/) and the bundle config in
 [`AGENTS.md`](AGENTS.md) for repo conventions, hard rules, release
 checklist, and the dev → public sync checklist.
 
+## Graph analytics + PageRank rerank (v0.7.0)
+
+Every curate run computes per-page `hub_score` (PageRank, damping=0.85) and
+`community_id` (Leiden on the undirected projection) over the currently-valid
+graph. Scores are written back to `pages.hub_score` and `pages.community_id`.
+
+```python
+# Opt-in: blend vector-search rank with PageRank rank via Reciprocal Rank
+# Fusion (k=60). Hub-pages surface earlier on ambiguous queries.
+results = wiki.search("how does the deploy pipeline work",
+                      rerank_with_pagerank=True)
+```
+
+The blend is RRF, not weighted linear, because the two rankers operate on
+incomparable score scales (cosine similarity vs PageRank probability).
+RRF is the industry-standard hybrid-search fusion in 2026; it's robust to
+scale differences without any normalization step.
+
+Implementation lives in [`src/wikibricks/graph_logic.py`](src/wikibricks/graph_logic.py)
+(pure helpers) and [`notebooks/wiki_graph_analytics.py`](notebooks/wiki_graph_analytics.py)
+(the daily task that reads, computes, writes). Requires `igraph>=0.11`
+(installed automatically via the serverless env dep — no manual step).
+
+Why igraph and not NetworkX or GraphFrames: igraph is C-backed, 10–50×
+faster than NetworkX on the same algorithms, runs as a normal `uv pip`
+dependency (no Spark setup), and handles up to ~10M edges per wiki on a
+single serverless task. NetworkX runs out of steam at ~500k edges;
+GraphFrames is the answer when one wiki crosses 10M edges. Few will.
+
 ## Bi-temporal edges (v0.6.0)
 
 Every row in `links` carries `valid_from` and `valid_until` timestamps.
