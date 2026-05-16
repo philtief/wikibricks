@@ -173,6 +173,44 @@ class TestListPages:
 
         assert wiki.list_pages() == []
 
+    def test_excludes_ephemeral_stub_by_default(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response(
+            rows=[], columns=["path", "title", "page_type", "version"]
+        )
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        wiki.list_pages()
+
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "ephemeral:stub" in sql
+        assert "array_contains" in sql
+
+    def test_includes_ephemeral_stub_when_requested(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response(
+            rows=[], columns=["path", "title", "page_type", "version"]
+        )
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        wiki.list_pages(include_ephemeral=True)
+
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "ephemeral:stub" not in sql
+
+    def test_ephemeral_filter_combines_with_prefix(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response(
+            rows=[], columns=["path", "title", "page_type", "version"]
+        )
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        wiki.list_pages(path_prefix="sessions/")
+
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        assert "LIKE 'sessions/%'" in sql
+        assert "ephemeral:stub" in sql
+
 
 class TestSearch:
     def test_calls_vector_search(self):
@@ -239,6 +277,69 @@ class TestSearch:
         log_call = ws.statement_execution.execute_statement.call_args_list[-1]
         sql = log_call.kwargs["statement"]
         assert "returned_paths" in sql
+
+    def test_search_excludes_ephemeral_stub_by_default(self):
+        # VS tags come back as a JSON-serialised string; drop rows whose
+        # tags include the stub marker before returning to the caller.
+        ws = MagicMock()
+        resp = MagicMock()
+        resp.result.data_array = [
+            ["id-1", "topics/real",    "Real",    "concept", "c", '["session"]',                       "1"],
+            ["id-2", "sessions/stub",  "Stub",    "concept", "c", '["session","ephemeral:stub"]',     "1"],
+            ["id-3", "topics/another", "Another", "concept", "c", '["session"]',                       "1"],
+        ]
+        resp.manifest.columns = [_col(c) for c in
+                                  ["page_id", "path", "title", "page_type", "content_text", "tags", "version"]]
+        ws.vector_search_indexes.query_index.return_value = resp
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        results = wiki.search("anything")
+
+        paths = [r["path"] for r in results]
+        assert "sessions/stub" not in paths
+        assert "topics/real" in paths
+        assert "topics/another" in paths
+
+    def test_search_includes_ephemeral_stub_when_requested(self):
+        ws = MagicMock()
+        resp = MagicMock()
+        resp.result.data_array = [
+            ["id-1", "topics/real",   "Real", "concept", "c", '["session"]',                   "1"],
+            ["id-2", "sessions/stub", "Stub", "concept", "c", '["session","ephemeral:stub"]', "1"],
+        ]
+        resp.manifest.columns = [_col(c) for c in
+                                  ["page_id", "path", "title", "page_type", "content_text", "tags", "version"]]
+        ws.vector_search_indexes.query_index.return_value = resp
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        results = wiki.search("anything", include_ephemeral=True)
+
+        assert {r["path"] for r in results} == {"topics/real", "sessions/stub"}
+
+    def test_search_overfetches_to_account_for_filtered_stubs(self):
+        # If we drop stubs after VS returns N results, callers asking for
+        # num_results=5 must still get 5 real hits when stubs are present.
+        # The implementation overfetches; this asserts the contract.
+        ws = MagicMock()
+        resp = MagicMock()
+        # 6 results: 3 stubs + 3 real. caller asks for 3 real.
+        resp.result.data_array = [
+            ["id-1", "p1", "T", "concept", "c", '["session","ephemeral:stub"]', "1"],
+            ["id-2", "p2", "T", "concept", "c", '["session"]',                   "1"],
+            ["id-3", "p3", "T", "concept", "c", '["session","ephemeral:stub"]', "1"],
+            ["id-4", "p4", "T", "concept", "c", '["session"]',                   "1"],
+            ["id-5", "p5", "T", "concept", "c", '["session","ephemeral:stub"]', "1"],
+            ["id-6", "p6", "T", "concept", "c", '["session"]',                   "1"],
+        ]
+        resp.manifest.columns = [_col(c) for c in
+                                  ["page_id", "path", "title", "page_type", "content_text", "tags", "version"]]
+        ws.vector_search_indexes.query_index.return_value = resp
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        results = wiki.search("anything", num_results=3)
+
+        assert len(results) == 3
+        assert all("ephemeral:stub" not in (r.get("tags") or "") for r in results)
 
 
 class TestHistory:

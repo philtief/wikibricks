@@ -351,9 +351,14 @@ def create_uc_functions_sql(warehouse_id, enabled=None):
             FROM vector_search(
                 index => '{VS_INDEX}',
                 query_text => question,
-                num_results => 20,
+                num_results => 40,
                 query_type => 'HYBRID'
             )
+            -- Filter out ephemeral:stub pages (1-event /tmp recorder
+            -- invocations kept for forensic access only). `tags` here is
+            -- the JSON-string projection of the array; match the literal
+            -- "ephemeral:stub" token rather than parse JSON in-column.
+            WHERE tags IS NULL OR tags NOT LIKE '%"ephemeral:stub"%'
         )
         WHERE rn <= num_results
     )

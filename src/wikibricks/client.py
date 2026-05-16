@@ -359,10 +359,24 @@ class WikiClient:
         except Exception as e:
             self._log("vs_sync_fail", details=f"{type(e).__name__}: {e}")
 
-    def list_pages(self, path_prefix: str | None = None) -> list[dict]:
-        """List wiki pages for navigation. Returns page_id, path, title, page_type, version."""
-        prefix_esc = self._escape(path_prefix) if path_prefix else None
-        where = f"WHERE path LIKE '{prefix_esc}%'" if prefix_esc else ""
+    def list_pages(
+        self, path_prefix: str | None = None, *, include_ephemeral: bool = False
+    ) -> list[dict]:
+        """List wiki pages for navigation. Returns page_id, path, title, page_type, version.
+
+        By default, pages tagged ``ephemeral:stub`` are excluded — these
+        are programmatic 1-event ``/tmp`` recorder invocations from old
+        recorder versions that pollute browsing. Pass
+        ``include_ephemeral=True`` to surface them (forensics, cleanup).
+        """
+        clauses: list[str] = []
+        if path_prefix:
+            clauses.append(f"path LIKE '{self._escape(path_prefix)}%'")
+        if not include_ephemeral:
+            clauses.append(
+                "NOT array_contains(COALESCE(tags, array()), 'ephemeral:stub')"
+            )
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         resp = self._exec(
             f"SELECT page_id, path, title, page_type, version "
             f"FROM {PAGES_TABLE} {where} ORDER BY path"
@@ -393,6 +407,7 @@ class WikiClient:
         mode: str = "HYBRID",
         num_results: int = 5,
         rerank_with_pagerank: bool = False,
+        include_ephemeral: bool = False,
     ) -> list[dict]:
         """Search wiki pages via Vector Search.
 
@@ -407,12 +422,19 @@ class WikiClient:
                 without a hub_score (newly written, not yet analytics-scored)
                 contribute 0 to the PageRank ranker but still appear via
                 their VS rank.
+            include_ephemeral: When False (default), pages tagged
+                ``ephemeral:stub`` are filtered out post-VS. Overfetches by
+                a factor of 3 so the caller still gets ``num_results`` real
+                hits when stubs are present.
         """
+        # Overfetch when stubs need filtering so the post-filter doesn't
+        # starve the caller of real results.
+        fetch_n = num_results * 3 if not include_ephemeral else num_results
         kwargs = {
             "index_name": VS_INDEX,
             "columns": ["page_id", "path", "title", "page_type", "content_text", "tags", "version"],
             "query_text": query,
-            "num_results": num_results,
+            "num_results": fetch_n,
         }
         if mode != "ANN":
             kwargs["query_type"] = mode
@@ -425,6 +447,11 @@ class WikiClient:
             return []
         cols = [c.name for c in resp.manifest.columns]
         results = [dict(zip(cols, row)) for row in resp.result.data_array]
+
+        if not include_ephemeral:
+            results = [r for r in results
+                       if "ephemeral:stub" not in (r.get("tags") or "")]
+        results = results[:num_results]
 
         if rerank_with_pagerank and results:
             results = self._rerank_by_rrf(results)

@@ -6,6 +6,7 @@ work lives in the notebook; these helpers are deterministic.
 """
 
 from wikibricks.segregate_logic import (
+    DEFAULT_MAX_CHARS_PER_CHUNK,
     build_parent_body,
     child_path,
     child_title,
@@ -58,6 +59,32 @@ class TestChunkAtBoundaries:
         chunks = chunk_at_boundaries(body, max_chars=50)
         assert len(chunks) == 1
         assert chunks[0] == body
+
+
+class TestDefaultMaxChars:
+    """v0.7.4: raise default from 8 000 → 30 000.
+
+    Measured against last 24h of recorder traffic: avg session body is
+    ~165 KB which produced ~21 chunks at the 8 000 threshold. At 30 000
+    the same body produces ~5–6 chunks — closer to a useful per-page
+    granularity for Vector Search without exploding page count.
+    """
+
+    def test_default_is_30k(self):
+        assert DEFAULT_MAX_CHARS_PER_CHUNK == 30_000
+
+    def test_default_yields_few_chunks_on_typical_session_body(self):
+        # Synthesise a 160 KB body of mid-sized paragraphs.
+        paragraph = ("word " * 200).strip()  # ~1 KB each
+        body = "\n\n".join([paragraph] * 160)
+        chunks = chunk_at_boundaries(body, max_chars=DEFAULT_MAX_CHARS_PER_CHUNK)
+        # 160 KB / 30 KB ≈ 6 chunks. Allow 4–8 for paragraph-packing slack.
+        assert 4 <= len(chunks) <= 8, f"got {len(chunks)} chunks"
+
+    def test_default_is_well_above_paragraph_size(self):
+        # Sanity: a single typical Markdown paragraph is well under the
+        # default. Saves us from silent regressions to absurdly low values.
+        assert DEFAULT_MAX_CHARS_PER_CHUNK > 5_000
 
 
 class TestChildPath:

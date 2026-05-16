@@ -371,6 +371,14 @@ class TestCreateUcFunctionsSql:
         assert "rn <= num_results" in search_fn
         assert "LIKE concat" not in search_fn
 
+    def test_fn_wiki_search_filters_ephemeral_stubs(self):
+        """Managed-MCP agents must not see pages tagged ephemeral:stub —
+        those are programmatic 1-event /tmp invocations from old recorder
+        versions, kept for forensic access only."""
+        stmts = create_uc_functions_sql("wh-123")
+        search_fn = stmts[0]
+        assert "ephemeral:stub" in search_fn
+
     def test_fn_wiki_read(self):
         stmts = create_uc_functions_sql("wh-123")
         read_fn = stmts[1]

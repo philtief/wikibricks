@@ -10,6 +10,11 @@ fully unit-testable.
 
 from __future__ import annotations
 
+# Default chunk size in characters. Bumped from 8 000 (v0.7.3 and earlier)
+# to 30 000 in v0.7.4 — see test_segregate_logic.py::TestDefaultMaxChars for
+# the rationale. Notebooks may override via the `max_chars_per_chunk` widget.
+DEFAULT_MAX_CHARS_PER_CHUNK = 30_000
+
 
 def chunk_at_boundaries(body: str, *, max_chars: int) -> list[str]:
     """Split `body` into chunks of <= `max_chars` each.

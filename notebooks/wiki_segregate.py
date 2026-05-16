@@ -43,6 +43,7 @@ from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
 from wikibricks import WikiClient
 from wikibricks.ops import PAGES_TABLE
 from wikibricks.segregate_logic import (
+    DEFAULT_MAX_CHARS_PER_CHUNK,
     build_parent_body,
     child_path,
     child_title,
@@ -61,7 +62,7 @@ def _param(name: str, default: str) -> str:
 
 WAREHOUSE_ID = _param("warehouse_id", "")
 CHAT_ENDPOINT = _param("chat_endpoint", "databricks-claude-sonnet-4-5")
-MAX_CHARS_PER_CHUNK = int(_param("max_chars_per_chunk", "8000"))
+MAX_CHARS_PER_CHUNK = int(_param("max_chars_per_chunk", str(DEFAULT_MAX_CHARS_PER_CHUNK)))
 MAX_PAGES_PER_RUN = int(_param("max_pages_per_run", "20"))
 
 w = WorkspaceClient()

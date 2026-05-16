@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-05-16
+
+### Changed
+
+- **`WikiClient.list_pages` and `WikiClient.search` now exclude
+  `ephemeral:stub`-tagged pages by default.** Pages tagged this way are
+  1-event `/tmp` programmatic recorder invocations from old recorder
+  versions, kept for forensic access. Pass `include_ephemeral=True` to
+  surface them. `search` overfetches by 3× to keep `num_results` honest
+  when stubs are mixed in.
+- **`fn_wiki_search` UC function** (managed-MCP read surface) inherits
+  the same filter — agents asking the wiki via MCP no longer see stubs.
+  Inner `vector_search()` bumped from `num_results => 20` to `40` to
+  account for the post-filter.
+- **Default chunk size raised from 8 000 → 30 000 characters** in
+  `segregate_logic.DEFAULT_MAX_CHARS_PER_CHUNK`. Measured against last
+  24h of recorder traffic, the typical ~165 KB session body went from
+  ~21 chunks to ~5–6, cutting overall page count ~3× without measurable
+  hit to Vector Search retrieval quality (chunks remain well under the
+  embedding context window). `notebooks/wiki_segregate.py` reads the
+  constant; the `max_chars_per_chunk` job widget still wins.
+
 ## [0.7.3] - 2026-05-16
 
 ### Fixed
