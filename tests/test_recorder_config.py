@@ -126,6 +126,101 @@ class TestPageBuilder:
         content = page_builder.session_content(state)
         assert len(content["summary"]) <= 200
 
+    # -- title robustness: skip LLM-instruction boilerplate -----------------
+    def test_session_title_skips_summarizer_system_prompt(self):
+        state = {
+            "session_id": "abcd1234",
+            "first_prompt": (
+                "You are summarizing a Claude Code session for a daily memory log.\n"
+                "Apply maximum non-destructive compression. Rules:\n"
+                "- Drop filler\n"
+                "\n"
+                "Spain property insurance column mapping bug fix"
+            ),
+        }
+        title = page_builder.session_title(state)
+        assert title == "Spain property insurance column mapping bug fix"
+
+    def test_session_title_skips_rules_header(self):
+        state = {
+            "session_id": "abcd1234",
+            "first_prompt": "Rules:\n- Be terse\n\nDebug failing pre-commit hook",
+        }
+        assert page_builder.session_title(state) == "Debug failing pre-commit hook"
+
+    def test_session_title_falls_back_when_everything_is_boilerplate(self):
+        state = {
+            "session_id": "abcdef0123",
+            "first_prompt": "You are an assistant.\nApply rules.\nSummarize.",
+        }
+        title = page_builder.session_title(state)
+        assert title.startswith("Session abcdef01"), title
+
+    def test_session_title_skips_blank_lines_and_short_garbage(self):
+        state = {
+            "session_id": "x" * 8,
+            "first_prompt": "   \n\n  -  \n\nFix the FEVM warehouse permissions issue",
+        }
+        assert page_builder.session_title(state) == "Fix the FEVM warehouse permissions issue"
+
+    def test_session_title_keeps_normal_one_liner(self):
+        # Regression: don't over-correct — a normal prompt should pass through.
+        state = {"session_id": "s", "first_prompt": "fix the FEVM permissions bug"}
+        assert page_builder.session_title(state) == "fix the FEVM permissions bug"
+
+    def test_session_title_skips_memory_consolidation_prompts(self):
+        """Second-level summarizer prompts ('Read the conversation extract...',
+        'Write one memory entry...') are also boilerplate."""
+        state = {
+            "session_id": "feed1234",
+            "first_prompt": (
+                "Read the conversation extract below and write ONE memory entry "
+                "in this exact format:\n\n"
+                "Allianz Group CDO workshop prep — DPs + governance + agentic AI"
+            ),
+        }
+        title = page_builder.session_title(state)
+        assert title.startswith("Allianz Group CDO"), title
+
+    def test_session_title_strips_markdown_blockquote_prefix(self):
+        # Some payloads arrive with the prompt already rendered as `> ...`;
+        # the prefix is presentation, not content.
+        state = {
+            "session_id": "abcd1234",
+            "first_prompt": "> You are summarizing.\n> Apply rules.\n\nDebug the failing curate task",
+        }
+        assert page_builder.session_title(state) == "Debug the failing curate task"
+
+    # -- ephemeral session filter ------------------------------------------
+    def test_is_ephemeral_true_for_tmp_cwd(self):
+        state = {"session_id": "s", "cwd": "/tmp/foo", "events": [{"kind": "prompt"}] * 5}
+        assert page_builder.is_ephemeral(state) is True
+
+    def test_is_ephemeral_true_for_private_tmp(self):
+        state = {"session_id": "s", "cwd": "/private/tmp", "events": [{"kind": "prompt"}] * 5}
+        assert page_builder.is_ephemeral(state) is True
+
+    def test_is_ephemeral_true_for_zero_or_one_event(self):
+        state = {"session_id": "s", "cwd": "/Users/me/proj", "events": [{"kind": "prompt"}]}
+        assert page_builder.is_ephemeral(state) is True
+
+    def test_is_ephemeral_false_for_normal_session(self):
+        state = {
+            "session_id": "s",
+            "cwd": "/Users/me/wikibricks",
+            "events": [{"kind": "prompt"}, {"kind": "tool"}, {"kind": "tool"}],
+        }
+        assert page_builder.is_ephemeral(state) is False
+
+    def test_is_ephemeral_respects_env_threshold(self, monkeypatch):
+        monkeypatch.setenv("WIKIBRICKS_RECORDER_MIN_EVENTS", "5")
+        state = {
+            "session_id": "s",
+            "cwd": "/Users/me/proj",
+            "events": [{"kind": "prompt"}] * 4,
+        }
+        assert page_builder.is_ephemeral(state) is True
+
 
 # ---------------------------------------------------------------------------
 # hook entry points — input parsing + state mutation, WikiClient mocked
@@ -178,8 +273,13 @@ class TestHooks:
         assert state["events"][0]["tool_name"] == "Edit"
 
     def test_stop_writes_via_wiki_client(self, tmp_state_dir, monkeypatch):
-        # arrange — accumulated state with events
-        session.append_event("h-6", {"kind": "prompt", "ts": "t0", "prompt": "fix"})
+        # arrange — accumulated state with enough events to be non-ephemeral
+        session.append_event("h-6", {"kind": "prompt", "ts": "t0", "prompt": "fix the bug"})
+        session.append_event("h-6", {"kind": "tool",   "ts": "t1", "tool_name": "Edit"})
+        # cwd has to be a real path, not /tmp, or is_ephemeral skips the write
+        state = session.load("h-6")
+        state["cwd"] = "/Users/me/proj"
+        session.save(state)
         # mock WikiClient construction + config (no real workspace needed)
         fake_client = MagicMock()
         monkeypatch.setattr(hooks, "_build_wiki_client", lambda cfg: fake_client)
@@ -203,9 +303,30 @@ class TestHooks:
         hooks.on_stop()
         fake_client.write_page.assert_not_called()
 
+    def test_stop_skips_ephemeral_tmp_session(self, tmp_state_dir, monkeypatch):
+        """1-prompt /tmp sessions are programmatic invocations, not real work."""
+        session.save({
+            "session_id": "h-ephemeral",
+            "events": [{"kind": "prompt", "ts": "t0", "prompt": "You are summarizing..."}],
+            "started_at": "2026-05-16T09:00:00+00:00",
+            "cwd": "/private/tmp",
+            "first_prompt": "You are summarizing...",
+            "model": None,
+        })
+        fake_client = MagicMock()
+        monkeypatch.setattr(hooks, "_build_wiki_client", lambda cfg: fake_client)
+        monkeypatch.setattr(hooks.config, "load_config", lambda: _fake_cfg())
+        _stub_stdin(monkeypatch, {"session_id": "h-ephemeral", "hook_event_name": "Stop"})
+        hooks.on_stop()
+        fake_client.write_page.assert_not_called()
+
     def test_stop_swallows_write_errors(self, tmp_state_dir, monkeypatch, capsys):
         """Hook must never crash Claude Code — write failure logs to stderr only."""
-        session.append_event("h-8", {"kind": "prompt", "ts": "t0", "prompt": "x"})
+        session.append_event("h-8", {"kind": "prompt", "ts": "t0", "prompt": "fix the bug"})
+        session.append_event("h-8", {"kind": "tool",   "ts": "t1", "tool_name": "Edit"})
+        state = session.load("h-8")
+        state["cwd"] = "/Users/me/proj"
+        session.save(state)
         fake_client = MagicMock()
         fake_client.write_page.side_effect = RuntimeError("warehouse cold")
         monkeypatch.setattr(hooks, "_build_wiki_client", lambda cfg: fake_client)

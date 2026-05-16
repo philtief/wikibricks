@@ -116,6 +116,8 @@ def _build_wiki_client(cfg: dict[str, str]):
 def _flush(state: dict[str, Any]) -> None:
     if not state.get("events"):
         return
+    if page_builder.is_ephemeral(state):
+        return
     cfg = config.load_config()
     client = _build_wiki_client(cfg)
     path = page_builder.session_path(

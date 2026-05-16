@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.3] - 2026-05-16
+
+### Fixed
+
+- **Recorder titles no longer mirror LLM system prompts.**
+  `page_builder.session_title` now skips boilerplate lines (`"You are…"`,
+  `"Apply maximum compression. Rules:"`, `"Summarize…"`, lone `Rules:` /
+  `Instructions:` headers, and bullet-list items) and picks the first
+  informative line of the user's prompt. Sessions whose every line is
+  scaffolding fall back to `Session <short-id>`. Previously, 92 % of a
+  marathon coding day's session pages got titled with the summarizer
+  system prompt, making them indistinguishable in any list view.
+- **Ephemeral 1-prompt `/tmp` sessions are no longer written as pages.**
+  New `page_builder.is_ephemeral(state)` returns True when `cwd` is
+  `/tmp`, `/private/tmp`, or `/var/tmp`, or when the session has fewer
+  than `WIKIBRICKS_RECORDER_MIN_EVENTS` events (default 2). `_flush`
+  short-circuits — no page write, no chunks, no curate cost. Programmatic
+  Claude Code sub-invocations (summarizers, sub-agents firing `claude`
+  with a single prompt) no longer pollute the wiki.
+
+### Added
+
+- `scripts/backfill_recorder_titles.py` — one-shot fixer that finds
+  pages whose titles match the old boilerplate-leak pattern and
+  re-titles them in place by re-parsing the body. Idempotent;
+  reports `--dry-run` counts before any write.
+
 ## [0.7.2] - 2026-05-15
 
 ### Added
