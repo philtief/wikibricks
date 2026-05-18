@@ -146,6 +146,9 @@ wiki.commit_edges([c for c in candidates if my_agent_approves(c)])
 wiki.search("what index modes exist", mode="HYBRID")    # HYBRID / ANN / FULL_TEXT
 # search() logs {returned_paths, k, mode} to wiki_log.details. agent_traces_v
 # reads those rows so the promote pipeline mines real agent traffic.
+# Pages tagged `ephemeral:stub` (old 1-event /tmp recorder invocations) are
+# hidden from search + list_pages by default; pass `include_ephemeral=True`
+# to surface them. v0.7.4+.
 
 wiki.graph_neighbors("topics/vector-search", depth=2)
 wiki.history("topics/vector-search")
@@ -208,6 +211,41 @@ overrides), see [`docs/`](docs/) and the bundle config in
 [`databricks.yml`](databricks.yml). Coding agents should read
 [`AGENTS.md`](AGENTS.md) for repo conventions, hard rules, release
 checklist, and the dev → public sync checklist.
+
+## Recorder hygiene + signal-to-noise (v0.7.3–0.7.4)
+
+Two changes that materially clean up wikis populated by a marathon coding
+day. Both are recorder-side; the library contract is unchanged for direct
+`WikiClient` callers.
+
+- **Boilerplate-aware titles.** `page_builder.session_title` skips LLM
+  instruction-headers (`"You are summarizing..."`, `"Apply maximum
+  compression. Rules:"`, `"Read the conversation extract below..."`, lone
+  `Rules:`/`Instructions:` headers, list-item bullets, leading `> `
+  blockquote prefix) and picks the first informative line of the prompt.
+  Falls back to `Session <short-id>` if everything is scaffolding. Before:
+  92 % of one day's session pages titled with the summarizer system prompt
+  and indistinguishable in any list view.
+- **Ephemeral-session filter.** `page_builder.is_ephemeral` returns True
+  for `cwd` in `/tmp`, `/private/tmp`, `/var/tmp`, or when the session
+  has fewer than `WIKIBRICKS_RECORDER_MIN_EVENTS` events (default 2).
+  `_flush` short-circuits — no page write, no chunks, no curate cost.
+  Programmatic Claude Code sub-invocations (memory compactors, sub-agents
+  firing `claude` with one prompt) no longer get written as pages.
+- **`ephemeral:stub` filter on reads.** `WikiClient.list_pages` and
+  `WikiClient.search` exclude `ephemeral:stub`-tagged pages by default;
+  pass `include_ephemeral=True` to surface them. The `fn_wiki_search` UC
+  function inherits the same filter so managed-MCP agents never see
+  stubs. `search()` overfetches 3× to keep `num_results` honest when
+  stubs are mixed in.
+- **Bigger chunks.** `segregate_logic.DEFAULT_MAX_CHARS_PER_CHUNK` raised
+  from 8 000 → 30 000. Typical 165 KB session bodies now produce ~5–6
+  chunks instead of ~21 — cutting overall page count ~3× without hurting
+  Vector Search retrieval (chunks remain well under the embedding context
+  window). The `max_chars_per_chunk` job widget still wins per-run.
+- **`scripts/backfill_recorder_titles.py`** — one-shot CLI that finds
+  pages with leaked boilerplate titles and re-titles them in place via a
+  direct `UPDATE` on the `title` column. Run with `--dry-run` first.
 
 ## Karpathy export — round-trip with the importer (v0.7.1)
 
