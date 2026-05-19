@@ -92,6 +92,28 @@ resources:
               max_tags_per_page: "5"
           environment_key: serverless
           timeout_seconds: 1800
+        - task_key: promote_topics
+          # v0.7.6 — cross-session synthesis. For each Leiden community
+          # with ≥ min_cluster_size pages, LLM-synthesise one topic page,
+          # judge it, write topics/<slug> when score ≥ threshold.
+          # Depends on graph_analytics so community_id is fresh.
+          depends_on:
+            - task_key: graph_analytics
+          notebook_task:
+            notebook_path: ../notebooks/promote_topics.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              warehouse_id: ${var.warehouse_id}
+              synth_endpoint: ${var.llm_model}
+              judge_endpoint: databricks-claude-haiku-4-5
+              min_corpus_size: "80"
+              min_cluster_size: "3"
+              max_topics_per_run: "20"
+              judge_threshold: "4.0"
+              max_pages_in_synth: "8"
+          environment_key: serverless
+          timeout_seconds: 1800
         - task_key: promote
           depends_on:
             - task_key: curate

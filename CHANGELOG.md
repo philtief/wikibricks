@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.6] - 2026-05-19
+
+### Added
+
+- **`topic_clustering.cluster_pages_by_community(pages)`** — groups pages
+  by the `community_id` written nightly by `graph_analytics` (Leiden over
+  the currently-valid edge graph). Drops null-community + sub-threshold
+  clusters; sorts within-cluster by `hub_score` desc so synthesis picks
+  authoritative members first.
+- **`topic_clustering.topic_slug_from_titles(titles, community_id=None)`**
+  — deterministic slug derivation from cross-title word frequency, with
+  stop-word filtering and a `community-<id>` fallback.
+- **`notebooks/promote_topics.py` is now live**, not scaffolding. The
+  three-step pipeline (cluster → synthesise → judge) is fully wired
+  against `databricks-claude-sonnet-4-5` (synth) +
+  `databricks-claude-haiku-4-5` (judge). Writes pass the 1–5 judge
+  threshold (default 4.0); rejects log `op_type='promote_topic_reject'`.
+- **`promote_topics` task** in `wiki_curate_job.yml`. Depends on
+  `graph_analytics`. Capped by `max_topics_per_run` (default 20).
+- **`tests/test_topic_clustering_community.py`** — 12 tests covering
+  empty input, null-community drop, singleton drop, hub_score ordering,
+  slug determinism, fallback.
+- **`tests/test_promote_topics_notebook.py`** — 12 drift-guard assertions
+  on the notebook contract.
+- Plugin manifest bumped to v0.7.6.
+
 ## [0.7.5] - 2026-05-19
 
 ### Changed
