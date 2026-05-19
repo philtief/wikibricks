@@ -178,6 +178,9 @@ class TestHooks:
         assert state["events"][0]["tool_name"] == "Edit"
 
     def test_stop_writes_via_wiki_client(self, tmp_state_dir, monkeypatch):
+        # v0.7.3+: is_ephemeral skips writes for <2 events or /tmp cwd.
+        # Disable the threshold so the single-event fixture still flushes.
+        monkeypatch.setenv("WIKIBRICKS_RECORDER_MIN_EVENTS", "0")
         # arrange — accumulated state with events
         session.append_event("h-6", {"kind": "prompt", "ts": "t0", "prompt": "fix"})
         # mock WikiClient construction + config (no real workspace needed)
@@ -205,6 +208,7 @@ class TestHooks:
 
     def test_stop_swallows_write_errors(self, tmp_state_dir, monkeypatch, capsys):
         """Hook must never crash Claude Code — write failure logs to stderr only."""
+        monkeypatch.setenv("WIKIBRICKS_RECORDER_MIN_EVENTS", "0")
         session.append_event("h-8", {"kind": "prompt", "ts": "t0", "prompt": "x"})
         fake_client = MagicMock()
         fake_client.write_page.side_effect = RuntimeError("warehouse cold")

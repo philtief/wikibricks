@@ -127,6 +127,10 @@ class WikiClient:
         FROM {PAGES_TABLE} WHERE path = '{path}'
         """
 
+        # Preserve `llm:`-prefixed tags across writes. Recorder owns
+        # mechanical tags (session, cwd:..., model:..., user:...); the
+        # auto-tag task owns `llm:*` tags via append_page_tags. Without
+        # this preservation, every write_page would wipe llm: tags.
         merge_sql = f"""
         MERGE INTO {PAGES_TABLE} AS target
         USING (SELECT '{path}' AS path) AS source
@@ -138,7 +142,10 @@ class WikiClient:
             content_text = concat(
                 PARSE_JSON('{content_esc}'):summary::STRING, ' ',
                 PARSE_JSON('{content_esc}'):body::STRING),
-            tags = {tags_sql},
+            tags = array_distinct(array_union(
+                {tags_sql},
+                filter(COALESCE(target.tags, array()), t -> t LIKE 'llm:%')
+            )),
             source_ids = {src_sql},
             parent_id = {parent_sql},
             chunk_index = {chunk_sql},
@@ -274,7 +281,10 @@ class WikiClient:
             f"  content_text = concat("
             f"    PARSE_JSON(source.content_json):summary::STRING, ' ', "
             f"    PARSE_JSON(source.content_json):body::STRING), "
-            f"  tags = source.tags, "
+            f"  tags = array_distinct(array_union("
+            f"    source.tags, "
+            f"    filter(COALESCE(target.tags, array()), t -> t LIKE 'llm:%')"
+            f"  )), "
             f"  source_ids = source.source_ids, "
             f"  parent_id = source.parent_id, "
             f"  chunk_index = source.chunk_index, "
@@ -351,10 +361,27 @@ class WikiClient:
         except Exception as e:
             self._log("vs_sync_fail", details=f"{type(e).__name__}: {e}")
 
-    def list_pages(self, path_prefix: str | None = None) -> list[dict]:
-        """List wiki pages for navigation. Returns page_id, path, title, page_type, version."""
-        prefix_esc = self._escape(path_prefix) if path_prefix else None
-        where = f"WHERE path LIKE '{prefix_esc}%'" if prefix_esc else ""
+    def list_pages(
+        self,
+        path_prefix: str | None = None,
+        *,
+        include_ephemeral: bool = False,
+    ) -> list[dict]:
+        """List wiki pages for navigation. Returns page_id, path, title, page_type, version.
+
+        By default, pages tagged ``ephemeral:stub`` are excluded — these
+        are programmatic 1-event ``/tmp`` recorder invocations from old
+        recorder versions that pollute browsing. Pass
+        ``include_ephemeral=True`` to surface them (forensics, cleanup).
+        """
+        clauses: list[str] = []
+        if path_prefix:
+            clauses.append(f"path LIKE '{self._escape(path_prefix)}%'")
+        if not include_ephemeral:
+            clauses.append(
+                "NOT array_contains(COALESCE(tags, array()), 'ephemeral:stub')"
+            )
+        where = ("WHERE " + " AND ".join(clauses)) if clauses else ""
         resp = self._exec(
             f"SELECT page_id, path, title, page_type, version "
             f"FROM {PAGES_TABLE} {where} ORDER BY path"
@@ -385,6 +412,8 @@ class WikiClient:
         mode: str = "HYBRID",
         num_results: int = 5,
         rerank_by_citations: bool | None = None,
+        rerank_with_pagerank: bool = False,
+        include_ephemeral: bool = False,
     ) -> list[dict]:
         """Search wiki pages via Vector Search.
 
@@ -397,27 +426,54 @@ class WikiClient:
                 (``op_type='cited'``). If ``None`` (default), uses the
                 ``WIKIBRICKS_RERANK_BY_CITATIONS=1`` env var as the signal
                 so the recorder can opt-in globally without touching the API.
+            rerank_with_pagerank: When True, fetch each result's `hub_score`
+                from `pages` and reorder via Reciprocal Rank Fusion (k=60)
+                across vector-search rank and PageRank rank. Defaults to
+                False — opt-in. Pages without a hub_score (newly written,
+                not yet analytics-scored) contribute 0 to the PageRank
+                ranker but still appear via their VS rank.
+            include_ephemeral: When False (default), pages tagged
+                ``ephemeral:stub`` are filtered out post-VS. Overfetches by
+                a factor of 3 so the caller still gets ``num_results`` real
+                hits when stubs are present.
         """
         if rerank_by_citations is None:
             rerank_by_citations = os.environ.get("WIKIBRICKS_RERANK_BY_CITATIONS") == "1"
+
+        # Overfetch when stubs need filtering so the post-filter doesn't
+        # starve the caller of real results.
+        fetch_n = num_results * 3 if not include_ephemeral else num_results
         kwargs = {
             "index_name": VS_INDEX,
             "columns": ["page_id", "path", "title", "page_type", "content_text", "tags", "version"],
             "query_text": query,
-            "num_results": num_results,
+            "num_results": fetch_n,
         }
         if mode != "ANN":
             kwargs["query_type"] = mode
 
         resp = self.ws.vector_search_indexes.query_index(**kwargs)
         if not resp.result or not resp.result.data_array:
+            self._log("search", query=query)
             return []
         # Vector Search API returns columns directly on manifest, not under .schema
         cols = [c.name for c in resp.manifest.columns]
-        self._log("search", query=query)
         hits = [dict(zip(cols, row)) for row in resp.result.data_array]
+
+        if not include_ephemeral:
+            hits = [h for h in hits
+                    if "ephemeral:stub" not in (h.get("tags") or "")]
+        hits = hits[:num_results]
+
+        # Reranks compose: citations first (recency-of-use bias), then
+        # PageRank (graph-authority bias). Either alone or both can be
+        # opt-in; default is pure VS order.
         if rerank_by_citations:
             hits = self._rerank_by_citations(hits)
+        if rerank_with_pagerank and hits:
+            hits = self._rerank_by_rrf(hits)
+
+        self._log("search", query=query)
         return hits
 
     def _fetch_citation_counts(self, paths: list[str]) -> dict[str, int]:
@@ -456,6 +512,62 @@ class WikiClient:
             scored.append((base + alpha * math.log1p(n), i, h))
         scored.sort(key=lambda t: (-t[0], t[1]))
         return [h for _, _, h in scored]
+
+    def _rerank_by_rrf(self, hits: list[dict]) -> list[dict]:
+        """Reorder VS hits via Reciprocal Rank Fusion with PageRank.
+
+        Pulls `hub_score` for each hit's `page_id`, builds two rankings
+        (VS rank + PageRank rank), fuses with RRF (k=60). Pages with NULL
+        hub_score sit at the bottom of the PageRank ranking. Returns the
+        same list of dicts re-ordered.
+        """
+        from wikibricks.graph_logic import rrf_fuse
+
+        page_ids = [h["page_id"] for h in hits if h.get("page_id")]
+        if not page_ids:
+            return hits
+
+        vs_ranking = page_ids
+        ids_sql = ", ".join(f"'{self._escape(pid)}'" for pid in page_ids)
+        resp = self._exec(
+            f"SELECT page_id, COALESCE(hub_score, 0.0) AS hub_score "
+            f"FROM {PAGES_TABLE} "
+            f"WHERE page_id IN ({ids_sql})"
+        )
+        rows = resp.result.data_array if resp.result else []
+        hub_by_id = {r[0]: float(r[1]) for r in rows}
+        pr_ranking = sorted(page_ids, key=lambda pid: -hub_by_id.get(pid, 0.0))
+
+        fused = rrf_fuse([vs_ranking, pr_ranking], k=60)
+        return sorted(hits, key=lambda h: -fused.get(h.get("page_id"), 0.0))
+
+    def update_graph_scores(self, scores: list[dict]) -> int:
+        """Batch-MERGE PageRank hub_scores and community_ids into pages.
+
+        Each dict: ``{"page_id": str, "hub_score": float | None,
+        "community_id": int | None}``. NULL-safe — missing keys become NULL
+        via COALESCE. Returns the number of rows processed.
+        """
+        if not scores:
+            return 0
+        rows_sql = ", ".join(
+            "(" + ", ".join([
+                f"'{self._escape(s['page_id'])}'",
+                str(s["hub_score"]) if s.get("hub_score") is not None else "NULL",
+                str(s["community_id"]) if s.get("community_id") is not None else "NULL",
+            ]) + ")"
+            for s in scores
+        )
+        self._exec(
+            f"MERGE INTO {PAGES_TABLE} AS target "
+            f"USING (SELECT * FROM VALUES {rows_sql} "
+            f"AS t(page_id, hub_score, community_id)) AS source "
+            f"ON target.page_id = source.page_id "
+            f"WHEN MATCHED THEN UPDATE SET "
+            f"  target.hub_score = source.hub_score, "
+            f"  target.community_id = source.community_id"
+        )
+        return len(scores)
 
     def history(self, path: str) -> list[dict]:
         """Get version history for a wiki page."""

@@ -95,9 +95,11 @@ def test_swallows_log_exceptions(tmp_path):
     assert "boom" not in err  # error swallowed silently
 
 
-def test_on_stop_invokes_log_citations(tmp_path):
+def test_on_stop_invokes_log_citations(tmp_path, monkeypatch):
     """End-to-end: on_stop, given a payload with transcript_path, calls _log_citations."""
     from wikibricks_recorder import hooks
+    # v0.7.3+: is_ephemeral skips <2-event sessions; relax for this single-event fixture.
+    monkeypatch.setenv("WIKIBRICKS_RECORDER_MIN_EVENTS", "0")
     tp = _write_transcript(tmp_path, "[wb:sessions/abc]")
     payload = {"hook_event_name": "Stop", "session_id": "sid",
                "transcript_path": tp}

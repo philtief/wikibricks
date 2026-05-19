@@ -40,11 +40,14 @@ def test_session_title_prefers_first_user_prompt():
 
 
 def test_session_title_falls_back_when_all_prompts_are_system():
+    # v0.7.3 behaviour change: when every line of the prompt is LLM
+    # instruction boilerplate, fall back to the session-id stub rather
+    # than mis-titling the page with the system prompt itself.
     state = _state(
         events=[{"kind": "prompt", "prompt": "You are a memory consolidation agent."}],
         first_prompt="You are a memory consolidation agent.",
     )
-    assert session_title(state) == "You are a memory consolidation agent."
+    assert session_title(state).startswith("Session ")
 
 
 def test_session_title_uses_first_line_and_truncates():

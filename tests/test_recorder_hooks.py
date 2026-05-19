@@ -110,9 +110,11 @@ def test_flush_writes_real_session():
             == "How do I add a Lakeflow Job?"
 
 
-def test_flush_with_auto_tag_persists_slugs_and_adds_customer_tags():
+def test_flush_with_auto_tag_persists_slugs_and_adds_customer_tags(monkeypatch):
     """When auto_tag is enabled and the LLM returns slugs, those slugs are
     persisted to wiki_vocabulary AND attached as customer:<slug> tags."""
+    # v0.7.3+: is_ephemeral skips <2-event sessions; relax for this fixture.
+    monkeypatch.setenv("WIKIBRICKS_RECORDER_MIN_EVENTS", "0")
     state = {
         "session_id": "abc",
         "cwd": "/Users/me/proj",

@@ -231,6 +231,11 @@ def _flush(state: dict[str, Any]):
         return None
     if _is_utility_session(state):
         return None
+    # v0.7.3: also short-circuit ephemeral (/tmp, sub-threshold-events)
+    # sessions. These are programmatic Claude Code sub-invocations and
+    # don't deserve a wiki page or curate cost.
+    if page_builder.is_ephemeral(state):
+        return None
     cfg = config.load_config()
     client = _build_wiki_client(cfg)
     path = page_builder.session_path(

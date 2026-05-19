@@ -47,6 +47,9 @@ def create_tables_sql():
             health_status     STRING        DEFAULT 'unknown',
             health_score      DOUBLE,
             last_health_check TIMESTAMP,
+            memory_class      STRING        DEFAULT 'semantic',
+            hub_score         DOUBLE,
+            community_id      INT,
             created_by        STRING        NOT NULL,
             created_at        TIMESTAMP     DEFAULT current_timestamp(),
             updated_at        TIMESTAMP     DEFAULT current_timestamp(),
@@ -82,12 +85,14 @@ def create_tables_sql():
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {LINKS_TABLE} (
-            source_page_id  STRING  NOT NULL,
-            target_page_id  STRING  NOT NULL,
-            link_type       STRING  NOT NULL DEFAULT 'related',
-            confidence      FLOAT   NOT NULL DEFAULT 1.0,
-            origin          STRING  NOT NULL DEFAULT 'manual',
-            created_at      TIMESTAMP DEFAULT current_timestamp()
+            source_page_id  STRING    NOT NULL,
+            target_page_id  STRING    NOT NULL,
+            link_type       STRING    NOT NULL DEFAULT 'related',
+            confidence      FLOAT     NOT NULL DEFAULT 1.0,
+            origin          STRING    NOT NULL DEFAULT 'manual',
+            created_at      TIMESTAMP DEFAULT current_timestamp(),
+            valid_from      TIMESTAMP DEFAULT current_timestamp(),
+            valid_until     TIMESTAMP
         )
         USING DELTA
         TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
@@ -290,9 +295,13 @@ def create_uc_functions_sql(warehouse_id, enabled=None):
             FROM vector_search(
                 index => '{VS_INDEX}',
                 query_text => question,
-                num_results => 20,
+                num_results => 40,
                 query_type => 'HYBRID'
             )
+            -- Filter out ephemeral:stub pages (1-event /tmp recorder
+            -- invocations kept for forensic access only). Overfetched
+            -- from 20→40 above to compensate for the post-filter.
+            WHERE tags IS NULL OR NOT array_contains(tags, 'ephemeral:stub')
         )
         WHERE rn <= num_results
     )

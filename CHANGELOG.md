@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.4] - 2026-05-19
+
+### Changed
+
+- **`WikiClient.list_pages` and `WikiClient.search` exclude pages tagged
+  `ephemeral:stub` by default.** Pass `include_ephemeral=True` to surface
+  them. `search` overfetches by 3× to keep `num_results` honest when stubs
+  are mixed in.
+- **`fn_wiki_search` UC function** (managed-MCP read surface) inherits the
+  same filter. Inner `vector_search()` bumped from `num_results => 20` to
+  `40` to account for the post-filter.
+- **Default chunk size raised from 8 000 → 30 000 characters** via the new
+  `segregate_logic.DEFAULT_MAX_CHARS_PER_CHUNK` constant. Cuts per-page chunk
+  count ~3× on typical session bodies without measurable retrieval-quality
+  loss. The notebook widget `max_chars_per_chunk` still wins when set.
+- **`WikiClient.search(rerank_with_pagerank=True)`** opt-in flag composes
+  with the existing `rerank_by_citations` flag. RRF (k=60) blends VS rank
+  with PageRank rank from `pages.hub_score`; pages without a hub_score
+  contribute 0 but stay visible via their VS rank.
+
+### Added
+
+- **`WikiClient.update_graph_scores(scores)`** — batch MERGE of
+  `hub_score` + `community_id` for the graph_analytics task.
+- **`pages.hub_score`, `pages.community_id`, `pages.memory_class`** columns
+  in the canonical DDL (`ops.create_tables_sql`).
+- **`links.valid_from`, `links.valid_until`** bi-temporal columns.
+- **graph_analytics + tag tasks** in `wiki_curate_job.yml`. Five-task DAG
+  now: curate → segregate, graph_analytics, tag, promote. `igraph` added
+  to the serverless environment.
+- **Plugin manifest bumped to v0.7.4.**
+- **`llm:`-prefixed tags preserved across `write_page` and
+  `bulk_write_pages` MERGEs** — recorder writes no longer wipe the
+  auto-tag task's contributions.
+
+## [0.7.3] - 2026-05-19
+
+### Fixed
+
+- **Recorder titles no longer mirror LLM system prompts.**
+  `page_builder.session_title` skips boilerplate lines (`"You are…"`,
+  `"Apply maximum compression. Rules:"`, `"Summarize…"`, lone `Rules:` /
+  `Instructions:` headers, and bullet-list items) and picks the first
+  informative line of the prompt. Sessions whose every line is scaffolding
+  fall back to `Session <short-id>`.
+- **Ephemeral 1-prompt `/tmp` sessions are no longer written as pages.**
+  New `page_builder.is_ephemeral(state)` returns True when `cwd` is
+  `/tmp`, `/private/tmp`, or `/var/tmp`, or when the session has fewer
+  than `WIKIBRICKS_RECORDER_MIN_EVENTS` events (default 2). `_flush`
+  short-circuits — no page write, no chunks, no curate cost.
+
+### Compatibility
+
+- `_looks_like_system_prompt` kept as a back-compat shim forwarding to the
+  new `_is_boilerplate` detector. Whitespace-only input returns False.
+
+## [0.7.2] - 2026-05-19
+
+### Added
+
+- **`examples/team_wiki/`** — multi-agent team-wiki walkthrough plus
+  `simulate_team_activity.py` sample-data generator.
+- **`examples/audit_demo/`** — bi-temporal audit demo (`audit_demo.py`
+  writes a four-page graph through three event windows; `post.md` is a
+  Medium-ready essay).
+
+## [0.7.1] - 2026-05-19
+
+### Added
+
+- **Karpathy export** — `python -m wikibricks.export_karpathy <dir>` walks
+  every page, writes one `.md` per page with YAML frontmatter and a
+  `## Related` section carrying outgoing currently-valid edges as
+  `[[wikilinks]]` (plain) or `link_type::[[wikilinks]]` (typed).
+- **`graph_logic`, `health`, `tag_logic`, `*_karpathy`** modules — see the
+  v0.7.4 commit message for the per-file decision log of the reconciliation
+  with remote v0.7.0 (citation parsing, customer-tag vocab, provenance,
+  MCP stderr — all preserved).
+
 ## [0.7.0] - 2026-05-13
 
 ### Added
