@@ -25,7 +25,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from wikibricks_recorder import auto_tag, citations, config, page_builder, session
+from wikibricks_recorder import auto_tag, auto_title, citations, config, page_builder, session
 
 
 def _read_payload() -> dict[str, Any]:
@@ -258,9 +258,23 @@ def _flush(state: dict[str, Any]):
                     tags.append(f"customer:{normalized}")
 
     tags.append(f"user:{cfg['user_id']}")
+
+    # v0.7.7: opt-in LLM title via [auto_title] config block; fall back
+    # to the deterministic boilerplate-skip heuristic on any failure.
+    title = None
+    title_cfg = config.load_auto_title_config()
+    if auto_title.is_enabled(title_cfg):
+        try:
+            title = auto_title.generate_title(state, title_cfg, client.ws)
+        except Exception as e:
+            _log_error("auto_title.generate_title", e)
+            title = None
+    if not title:
+        title = page_builder.session_title(state)
+
     client.write_page(
         path,
-        title=page_builder.session_title(state),
+        title=title,
         content_json=page_builder.session_content(state),
         tags=tags,
     )

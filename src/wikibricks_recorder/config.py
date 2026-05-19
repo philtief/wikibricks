@@ -88,6 +88,22 @@ def load_auto_tag_config() -> dict[str, Any]:
     return out
 
 
+def load_auto_title_config() -> dict[str, Any]:
+    """Return the ``[auto_title]`` section from the recorder config, or empty.
+
+    Used by the recorder to opt into LLM-generated session titles. Default
+    behaviour (no section) is OFF; recorder falls back to the deterministic
+    ``page_builder.session_title`` boilerplate-skip heuristic.
+    """
+    section = _load_full_toml().get("auto_title") or {}
+    if not isinstance(section, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in section.items():
+        out[str(k)] = v
+    return out
+
+
 def load_topic_keywords() -> dict[str, list[str]]:
     """Return the ``[topic_keywords]`` section as ``{slug: [terms, ...]}``.
     Empty dict if the section is absent or malformed. Used by the recorder

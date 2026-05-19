@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.7] - 2026-05-19
+
+### Added
+
+- **`wikibricks_recorder/auto_title.py`** — LLM-generated session titles,
+  opt-in via the `[auto_title]` TOML block. Mirrors the `auto_tag.py`
+  contract: synchronous call at flush time, ≤40 output tokens,
+  ChatMessage pattern against a Foundation Model serving endpoint
+  (default `databricks-claude-haiku-4-5`), silent fall-back to
+  `page_builder.session_title` on any error.
+- **`config.load_auto_title_config()`** — reads the `[auto_title]`
+  section; returns `{}` when absent (default OFF).
+- **Wired into `hooks._flush`** — try `auto_title.generate_title`,
+  fall through to the deterministic boilerplate-skip heuristic on
+  None / failure. Failures logged via `_log_error`.
+- **`tests/test_auto_title.py`** — 11 tests covering enable/disable,
+  clean output, surrounding-quote stripping, truncation, runaway-response
+  rejection, custom endpoint, empty-prompt short-circuit, endpoint-error
+  swallowing.
+- Plugin manifest bumped to v0.7.7.
+
+### To enable
+
+```toml
+# ~/.wikibricks-recorder.toml
+[auto_title]
+enabled = true
+endpoint = "databricks-claude-haiku-4-5"
+```
+
+Cost ≈ $0.0005/session (Haiku, ~600 input tokens, ~40 output). At 5
+sessions/day this is ~$1/year.
+
 ## [0.7.6] - 2026-05-19
 
 ### Added
