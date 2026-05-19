@@ -71,7 +71,19 @@ def test_rerank_handles_hits_missing_path():
     assert len(out) == 2
 
 
-def test_search_does_not_rerank_by_default():
+def _isolated_search(c, *args, **kwargs):
+    """Run search with PageRank rerank disabled so citation-rerank tests
+    isolate the citation path (v0.7.5 made PageRank rerank the default)."""
+    kwargs.setdefault("rerank_with_pagerank", False)
+    return c.search(*args, **kwargs)
+
+
+def test_citation_rerank_off_by_default():
+    """Without the env var and without the explicit flag, _rerank_by_citations
+    is not called. (Renamed from test_search_does_not_rerank_by_default —
+    v0.7.5 made PageRank rerank the default; this test now covers citations
+    specifically.)
+    """
     c = WikiClient(warehouse_id="w", workspace_client=MagicMock())
     fake = MagicMock()
     fake.result.data_array = [["id1", "p1", "T", "x", "txt", [], 1]]
@@ -86,7 +98,7 @@ def test_search_does_not_rerank_by_default():
     c.ws.vector_search_indexes.query_index.return_value = fake
     c._log = MagicMock()
     c._rerank_by_citations = MagicMock(side_effect=lambda h: h)
-    c.search("q")
+    _isolated_search(c, "q")
     c._rerank_by_citations.assert_not_called()
 
 
@@ -102,7 +114,7 @@ def test_search_reranks_when_explicit_flag(monkeypatch):
     c.ws.vector_search_indexes.query_index.return_value = fake
     c._log = MagicMock()
     c._rerank_by_citations = MagicMock(side_effect=lambda h: h)
-    c.search("q", rerank_by_citations=True)
+    _isolated_search(c, "q", rerank_by_citations=True)
     c._rerank_by_citations.assert_called_once()
 
 
@@ -118,5 +130,5 @@ def test_search_reranks_when_env_var_set(monkeypatch):
     c.ws.vector_search_indexes.query_index.return_value = fake
     c._log = MagicMock()
     c._rerank_by_citations = MagicMock(side_effect=lambda h: h)
-    c.search("q")
+    _isolated_search(c, "q")
     c._rerank_by_citations.assert_called_once()

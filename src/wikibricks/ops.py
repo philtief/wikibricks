@@ -285,23 +285,41 @@ def create_uc_functions_sql(warehouse_id, enabled=None):
         num_results INT DEFAULT 5 COMMENT 'Top-K pages to return (1-20)'
     )
     RETURNS STRING
-    COMMENT 'HYBRID Vector Search (semantic + FULL_TEXT) over wiki pages. Returns JSON top-K pages with content_text.'
+    COMMENT 'HYBRID Vector Search (semantic + FULL_TEXT) blended with PageRank via RRF (k=60). JSON top-K pages.'
     RETURN (
         SELECT to_json(collect_list(struct(
             page_id, path, title, page_type, content_text, tags, version, search_score
         )))
         FROM (
-            SELECT *, ROW_NUMBER() OVER (ORDER BY search_score DESC) AS rn
-            FROM vector_search(
-                index => '{VS_INDEX}',
-                query_text => question,
-                num_results => 40,
-                query_type => 'HYBRID'
+            SELECT *, ROW_NUMBER() OVER (ORDER BY rrf_score DESC, search_score DESC) AS rn
+            FROM (
+                -- v0.7.5: blend VS rank + PageRank rank via RRF (k=60) so
+                -- managed-MCP callers get the same ranking quality as
+                -- Python WikiClient.search. Pages without hub_score
+                -- contribute via VS rank only (NULL → 0 hub_score → last
+                -- pr_rank). Inner num_results 40 over-fetches to absorb
+                -- the ephemeral:stub filter and give RRF room to swap.
+                SELECT
+                    vs.page_id, vs.path, vs.title, vs.page_type,
+                    vs.content_text, vs.tags, vs.version, vs.search_score,
+                    (1.0 / (60.0 + ROW_NUMBER() OVER (
+                        ORDER BY vs.search_score DESC
+                    ))) +
+                    (1.0 / (60.0 + ROW_NUMBER() OVER (
+                        ORDER BY COALESCE(p.hub_score, 0.0) DESC,
+                                 vs.search_score DESC
+                    ))) AS rrf_score
+                FROM vector_search(
+                    index => '{VS_INDEX}',
+                    query_text => question,
+                    num_results => 40,
+                    query_type => 'HYBRID'
+                ) AS vs
+                LEFT JOIN {PAGES_TABLE} p ON vs.page_id = p.page_id
+                -- Filter ephemeral:stub pages (1-event /tmp recorder
+                -- invocations kept for forensic access only).
+                WHERE vs.tags IS NULL OR NOT array_contains(vs.tags, 'ephemeral:stub')
             )
-            -- Filter out ephemeral:stub pages (1-event /tmp recorder
-            -- invocations kept for forensic access only). Overfetched
-            -- from 20→40 above to compensate for the post-filter.
-            WHERE tags IS NULL OR NOT array_contains(tags, 'ephemeral:stub')
         )
         WHERE rn <= num_results
     )

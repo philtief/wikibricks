@@ -412,7 +412,7 @@ class WikiClient:
         mode: str = "HYBRID",
         num_results: int = 5,
         rerank_by_citations: bool | None = None,
-        rerank_with_pagerank: bool = False,
+        rerank_with_pagerank: bool | None = None,
         include_ephemeral: bool = False,
     ) -> list[dict]:
         """Search wiki pages via Vector Search.
@@ -428,10 +428,14 @@ class WikiClient:
                 so the recorder can opt-in globally without touching the API.
             rerank_with_pagerank: When True, fetch each result's `hub_score`
                 from `pages` and reorder via Reciprocal Rank Fusion (k=60)
-                across vector-search rank and PageRank rank. Defaults to
-                False — opt-in. Pages without a hub_score (newly written,
-                not yet analytics-scored) contribute 0 to the PageRank
-                ranker but still appear via their VS rank.
+                across vector-search rank and PageRank rank. **Defaults to
+                True** (v0.7.5+) — the graph_analytics task computes
+                `hub_score` nightly and not using it was waste. Set False
+                per-call to disable, or set the env var
+                ``WIKIBRICKS_DISABLE_PAGERANK_RERANK=1`` to disable
+                globally. Pages without a hub_score (newly written, not
+                yet analytics-scored) contribute 0 to the PageRank ranker
+                but still appear via their VS rank.
             include_ephemeral: When False (default), pages tagged
                 ``ephemeral:stub`` are filtered out post-VS. Overfetches by
                 a factor of 3 so the caller still gets ``num_results`` real
@@ -439,6 +443,11 @@ class WikiClient:
         """
         if rerank_by_citations is None:
             rerank_by_citations = os.environ.get("WIKIBRICKS_RERANK_BY_CITATIONS") == "1"
+        if rerank_with_pagerank is None:
+            # v0.7.5: default ON. Opt out per-call (False) or globally via env.
+            rerank_with_pagerank = (
+                os.environ.get("WIKIBRICKS_DISABLE_PAGERANK_RERANK") != "1"
+            )
 
         # Overfetch when stubs need filtering so the post-filter doesn't
         # starve the caller of real results.

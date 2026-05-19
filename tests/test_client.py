@@ -178,7 +178,10 @@ class TestSearch:
         ws.vector_search_indexes.query_index.return_value = resp
         wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
 
-        results = wiki.search("test query")
+        # v0.7.5: rerank_with_pagerank is on by default and would call
+        # back into _exec for hub_scores. Disable so this stays a pure
+        # VS-call test.
+        results = wiki.search("test query", rerank_with_pagerank=False)
 
         assert len(results) == 1
         assert results[0]["path"] == "test/page"

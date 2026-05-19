@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.5] - 2026-05-19
+
+### Changed
+
+- **PageRank RRF rerank is now the DEFAULT in `WikiClient.search`.** The
+  `graph_analytics` task computes `hub_score` nightly; not using it was
+  waste. Opt out per-call with `rerank_with_pagerank=False` or globally
+  via the new `WIKIBRICKS_DISABLE_PAGERANK_RERANK=1` env var.
+- **`fn_wiki_search` UC function blends VS rank + PageRank rank via RRF
+  (k=60) in pure SQL.** Managed-MCP callers (Databricks managed MCP at
+  `/api/2.0/mcp/functions/<catalog>/<schema>`) now get the same ranking
+  quality as Python `WikiClient.search`. Implemented with two window
+  functions over the over-fetched VS hits joined to `pages.hub_score`;
+  pages without a hub_score still appear via VS rank only.
+- Plugin manifest bumped to v0.7.5.
+
 ## [0.7.4] - 2026-05-19
 
 ### Changed

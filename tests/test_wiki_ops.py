@@ -362,6 +362,14 @@ class TestCreateUcFunctionsSql:
         assert "ROW_NUMBER()" in search_fn
         assert "rn <= num_results" in search_fn
         assert "LIKE concat" not in search_fn
+        # v0.7.5: managed-MCP search blends VS + PageRank via RRF (k=60),
+        # joined against pages.hub_score so MCP callers get the same
+        # ranking quality as Python WikiClient.search.
+        assert "hub_score" in search_fn
+        assert "60" in search_fn  # RRF k constant
+        assert "LEFT JOIN" in search_fn
+        # ephemeral:stub filter still in place after the RRF rewrite.
+        assert "ephemeral:stub" in search_fn
 
     def test_fn_wiki_read(self):
         stmts = create_uc_functions_sql("wh-123")
