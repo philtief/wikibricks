@@ -138,7 +138,13 @@ resources:
             client: "2"
             # igraph is required by the graph_analytics task. Other tasks
             # tolerate the extra dep transparently.
+            #
+            # The wikibricks wheel itself comes from the bundle artifact —
+            # this lets every task `from wikibricks import ...` without an
+            # in-notebook `%pip install` (which was the source of the
+            # placeholder-substitution bug fixed alongside this).
             dependencies:
               - "igraph>=0.11,<2.0"
+              - ./dist/*.whl
       queue:
         enabled: true
