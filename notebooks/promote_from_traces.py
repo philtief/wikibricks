@@ -9,12 +9,11 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.7.0-py3-none-any.whl
-# MAGIC # ^ Update path to where the wheel lives in your workspace. `databricks
-# MAGIC #   bundle deploy` builds the wheel locally and syncs it to the bundle
-# MAGIC #   workspace path; for interactive runs, upload dist/wikibricks-*.whl
-# MAGIC #   to a Volume and edit the path above.
-# MAGIC %restart_python
+# MAGIC %md
+# MAGIC The `wikibricks` wheel is installed via the task-level serverless
+# MAGIC environment in `resources/wiki_curate_job.yml`. No in-notebook
+# MAGIC `%pip install` here — the bundle artifact path is substituted at
+# MAGIC deploy time.
 
 # COMMAND ----------
 

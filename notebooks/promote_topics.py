@@ -21,8 +21,11 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install -U -qqqq /Volumes/${catalog}/${schema}/wheels/wikibricks-${version}-py3-none-any.whl
-# MAGIC dbutils.library.restartPython()
+# MAGIC %md
+# MAGIC The `wikibricks` wheel is installed via the task-level serverless
+# MAGIC environment in `resources/wiki_curate_job.yml`. No in-notebook
+# MAGIC `%pip install` here — the bundle artifact path is substituted at
+# MAGIC deploy time.
 
 # COMMAND ----------
 
