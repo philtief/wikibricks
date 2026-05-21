@@ -78,12 +78,13 @@ def _isolated_search(c, *args, **kwargs):
     return c.search(*args, **kwargs)
 
 
-def test_citation_rerank_off_by_default():
+def test_citation_rerank_off_by_default(monkeypatch):
     """Without the env var and without the explicit flag, _rerank_by_citations
     is not called. (Renamed from test_search_does_not_rerank_by_default —
     v0.7.5 made PageRank rerank the default; this test now covers citations
     specifically.)
     """
+    monkeypatch.delenv("WIKIBRICKS_RERANK_BY_CITATIONS", raising=False)
     c = WikiClient(warehouse_id="w", workspace_client=MagicMock())
     fake = MagicMock()
     fake.result.data_array = [["id1", "p1", "T", "x", "txt", [], 1]]
