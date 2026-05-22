@@ -334,6 +334,41 @@ class TestConfig:
         out = cfg_module.load_config()
         assert out["catalog"] == "from_env"
 
+    def test_load_auto_summary_config_reads_section(self, monkeypatch, tmp_path):
+        cfg_module = self._isolate(monkeypatch, tmp_path)
+        toml_path = tmp_path / "rc.toml"
+        toml_path.write_text(
+            '[recorder]\n'
+            'catalog = "c"\nschema = "s"\nwarehouse_id = "w"\nprofile = "p"\nuser_id = "u"\n'
+            '\n'
+            '[auto_summary]\n'
+            'enabled = true\n'
+            'endpoint = "my-haiku"\n'
+            'max_input_chars = 5000\n'
+        )
+        monkeypatch.setattr(cfg_module, "CONFIG_FILE", toml_path)
+        cfg = cfg_module.load_auto_summary_config()
+        assert cfg == {
+            "enabled": True,
+            "endpoint": "my-haiku",
+            "max_input_chars": 5000,
+        }
+
+    def test_load_auto_summary_config_empty_when_section_absent(self, monkeypatch, tmp_path):
+        cfg_module = self._isolate(monkeypatch, tmp_path)
+        toml_path = tmp_path / "rc.toml"
+        toml_path.write_text(
+            '[recorder]\n'
+            'catalog = "c"\nschema = "s"\nwarehouse_id = "w"\nprofile = "p"\nuser_id = "u"\n'
+        )
+        monkeypatch.setattr(cfg_module, "CONFIG_FILE", toml_path)
+        assert cfg_module.load_auto_summary_config() == {}
+
+    def test_load_auto_summary_config_empty_when_toml_missing(self, monkeypatch, tmp_path):
+        cfg_module = self._isolate(monkeypatch, tmp_path)
+        # CONFIG_FILE points at a non-existent path per _isolate
+        assert cfg_module.load_auto_summary_config() == {}
+
 
 class TestMultiWikiConfig:
     """`[wikis.<name>]` sections + active-target file. Hooks pick which one."""
