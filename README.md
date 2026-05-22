@@ -179,9 +179,9 @@ SQL functions can't perform writes.
 ```bash
 uv sync                              # core library
 uv sync --extra recorder             # also install the recorder package
-uv run pytest                        # 836 tests, no workspace needed
+uv run pytest                        # 841 tests, no workspace needed
 uv run ruff check src tests scripts
-uv build                             # → dist/wikibricks-0.7.8-py3-none-any.whl
+uv build                             # → dist/wikibricks-0.7.9-py3-none-any.whl
 ```
 
 For the recorder, see [`plugin/README.md`](plugin/README.md). For

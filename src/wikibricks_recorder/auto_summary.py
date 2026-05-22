@@ -45,6 +45,36 @@ _SYSTEM_PROMPT = (
     "omit. No preamble, no closing. Output Markdown only."
 )
 
+# Cap on how much of the raw first_prompt to append as the "intent tail"
+# when building content_text_override. The dense summary captures the
+# narrative; the tail adds keyword density (entities + verbatim phrasing)
+# that HYBRID retrieval's BM25 leg rewards. Empirically (eval v2 vs v1)
+# this lifts recall@1 by +15pp over pure-summary while preserving the
+# +5pp recall@5 gain from the dense framing.
+_INTENT_TAIL_MAX_CHARS = 2000
+
+
+def build_content_text_override(state: dict[str, Any], summary: str) -> str:
+    """Combine the dense LLM summary with a capped raw-intent tail.
+
+    Returned string is what callers pass as ``content_text_override`` to
+    ``WikiClient.write_page``. The shape is::
+
+        <dense summary>
+
+        ## Raw intent
+        <first_prompt[:_INTENT_TAIL_MAX_CHARS]>
+
+    See ``docs/research/2026-05-22-summary-first-eval-v2.md`` for the
+    A/B/C numbers that motivated this composition.
+    """
+    if not summary:
+        return ""
+    fp = (state.get("first_prompt") or "").strip()
+    if not fp:
+        return summary
+    return summary + "\n\n## Raw intent\n" + fp[:_INTENT_TAIL_MAX_CHARS]
+
 
 def is_enabled(cfg: dict[str, Any]) -> bool:
     """True if auto-summary is enabled. Default: False (opt-in)."""

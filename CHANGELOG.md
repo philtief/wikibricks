@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.9] - 2026-05-22
+
+### Changed
+
+- **`hooks._flush` now builds `content_text_override` as
+  `dense_summary + "\n\n## Raw intent\n" + first_prompt[:2000]`** instead
+  of passing the dense summary verbatim. Recorder users who already
+  opted into `[auto_summary]` automatically get the better override
+  composition.
+- **`auto_summary._SYSTEM_PROMPT` reverted** to the v0.7.8 wording.
+  The brief "v2" tightening (one-commit lifetime, never released) that
+  demanded strict identifier backtick-quoting hurt recall@1 from 35%
+  to 5% by shifting output toward bag-of-identifiers and away from
+  coherent prose that natural-language queries match against.
+
+### Added
+
+- **`auto_summary.build_content_text_override(state, summary)`** —
+  composes the dense LLM summary with a capped raw-intent tail. Pure
+  function, no LLM call. Tested with 5 new tests.
+- **`scripts/eval_summary_first_recall.py` extended to A/B/C × HYBRID/ANN**:
+  third arm `intent_tail` and `--mode {HYBRID,ANN,BOTH}` flag. The
+  v2 results that motivated this release are at
+  `docs/research/2026-05-22-summary-first-eval-v2.md`.
+
+### Eval numbers (HYBRID, N=20 paired queries)
+
+| Arm | recall@1 | recall@5 | mean_rank | wins |
+|---|---|---|---|---|
+| concat (control) | 40% | 90% | 2.65 | 8 |
+| pure summary | 5% | 100% | 2.80 | 2 |
+| **intent_tail (shipped default)** | **50%** | 95% | **2.10** | **10** |
+
+`intent_tail` beats concat on every metric — recall@1 (+10pp),
+recall@5 (+5pp), mean_rank (−0.55), wins (10 vs 8). It's the only
+arm that does. `is_enabled` stays opt-in until N is larger; the
+composition change applies automatically when a user enables it.
+
 ## [0.7.8] - 2026-05-22
 
 ### Added

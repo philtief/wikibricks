@@ -295,12 +295,23 @@ def _flush(state: dict[str, Any]):
             _log_error("auto_summary.generate_summary", e)
             dense_summary = None
 
+    # v0.7.9: content_text_override is dense_summary + raw first_prompt
+    # tail. Pure dense summaries hurt recall@1 (eval v2: 35% → 5%) because
+    # they paraphrase the user's natural phrasing — even when identifiers
+    # are quoted verbatim. Appending up to 2k chars of the first prompt
+    # restores keyword density for HYBRID retrieval (+15pp recall@1 over
+    # pure summary, beats baseline concat on mean_rank 2.10 vs 2.65).
+    override = (
+        auto_summary.build_content_text_override(state, dense_summary)
+        if dense_summary
+        else None
+    )
     client.write_page(
         path,
         title=title,
         content_json=page_builder.session_content(state, dense_summary=dense_summary),
         tags=tags,
-        content_text_override=dense_summary,
+        content_text_override=override,
     )
 
     # Emit a telemetry row so operators can grep wiki_log for the LLM-
