@@ -1,17 +1,17 @@
 # Smoke-test record — 0.7.8 recorder summary-first
 
 **Date:** 2026-05-22
-**Workspace:** fevm-agent-marketplace (`agent_marketplace_catalog.wikibricks_personal_philipp`)
+**Workspace:** <workspace> (`<catalog>.<schema>`)
 **Endpoint:** `databricks-claude-haiku-4-5`
 **Script:** `scripts/smoke_summary_first.py`
 
 ## Run
 
 ```bash
-DATABRICKS_CONFIG_PROFILE=fe-vm-agent-marketplace \
-  WIKIBRICKS_CATALOG=agent_marketplace_catalog \
-  WIKIBRICKS_SCHEMA=wikibricks_personal_philipp \
-  WIKIBRICKS_WAREHOUSE_ID=41754a8563a43a49 \
+DATABRICKS_CONFIG_PROFILE=<profile> \
+  WIKIBRICKS_CATALOG=<catalog> \
+  WIKIBRICKS_SCHEMA=<schema> \
+  WIKIBRICKS_WAREHOUSE_ID=<warehouse_id> \
   uv run python scripts/smoke_summary_first.py
 ```
 

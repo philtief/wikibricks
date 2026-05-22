@@ -1438,10 +1438,10 @@ End the session cleanly so the Stop hook fires.
 - [ ] **Step 4: Verify the page was written with a dense summary**
 
 ```bash
-databricks --profile fe-vm-agent-marketplace api post /api/2.0/sql/statements \
+databricks --profile <profile> api post /api/2.0/sql/statements \
   -- --json '{
-    "warehouse_id": "41754a8563a43a49",
-    "statement": "SELECT path, title, content:summary::STRING AS summary, length(content_text) AS ct_len FROM agent_marketplace_catalog.wikibricks_personal_philipp.pages ORDER BY updated_at DESC LIMIT 3"
+    "warehouse_id": "<warehouse_id>",
+    "statement": "SELECT path, title, content:summary::STRING AS summary, length(content_text) AS ct_len FROM <catalog>.<schema>.pages ORDER BY updated_at DESC LIMIT 3"
   }'
 ```
 
@@ -1450,10 +1450,10 @@ Expected: top row's `summary` starts with `## Intent`, and `ct_len` is in the 50
 - [ ] **Step 5: Verify `summary_ok` was logged**
 
 ```bash
-databricks --profile fe-vm-agent-marketplace api post /api/2.0/sql/statements \
+databricks --profile <profile> api post /api/2.0/sql/statements \
   -- --json '{
-    "warehouse_id": "41754a8563a43a49",
-    "statement": "SELECT op_type, path, details, ts FROM agent_marketplace_catalog.wikibricks_personal_philipp.wiki_log WHERE op_type IN (\"summary_ok\", \"summary_fail\") ORDER BY ts DESC LIMIT 5"
+    "warehouse_id": "<warehouse_id>",
+    "statement": "SELECT op_type, path, details, ts FROM <catalog>.<schema>.wiki_log WHERE op_type IN (\"summary_ok\", \"summary_fail\") ORDER BY ts DESC LIMIT 5"
   }'
 ```
 
@@ -1462,10 +1462,10 @@ Expected: most recent row is `summary_ok` with the page path from Step 4.
 - [ ] **Step 6: Verify retrieval surfaces the new page**
 
 ```bash
-databricks --profile fe-vm-agent-marketplace api post /api/2.0/sql/statements \
+databricks --profile <profile> api post /api/2.0/sql/statements \
   -- --json '{
-    "warehouse_id": "41754a8563a43a49",
-    "statement": "SELECT * FROM agent_marketplace_catalog.wikibricks_personal_philipp.fn_wiki_search(question => \"refactor foo to use bar\", num_results => 3)"
+    "warehouse_id": "<warehouse_id>",
+    "statement": "SELECT * FROM <catalog>.<schema>.fn_wiki_search(question => \"refactor foo to use bar\", num_results => 3)"
   }'
 ```
 
@@ -1481,7 +1481,7 @@ Save a brief log of what you observed at `docs/research/2026-05-22-summary-first
 
 ```bash
 git add docs/research/2026-05-22-summary-first-smoke-test.md
-git commit -m "docs: 0.7.8 smoke-test record on fevm-agent-marketplace"
+git commit -m "docs: 0.7.8 smoke-test record on <workspace>"
 ```
 
 ---
@@ -1500,7 +1500,7 @@ If `pages_history` doesn't go back far enough, use a controlled A/B: take 20 rec
 
 Create `scripts/eval_summary_first_recall.py` that:
 
-1. Connects via `WorkspaceClient(profile="fe-vm-agent-marketplace")`
+1. Connects via `WorkspaceClient(profile="<profile>")`
 2. Lists sessions from the last 30 days
 3. For each, generates 1 paraphrased query using Haiku 4.5 (one-shot prompt: "Restate this session's user intent in one sentence, as someone might ask later")
 4. Runs `fn_wiki_search(query, 10)` and records whether the source session is in the top-K (K = 1, 3, 5, 10)
@@ -1512,7 +1512,7 @@ The script is OK to put under `scripts/` (operational, ships to public per `AGEN
 
 ```bash
 uv run python scripts/eval_summary_first_recall.py \
-  --profile fe-vm-agent-marketplace \
+  --profile <profile> \
   --output docs/research/2026-05-22-summary-first-eval.csv \
   --n-sessions 20
 ```

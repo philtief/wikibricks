@@ -10,16 +10,15 @@ queries the pages + wiki_log tables to confirm:
     * content.body still carries the raw transcript
     * a `summary_ok` row landed in wiki_log
 
-Run:
+Run (all four env vars REQUIRED — no workspace-specific defaults ship):
 
-    DATABRICKS_CONFIG_PROFILE=fe-vm-agent-marketplace \
-      WIKIBRICKS_CATALOG=agent_marketplace_catalog \
-      WIKIBRICKS_SCHEMA=wikibricks_personal_philipp \
-      WIKIBRICKS_WAREHOUSE_ID=41754a8563a43a49 \
+    DATABRICKS_CONFIG_PROFILE=<profile> \
+      WIKIBRICKS_CATALOG=<catalog> \
+      WIKIBRICKS_SCHEMA=<schema> \
+      WIKIBRICKS_WAREHOUSE_ID=<warehouse_id> \
       uv run python scripts/smoke_summary_first.py
 
-Idempotent — overwrites the same `sessions/smoke/.../smoke-0.7.8` page
-on every run.
+Idempotent — writes one page per run under `sessions/smoke/<date>/<sid>`.
 """
 
 from __future__ import annotations
@@ -66,10 +65,16 @@ def _build_state() -> dict:
 
 
 def main() -> int:
-    catalog = os.environ.get("WIKIBRICKS_CATALOG") or "agent_marketplace_catalog"
-    schema = os.environ.get("WIKIBRICKS_SCHEMA") or "wikibricks_personal_philipp"
-    warehouse_id = os.environ.get("WIKIBRICKS_WAREHOUSE_ID") or "41754a8563a43a49"
-    profile = os.environ.get("DATABRICKS_CONFIG_PROFILE") or "fe-vm-agent-marketplace"
+    def _req(name: str) -> str:
+        v = os.environ.get(name)
+        if not v:
+            raise SystemExit(f"missing required env var: {name}")
+        return v
+
+    catalog = _req("WIKIBRICKS_CATALOG")
+    schema = _req("WIKIBRICKS_SCHEMA")
+    warehouse_id = _req("WIKIBRICKS_WAREHOUSE_ID")
+    profile = _req("DATABRICKS_CONFIG_PROFILE")
 
     # Force the library to target this schema (otherwise it uses main.wiki)
     os.environ["WIKIBRICKS_CATALOG"] = catalog
