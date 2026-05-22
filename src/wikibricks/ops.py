@@ -174,16 +174,42 @@ def get_schema() -> str:
     return schema_path.read_text()
 
 
-def write_page_sql(path, title, page_type, content_json, created_by, tags=None):
+def write_page_sql(
+    path,
+    title,
+    page_type,
+    content_json,
+    created_by,
+    tags=None,
+    *,
+    content_text_override: str | None = None,
+):
     """Return SQL statements for the archive-then-MERGE write pattern.
 
     Returns a list of two SQL statements:
     1. Archive current version to history (no-op if page doesn't exist)
     2. MERGE into current table (insert or update)
+
+    Args:
+        content_text_override: When set, write this literal text into
+            ``content_text`` (the Vector Search-embedded column) instead
+            of ``concat(content.summary, content.body)``. Lets callers
+            (e.g. the recorder with a dense LLM summary) decouple what
+            VS embeds from what humans read via ``fn_wiki_read``.
     """
     tags_sql = f"ARRAY({','.join(repr(t) for t in tags)})" if tags else "ARRAY()"
     content_escaped = json.dumps(content_json) if isinstance(content_json, dict) else content_json
     content_escaped = content_escaped.replace("'", "\\'")
+
+    if content_text_override is None:
+        content_text_expr = (
+            f"concat(\n"
+            f"            PARSE_JSON('{content_escaped}'):summary::STRING, ' ',\n"
+            f"            PARSE_JSON('{content_escaped}'):body::STRING)"
+        )
+    else:
+        override_escaped = content_text_override.replace("'", "\\'")
+        content_text_expr = f"'{override_escaped}'"
 
     archive_sql = f"""
     INSERT INTO {HISTORY_TABLE}
@@ -201,9 +227,7 @@ def write_page_sql(path, title, page_type, content_json, created_by, tags=None):
         title = '{title}',
         page_type = '{page_type}',
         content = PARSE_JSON('{content_escaped}'),
-        content_text = concat(
-            PARSE_JSON('{content_escaped}'):summary::STRING, ' ',
-            PARSE_JSON('{content_escaped}'):body::STRING),
+        content_text = {content_text_expr},
         tags = {tags_sql},
         created_by = '{created_by}',
         updated_at = current_timestamp(),
@@ -212,9 +236,7 @@ def write_page_sql(path, title, page_type, content_json, created_by, tags=None):
         (page_id, path, title, page_type, content, content_text, tags, created_by, version)
     VALUES (uuid(), '{path}', '{title}', '{page_type}',
             PARSE_JSON('{content_escaped}'),
-            concat(
-                PARSE_JSON('{content_escaped}'):summary::STRING, ' ',
-                PARSE_JSON('{content_escaped}'):body::STRING),
+            {content_text_expr},
             {tags_sql}, '{created_by}', 1)
     """
 
