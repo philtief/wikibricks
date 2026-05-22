@@ -14,12 +14,6 @@ variables:
   schema:
     description: Schema under the catalog.
     default: wiki
-  version:
-    description: >
-      WikiBricks library version. Used in task `libraries` to install the
-      wheel from /Volumes/${catalog}/${schema}/wheels/wikibricks-${version}-py3-none-any.whl.
-      Bump in lockstep with pyproject.toml when releasing.
-    default: "0.7.4"
   warehouse_id:
     description: >
       SQL warehouse used by UC functions and the deploy notebook. Required —

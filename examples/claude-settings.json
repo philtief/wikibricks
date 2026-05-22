@@ -1,10 +1,10 @@
 {
-  "_comment": "Copy these entries into ~/.claude/settings.json (merge with any existing hooks). Replace /PATH/TO/wikibricks-dev with the absolute path to your clone, e.g. /Users/you/wikibricks-dev. Run `uv sync --extra recorder` first so .venv exists.",
+  "_comment": "Copy these entries into ~/.claude/settings.json (merge with any existing hooks). Replace /PATH/TO/wikibricks with the absolute path to your clone, e.g. /Users/you/wikibricks. Run `uv sync --extra recorder` first so .venv exists.",
   "hooks": {
-    "SessionStart":     [{"matcher": "", "hooks": [{"type": "command", "command": "/PATH/TO/wikibricks-dev/.venv/bin/python -m wikibricks_recorder.hooks", "timeout": 5}]}],
-    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "/PATH/TO/wikibricks-dev/.venv/bin/python -m wikibricks_recorder.hooks", "timeout": 5}]}],
-    "PostToolUse":      [{"matcher": "", "hooks": [{"type": "command", "command": "/PATH/TO/wikibricks-dev/.venv/bin/python -m wikibricks_recorder.hooks", "timeout": 10}]}],
-    "Stop":             [{"matcher": "", "hooks": [{"type": "command", "command": "/PATH/TO/wikibricks-dev/.venv/bin/python -m wikibricks_recorder.hooks", "timeout": 30}]}],
-    "SessionEnd":       [{"matcher": "", "hooks": [{"type": "command", "command": "/PATH/TO/wikibricks-dev/.venv/bin/python -m wikibricks_recorder.hooks", "timeout": 30}]}]
+    "SessionStart":     [{"matcher": "", "hooks": [{"type": "command", "command": "/PATH/TO/wikibricks/.venv/bin/python -m wikibricks_recorder.hooks", "timeout": 5}]}],
+    "UserPromptSubmit": [{"matcher": "", "hooks": [{"type": "command", "command": "/PATH/TO/wikibricks/.venv/bin/python -m wikibricks_recorder.hooks", "timeout": 5}]}],
+    "PostToolUse":      [{"matcher": "", "hooks": [{"type": "command", "command": "/PATH/TO/wikibricks/.venv/bin/python -m wikibricks_recorder.hooks", "timeout": 10}]}],
+    "Stop":             [{"matcher": "", "hooks": [{"type": "command", "command": "/PATH/TO/wikibricks/.venv/bin/python -m wikibricks_recorder.hooks", "timeout": 30}]}],
+    "SessionEnd":       [{"matcher": "", "hooks": [{"type": "command", "command": "/PATH/TO/wikibricks/.venv/bin/python -m wikibricks_recorder.hooks", "timeout": 30}]}]
   }
 }

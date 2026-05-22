@@ -2,7 +2,7 @@
 
 WikiBricks is domain-agnostic. The `sample/` loader provides generic meta-pages describing
 WikiBricks itself; real deployments supply their own corpus via `custom/` or an ingestion
-script. `hotpot/` is the [redacted benchmark] benchmark corpus.
+script. `hotpot/` is the HotpotQA benchmark corpus.
 """
 
 from importlib import import_module

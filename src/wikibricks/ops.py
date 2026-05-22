@@ -150,12 +150,12 @@ def create_tables_sql():
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {VOCABULARY_TABLE} (
-            slug        STRING    NOT NULL,
-            source      STRING    NOT NULL,
-            count       BIGINT    NOT NULL DEFAULT 1,
-            first_seen  TIMESTAMP DEFAULT current_timestamp(),
-            last_seen   TIMESTAMP DEFAULT current_timestamp(),
-            status      STRING    NOT NULL DEFAULT 'pending'
+            slug       STRING    NOT NULL,
+            source     STRING    NOT NULL,
+            count      BIGINT    NOT NULL DEFAULT 0,
+            first_seen TIMESTAMP NOT NULL,
+            last_seen  TIMESTAMP NOT NULL,
+            status     STRING    NOT NULL DEFAULT 'candidate'
         )
         USING DELTA
         TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
@@ -166,62 +166,6 @@ def create_tables_sql():
 def create_schema_sql():
     """Return SQL to create the wiki schema."""
     return f"CREATE SCHEMA IF NOT EXISTS {CATALOG}.{SCHEMA}"
-
-
-def migrate_tables_sql():
-    """Idempotent ALTER TABLE statements that reconcile pre-v0.5.0 wikis
-    with the current canonical DDL.
-
-    `CREATE TABLE IF NOT EXISTS` doesn't reconcile schema drift on existing
-    tables. When a wiki was deployed before v0.5.0 with a stricter (or
-    different-default) schema, INSERTs that rely on column defaults can
-    fail with NOT NULL constraint violations.
-
-    Each statement here is safe to re-run: ALTER COLUMN DROP NOT NULL and
-    SET DEFAULT are idempotent on already-migrated columns.
-
-    Current migrations:
-    - `wiki_vocabulary.first_seen` / `last_seen`: pre-v0.5.0 wikis declared
-      these `TIMESTAMP NOT NULL` (no default). Canonical v0.5.0 is
-      `TIMESTAMP DEFAULT current_timestamp()` (nullable). Drop NOT NULL +
-      set default so the auto-tag upsert path stays resilient if a future
-      INSERT omits these columns.
-    - `links.valid_from` / `valid_until` (v0.6.0 bi-temporal): pre-v0.6.0
-      wikis had a single-temporal `links` table. ADD COLUMN IF NOT EXISTS
-      so existing edges become "valid since now, not superseded". Future
-      writes through `commit_edges` use the append-only bi-temporal path.
-    - `pages.memory_class` / `hub_score` / `community_id` (v0.7.0): pre-v0.7.0
-      wikis lacked the taxonomy column and the graph-analytics score columns.
-      ADD COLUMNS in one batch + backfill `memory_class='semantic'` for any
-      NULL rows. `hub_score` and `community_id` are populated on the next
-      curate run by the wiki_graph_analytics task; until then they stay NULL
-      and search rerank falls back to vector-only.
-    """
-    return [
-        f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN first_seen DROP NOT NULL",
-        f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN first_seen SET DEFAULT current_timestamp()",
-        f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN last_seen  DROP NOT NULL",
-        f"ALTER TABLE {VOCABULARY_TABLE} ALTER COLUMN last_seen  SET DEFAULT current_timestamp()",
-        # Databricks SQL doesn't accept IF NOT EXISTS on ADD COLUMN; on
-        # re-runs this statement FAILS with "column already exists" and
-        # sdk_redeploy logs FAILED but continues. That's the idempotency
-        # we want — first run adds, subsequent runs no-op via the continue.
-        f"ALTER TABLE {LINKS_TABLE} ADD COLUMNS (valid_from TIMESTAMP, valid_until TIMESTAMP)",
-        f"ALTER TABLE {LINKS_TABLE} ALTER COLUMN valid_from SET DEFAULT current_timestamp()",
-        # Backfill: any existing row with NULL valid_from gets the current
-        # timestamp as its conservative "we don't know when this started"
-        # value. Idempotent — re-runs touch 0 rows.
-        f"UPDATE {LINKS_TABLE} SET valid_from = current_timestamp() WHERE valid_from IS NULL",
-        # v0.7.0 — pages taxonomy + graph analytics columns. First-run adds
-        # all three in one ALTER; re-runs fail with "column already exists"
-        # and sdk_redeploy continues past them.
-        f"ALTER TABLE {PAGES_TABLE} ADD COLUMNS (memory_class STRING, hub_score DOUBLE, community_id INT)",
-        f"ALTER TABLE {PAGES_TABLE} ALTER COLUMN memory_class SET DEFAULT 'semantic'",
-        # Backfill: any existing row without a memory_class gets 'semantic'
-        # (the most common case). Other classes are set by the agent/recorder
-        # on subsequent writes.
-        f"UPDATE {PAGES_TABLE} SET memory_class = 'semantic' WHERE memory_class IS NULL",
-    ]
 
 
 def get_schema() -> str:
@@ -341,24 +285,41 @@ def create_uc_functions_sql(warehouse_id, enabled=None):
         num_results INT DEFAULT 5 COMMENT 'Top-K pages to return (1-20)'
     )
     RETURNS STRING
-    COMMENT 'HYBRID Vector Search (semantic + FULL_TEXT) over wiki pages. Returns JSON top-K pages with content_text.'
+    COMMENT 'HYBRID Vector Search (semantic + FULL_TEXT) blended with PageRank via RRF (k=60). JSON top-K pages.'
     RETURN (
         SELECT to_json(collect_list(struct(
             page_id, path, title, page_type, content_text, tags, version, search_score
         )))
         FROM (
-            SELECT *, ROW_NUMBER() OVER (ORDER BY search_score DESC) AS rn
-            FROM vector_search(
-                index => '{VS_INDEX}',
-                query_text => question,
-                num_results => 40,
-                query_type => 'HYBRID'
+            SELECT *, ROW_NUMBER() OVER (ORDER BY rrf_score DESC, search_score DESC) AS rn
+            FROM (
+                -- v0.7.5: blend VS rank + PageRank rank via RRF (k=60) so
+                -- managed-MCP callers get the same ranking quality as
+                -- Python WikiClient.search. Pages without hub_score
+                -- contribute via VS rank only (NULL → 0 hub_score → last
+                -- pr_rank). Inner num_results 40 over-fetches to absorb
+                -- the ephemeral:stub filter and give RRF room to swap.
+                SELECT
+                    vs.page_id, vs.path, vs.title, vs.page_type,
+                    vs.content_text, vs.tags, vs.version, vs.search_score,
+                    (1.0 / (60.0 + ROW_NUMBER() OVER (
+                        ORDER BY vs.search_score DESC
+                    ))) +
+                    (1.0 / (60.0 + ROW_NUMBER() OVER (
+                        ORDER BY COALESCE(p.hub_score, 0.0) DESC,
+                                 vs.search_score DESC
+                    ))) AS rrf_score
+                FROM vector_search(
+                    index => '{VS_INDEX}',
+                    query_text => question,
+                    num_results => 40,
+                    query_type => 'HYBRID'
+                ) AS vs
+                LEFT JOIN {PAGES_TABLE} p ON vs.page_id = p.page_id
+                -- Filter ephemeral:stub pages (1-event /tmp recorder
+                -- invocations kept for forensic access only).
+                WHERE vs.tags IS NULL OR NOT array_contains(vs.tags, 'ephemeral:stub')
             )
-            -- Filter out ephemeral:stub pages (1-event /tmp recorder
-            -- invocations kept for forensic access only). `tags` here is
-            -- the JSON-string projection of the array; match the literal
-            -- "ephemeral:stub" token rather than parse JSON in-column.
-            WHERE tags IS NULL OR tags NOT LIKE '%"ephemeral:stub"%'
         )
         WHERE rn <= num_results
     )
@@ -716,31 +677,6 @@ def create_index_view_sql():
     """
 
 
-def create_agent_traces_view_sql():
-    """Return SQL to create the `agent_traces_v` view over `wiki_log`.
-
-    Shapes recorder search/read events into the schema the promote notebook
-    expects: (session_id, user_query, model_response, retrieved_paths,
-    timestamp). One row per search call, with retrieved_paths drawn from
-    the `returned_paths` JSON field populated by `WikiClient.search`.
-    """
-    return f"""
-    CREATE OR REPLACE VIEW {CATALOG}.{SCHEMA}.agent_traces_v AS
-    SELECT
-      log_id AS session_id,
-      query AS user_query,
-      CAST('' AS STRING) AS model_response,
-      transform(
-        from_json(details, 'STRUCT<returned_paths: ARRAY<STRING>>').returned_paths,
-        x -> x
-      ) AS retrieved_paths,
-      created_at AS timestamp
-    FROM {LOG_TABLE}
-    WHERE op_type = 'search'
-      AND details LIKE '%returned_paths%'
-    """
-
-
 def orphan_pages_sql():
     """Return SQL to find pages with no incoming links (excluding _meta/ pages)."""
     return f"""
@@ -803,18 +739,12 @@ def delete_broken_links_sql():
     """
 
 
-def graph_neighbors_sql(page_id, depth=1, link_types=None, at_timestamp=None):
+def graph_neighbors_sql(page_id, depth=1, link_types=None):
     """Return SQL for outgoing link neighbors of a page up to `depth` hops.
 
     Depth-limited BFS implemented as UNION ALL over depth levels (up to 3).
     Returns: source_page_id, target_page_id, target_path, target_title, link_type,
              confidence, origin, hop.
-
-    Bi-temporal filter (v0.6.0):
-    - `at_timestamp=None` (default): only currently-valid edges
-      (`valid_until IS NULL`).
-    - `at_timestamp='<iso>'`: edges valid at that timestamp
-      (`valid_from <= ts AND (valid_until IS NULL OR valid_until > ts)`).
     """
     if depth < 1 or depth > 3:
         raise ValueError(f"depth must be in [1, 3], got {depth}")
@@ -824,14 +754,6 @@ def graph_neighbors_sql(page_id, depth=1, link_types=None, at_timestamp=None):
         types_csv = ",".join(f"'{lt}'" for lt in link_types)
         type_filter = f" AND l.link_type IN ({types_csv})"
 
-    if at_timestamp is None:
-        validity_filter = " AND l.valid_until IS NULL"
-    else:
-        validity_filter = (
-            f" AND l.valid_from <= '{at_timestamp}'"
-            f" AND (l.valid_until IS NULL OR l.valid_until > '{at_timestamp}')"
-        )
-
     def _hop(level, source_expr):
         return f"""
         SELECT l.source_page_id, l.target_page_id,
@@ -839,7 +761,7 @@ def graph_neighbors_sql(page_id, depth=1, link_types=None, at_timestamp=None):
                l.link_type, l.confidence, l.origin, {level} AS hop
         FROM {LINKS_TABLE} l
         JOIN {PAGES_TABLE} p ON p.page_id = l.target_page_id
-        WHERE l.source_page_id IN ({source_expr}){type_filter}{validity_filter}
+        WHERE l.source_page_id IN ({source_expr}){type_filter}
         """
 
     seed = f"'{page_id}'"

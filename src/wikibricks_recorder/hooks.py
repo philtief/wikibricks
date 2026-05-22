@@ -25,7 +25,7 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from wikibricks_recorder import config, page_builder, session
+from wikibricks_recorder import auto_tag, auto_title, citations, config, page_builder, session
 
 
 def _read_payload() -> dict[str, Any]:
@@ -63,8 +63,52 @@ def on_session_start() -> None:
         if state.get("model") is None and payload.get("model"):
             state["model"] = payload["model"]
         session.save(state)
+        _emit_cwd_prelude(state.get("cwd") or "")
     except Exception as e:
         _log_error("on_session_start", e)
+
+
+_PRELUDE_LIMIT = 3
+
+
+def _emit_cwd_prelude(cwd: str) -> None:
+    """If WIKIBRICKS_INJECT_CONTEXT=1, emit a one-shot "previously here"
+    summary of the most recent sessions in this directory. Same env-var
+    gate as the per-prompt injection — opting into one opts into both.
+    Failures are silent.
+    """
+    if os.environ.get("WIKIBRICKS_INJECT_CONTEXT") != "1":
+        return
+    if not cwd:
+        return
+    from pathlib import PurePath
+
+    basename = PurePath(cwd).name
+    if not basename:
+        return
+    try:
+        cfg = config.load_config()
+        client = _build_wiki_client(cfg)
+        rows = client.list_recent_by_cwd_tag(basename, limit=_PRELUDE_LIMIT)
+        if not rows:
+            return
+        lines = [f"Previously in this directory ({len(rows)} recent sessions):"]
+        for r in rows:
+            date = (r.get("updated_at") or "")[:10]
+            title = (r.get("title") or "")[:80]
+            path = r.get("path") or ""
+            lines.append(f"- {date} [{path}] {title}")
+        lines.append(_CITATION_DIRECTIVE)
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "SessionStart",
+                "additionalContext": "\n".join(lines),
+            }
+        }))
+        print(f"wikibricks: prelude — {len(rows)} prior sessions in '{basename}'",
+              file=sys.stderr)
+    except Exception:
+        pass
 
 
 def on_user_prompt_submit() -> None:
@@ -79,8 +123,61 @@ def on_user_prompt_submit() -> None:
             state["first_prompt"] = prompt
         state["events"].append({"kind": "prompt", "ts": _now_iso(), "prompt": prompt})
         session.save(state)
+        _emit_relevant_context(sid, prompt)
     except Exception as e:
         _log_error("on_user_prompt_submit", e)
+
+
+_INJECT_MIN_PROMPT_LEN = 10
+_INJECT_MAX_HITS = 3
+_INJECT_SNIPPET_LEN = 200
+
+# Citation directive appended to every injected context block. Tells the
+# agent how to cite the injected pages inline. Stable format (`[wb:<path>]`)
+# enables downstream citation parsing for outcome tracking.
+_CITATION_DIRECTIVE = (
+    "\nWhen you use information from any page above, cite the path inline "
+    "as [wb:<path>] so the user can trace the source."
+)
+
+
+def _emit_relevant_context(session_id: str, prompt: str) -> None:
+    """If WIKIBRICKS_INJECT_CONTEXT=1 and the prompt is substantive, search the
+    wiki and emit a UserPromptSubmit additionalContext JSON response on stdout.
+    All exceptions swallowed — must never break the user's session.
+    """
+    if os.environ.get("WIKIBRICKS_INJECT_CONTEXT") != "1":
+        return
+    if len(prompt.strip()) < _INJECT_MIN_PROMPT_LEN:
+        return
+    try:
+        cfg = config.load_config()
+        client = _build_wiki_client(cfg)
+        hits = client.search(prompt, mode="HYBRID", num_results=_INJECT_MAX_HITS + 2)
+        relevant = [h for h in (hits or []) if session_id not in (h.get("path") or "")]
+        if not relevant:
+            return
+        lines = ["Wikibricks — relevant prior pages:"]
+        for h in relevant[:_INJECT_MAX_HITS]:
+            title = (h.get("title") or "").strip()[:80]
+            path = h.get("path") or ""
+            snippet = (h.get("content_text") or "").replace("\n", " ").strip()[:_INJECT_SNIPPET_LEN]
+            lines.append(f"- [{path}] {title}: {snippet}")
+        lines.append(_CITATION_DIRECTIVE)
+        print(json.dumps({
+            "hookSpecificOutput": {
+                "hookEventName": "UserPromptSubmit",
+                "additionalContext": "\n".join(lines),
+            }
+        }))
+        # User-visible summary on stderr so Claude Code surfaces it.
+        used = relevant[:_INJECT_MAX_HITS]
+        print(f"wikibricks: injected {len(used)} pages", file=sys.stderr)
+        for h in used:
+            print(f"  - {h.get('path', '')}", file=sys.stderr)
+    except Exception:
+        # Never break the user's session because of a failed wiki call.
+        pass
 
 
 def on_post_tool_use() -> None:
@@ -98,6 +195,18 @@ def on_post_tool_use() -> None:
         _log_error("on_post_tool_use", e)
 
 
+def _is_utility_session(state: dict[str, Any]) -> bool:
+    """True for skill / sub-agent sessions that should not be recorded."""
+    cwd = state.get("cwd") or ""
+    if cwd in ("/tmp", "/private/tmp") or cwd.startswith(
+        ("/private/var/folders/", "/var/folders/", "/tmp/", "/private/tmp/")
+    ):
+        return True
+    prompts = [e for e in state.get("events", []) if e.get("kind") == "prompt"]
+    first = (state.get("first_prompt") or "").strip()
+    return len(prompts) <= 1 and page_builder._looks_like_system_prompt(first)
+
+
 def _build_wiki_client(cfg: dict[str, str]):
     """Construct a WikiClient from resolved config.
 
@@ -113,24 +222,90 @@ def _build_wiki_client(cfg: dict[str, str]):
     return WikiClient(warehouse_id=cfg["warehouse_id"], workspace_client=ws)
 
 
-def _flush(state: dict[str, Any]) -> None:
+def _flush(state: dict[str, Any]):
+    """Write the session as one wiki page. Returns the client (so the
+    caller can reuse it for citation logging) or ``None`` if the session
+    was skipped (empty or utility).
+    """
     if not state.get("events"):
-        return
+        return None
+    if _is_utility_session(state):
+        return None
+    # v0.7.3: also short-circuit ephemeral (/tmp, sub-threshold-events)
+    # sessions. These are programmatic Claude Code sub-invocations and
+    # don't deserve a wiki page or curate cost.
     if page_builder.is_ephemeral(state):
-        return
+        return None
     cfg = config.load_config()
     client = _build_wiki_client(cfg)
     path = page_builder.session_path(
         cfg["user_id"], state["session_id"], state.get("started_at")
     )
-    tags = page_builder.session_tags(state)
+    tags = page_builder.session_tags(state, topic_keywords=config.load_topic_keywords())
+
+    # Auto-tag via LLM (opt-in). Failures are swallowed inside extract_topic_slugs.
+    auto_cfg = config.load_auto_tag_config()
+    if auto_tag.is_enabled(auto_cfg):
+        slugs = auto_tag.extract_topic_slugs(state, auto_cfg, client.ws)
+        if slugs:
+            try:
+                client.upsert_vocabulary_slugs(slugs, source="llm")
+            except Exception as e:
+                _log_error("upsert_vocabulary_slugs", e)
+            for slug in slugs:
+                normalized = client._normalize_slug(slug)
+                if normalized:
+                    tags.append(f"customer:{normalized}")
+
     tags.append(f"user:{cfg['user_id']}")
+
+    # v0.7.7: opt-in LLM title via [auto_title] config block; fall back
+    # to the deterministic boilerplate-skip heuristic on any failure.
+    title = None
+    title_cfg = config.load_auto_title_config()
+    if auto_title.is_enabled(title_cfg):
+        try:
+            title = auto_title.generate_title(state, title_cfg, client.ws)
+        except Exception as e:
+            _log_error("auto_title.generate_title", e)
+            title = None
+    if not title:
+        title = page_builder.session_title(state)
+
     client.write_page(
         path,
-        title=page_builder.session_title(state),
+        title=title,
         content_json=page_builder.session_content(state),
         tags=tags,
     )
+    return client
+
+
+def _log_citations(session_id: str, transcript_path: str | None, client) -> None:
+    """Parse [wb:<path>] markers from the agent's last assistant message in
+    the transcript and emit one ``cited`` row per unique path. Silent on
+    any failure — citation tracking is best-effort and must never crash
+    the host.
+    """
+    try:
+        cited = citations.extract_cited_paths(transcript_path)
+        if not cited:
+            return
+        details = json.dumps({"session_id": session_id})
+        for path in sorted(cited):
+            try:
+                client._log("cited", path=path, details=details)
+            except Exception:
+                pass
+        n = len(cited)
+        print(
+            f"wikibricks: cited {n} page{'s' if n != 1 else ''} from this session",
+            file=sys.stderr,
+        )
+        for path in sorted(cited):
+            print(f"  - {path}", file=sys.stderr)
+    except Exception:
+        pass
 
 
 def on_stop() -> None:
@@ -140,7 +315,9 @@ def on_stop() -> None:
         if not sid:
             return
         state = session.load(sid)
-        _flush(state)
+        client = _flush(state)
+        if client is not None:
+            _log_citations(sid, payload.get("transcript_path"), client)
     except Exception as e:
         _log_error("on_stop", e)
 

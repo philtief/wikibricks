@@ -99,7 +99,7 @@ CLUSTERS = [
         "answer": (
             "Create a DELTA_SYNC index with TRIGGERED pipeline type, primary "
             "key matching your source, and an embedding column spec. Time to "
-            "READY is ~1 minute per 3k rows on `[redacted-model]`."
+            "READY is ~1 minute per 3k rows on `databricks-bge-large-en`."
         ),
         "sources": ["topics/architecture/overview"],
     },

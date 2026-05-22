@@ -1,6 +1,8 @@
 """WikiClient: high-level API for reading and writing wiki pages on Databricks."""
 
 import json
+import math
+import os
 import re
 
 from databricks.sdk import WorkspaceClient
@@ -125,10 +127,10 @@ class WikiClient:
         FROM {PAGES_TABLE} WHERE path = '{path}'
         """
 
-        # Preserve `llm:`-prefixed tags across writes. Recorder owns mechanical
-        # tags (session, cwd:..., model:..., user:...); the auto-tag task owns
-        # `llm:*` tags via append_page_tags. Without this preservation, every
-        # write_page wiped llm: tags (Bug 3).
+        # Preserve `llm:`-prefixed tags across writes. Recorder owns
+        # mechanical tags (session, cwd:..., model:..., user:...); the
+        # auto-tag task owns `llm:*` tags via append_page_tags. Without
+        # this preservation, every write_page would wipe llm: tags.
         merge_sql = f"""
         MERGE INTO {PAGES_TABLE} AS target
         USING (SELECT '{path}' AS path) AS source
@@ -360,7 +362,10 @@ class WikiClient:
             self._log("vs_sync_fail", details=f"{type(e).__name__}: {e}")
 
     def list_pages(
-        self, path_prefix: str | None = None, *, include_ephemeral: bool = False
+        self,
+        path_prefix: str | None = None,
+        *,
+        include_ephemeral: bool = False,
     ) -> list[dict]:
         """List wiki pages for navigation. Returns page_id, path, title, page_type, version.
 
@@ -406,7 +411,8 @@ class WikiClient:
         query: str,
         mode: str = "HYBRID",
         num_results: int = 5,
-        rerank_with_pagerank: bool = False,
+        rerank_by_citations: bool | None = None,
+        rerank_with_pagerank: bool | None = None,
         include_ephemeral: bool = False,
     ) -> list[dict]:
         """Search wiki pages via Vector Search.
@@ -415,18 +421,34 @@ class WikiClient:
             query: Search query text.
             mode: One of ANN, FULL_TEXT, HYBRID.
             num_results: Max results to return.
+            rerank_by_citations: If True, after Vector Search returns hits,
+                rerank them by adding a citation bonus from ``wiki_log``
+                (``op_type='cited'``). If ``None`` (default), uses the
+                ``WIKIBRICKS_RERANK_BY_CITATIONS=1`` env var as the signal
+                so the recorder can opt-in globally without touching the API.
             rerank_with_pagerank: When True, fetch each result's `hub_score`
                 from `pages` and reorder via Reciprocal Rank Fusion (k=60)
-                across vector-search rank and PageRank rank. Defaults to
-                False — backward-compatible with v0.6.x callers. Pages
-                without a hub_score (newly written, not yet analytics-scored)
-                contribute 0 to the PageRank ranker but still appear via
-                their VS rank.
+                across vector-search rank and PageRank rank. **Defaults to
+                True** (v0.7.5+) — the graph_analytics task computes
+                `hub_score` nightly and not using it was waste. Set False
+                per-call to disable, or set the env var
+                ``WIKIBRICKS_DISABLE_PAGERANK_RERANK=1`` to disable
+                globally. Pages without a hub_score (newly written, not
+                yet analytics-scored) contribute 0 to the PageRank ranker
+                but still appear via their VS rank.
             include_ephemeral: When False (default), pages tagged
                 ``ephemeral:stub`` are filtered out post-VS. Overfetches by
                 a factor of 3 so the caller still gets ``num_results`` real
                 hits when stubs are present.
         """
+        if rerank_by_citations is None:
+            rerank_by_citations = os.environ.get("WIKIBRICKS_RERANK_BY_CITATIONS") == "1"
+        if rerank_with_pagerank is None:
+            # v0.7.5: default ON. Opt out per-call (False) or globally via env.
+            rerank_with_pagerank = (
+                os.environ.get("WIKIBRICKS_DISABLE_PAGERANK_RERANK") != "1"
+            )
+
         # Overfetch when stubs need filtering so the post-filter doesn't
         # starve the caller of real results.
         fetch_n = num_results * 3 if not include_ephemeral else num_results
@@ -441,50 +463,80 @@ class WikiClient:
 
         resp = self.ws.vector_search_indexes.query_index(**kwargs)
         if not resp.result or not resp.result.data_array:
-            self._log("search", query=query, details=json.dumps({
-                "returned_paths": [], "k": num_results, "mode": mode,
-            }))
+            self._log("search", query=query)
             return []
+        # Vector Search API returns columns directly on manifest, not under .schema
         cols = [c.name for c in resp.manifest.columns]
-        results = [dict(zip(cols, row)) for row in resp.result.data_array]
+        hits = [dict(zip(cols, row)) for row in resp.result.data_array]
 
         if not include_ephemeral:
-            results = [r for r in results
-                       if "ephemeral:stub" not in (r.get("tags") or "")]
-        results = results[:num_results]
+            hits = [h for h in hits
+                    if "ephemeral:stub" not in (h.get("tags") or "")]
+        hits = hits[:num_results]
 
-        if rerank_with_pagerank and results:
-            results = self._rerank_by_rrf(results)
+        # Reranks compose: citations first (recency-of-use bias), then
+        # PageRank (graph-authority bias). Either alone or both can be
+        # opt-in; default is pure VS order.
+        if rerank_by_citations:
+            hits = self._rerank_by_citations(hits)
+        if rerank_with_pagerank and hits:
+            hits = self._rerank_by_rrf(hits)
 
-        # Citation tracking: log which paths were returned so the promote view
-        # over wiki_log can mine real agent traces (v0.5.0 — see health probe
-        # `citations_logged`).
-        self._log("search", query=query, details=json.dumps({
-            "returned_paths": [r.get("path") for r in results if r.get("path")],
-            "k": num_results,
-            "mode": mode,
-            "reranked": rerank_with_pagerank,
-        }))
-        return results
+        self._log("search", query=query)
+        return hits
 
-    def _rerank_by_rrf(self, results: list[dict]) -> list[dict]:
-        """Reorder VS results via Reciprocal Rank Fusion with PageRank.
+    def _fetch_citation_counts(self, paths: list[str]) -> dict[str, int]:
+        """Return ``{path: cited_count}`` for the given paths from
+        ``wiki_log``. Empty dict on any failure or empty input.
+        """
+        if not paths:
+            return {}
+        try:
+            escaped = ", ".join(f"'{self._escape(p)}'" for p in paths if p)
+            if not escaped:
+                return {}
+            resp = self._exec(
+                f"SELECT path, COUNT(*) AS n FROM {LOG_TABLE} "
+                f"WHERE op_type = 'cited' AND path IN ({escaped}) "
+                f"GROUP BY path"
+            )
+            rows = (resp.result.data_array if resp and resp.result else None) or []
+            return {r[0]: int(r[1]) for r in rows}
+        except Exception:
+            return {}
 
-        Pulls `hub_score` for each result's `page_id`, builds two rankings
+    def _rerank_by_citations(self, hits: list[dict], alpha: float = 0.5) -> list[dict]:
+        """Reorder hits by combining each hit's original VS rank with a
+        bonus proportional to ``log(1 + citation_count)``. Cited pages
+        move up; never-cited pages keep their VS order.
+        """
+        if not hits:
+            return hits
+        paths = [h.get("path") for h in hits if h.get("path")]
+        counts = self._fetch_citation_counts(paths)
+        scored = []
+        for i, h in enumerate(hits):
+            base = 1.0 / (i + 1)
+            n = counts.get(h.get("path"), 0)
+            scored.append((base + alpha * math.log1p(n), i, h))
+        scored.sort(key=lambda t: (-t[0], t[1]))
+        return [h for _, _, h in scored]
+
+    def _rerank_by_rrf(self, hits: list[dict]) -> list[dict]:
+        """Reorder VS hits via Reciprocal Rank Fusion with PageRank.
+
+        Pulls `hub_score` for each hit's `page_id`, builds two rankings
         (VS rank + PageRank rank), fuses with RRF (k=60). Pages with NULL
         hub_score sit at the bottom of the PageRank ranking. Returns the
         same list of dicts re-ordered.
         """
         from wikibricks.graph_logic import rrf_fuse
 
-        page_ids = [r["page_id"] for r in results if r.get("page_id")]
+        page_ids = [h["page_id"] for h in hits if h.get("page_id")]
         if not page_ids:
-            return results
+            return hits
 
-        # VS ranking (already best-first from the query response)
         vs_ranking = page_ids
-
-        # PageRank ranking — pull current hub_scores for these page_ids
         ids_sql = ", ".join(f"'{self._escape(pid)}'" for pid in page_ids)
         resp = self._exec(
             f"SELECT page_id, COALESCE(hub_score, 0.0) AS hub_score "
@@ -496,42 +548,33 @@ class WikiClient:
         pr_ranking = sorted(page_ids, key=lambda pid: -hub_by_id.get(pid, 0.0))
 
         fused = rrf_fuse([vs_ranking, pr_ranking], k=60)
-        return sorted(
-            results,
-            key=lambda r: -fused.get(r.get("page_id"), 0.0),
-        )
+        return sorted(hits, key=lambda h: -fused.get(h.get("page_id"), 0.0))
 
     def update_graph_scores(self, scores: list[dict]) -> int:
         """Batch-MERGE PageRank hub_scores and community_ids into pages.
 
-        Each dict: `{"page_id": str, "hub_score": float | None,
-                     "community_id": int | None}`. NULL-safe — missing keys
-        become NULL via COALESCE. Returns the number of rows processed.
-
-        Called by `notebooks/wiki_graph_analytics.py` after each curate run.
+        Each dict: ``{"page_id": str, "hub_score": float | None,
+        "community_id": int | None}``. NULL-safe — missing keys become NULL
+        via COALESCE. Returns the number of rows processed.
         """
         if not scores:
             return 0
-
-        rows = []
-        for s in scores:
-            pid = self._escape(s["page_id"])
-            hub = s.get("hub_score")
-            cid = s.get("community_id")
-            hub_sql = f"CAST({float(hub)} AS DOUBLE)" if hub is not None else "NULL"
-            cid_sql = f"CAST({int(cid)} AS INT)" if cid is not None else "NULL"
-            rows.append(f"('{pid}', {hub_sql}, {cid_sql})")
-        union = ", ".join(rows)
-
+        rows_sql = ", ".join(
+            "(" + ", ".join([
+                f"'{self._escape(s['page_id'])}'",
+                str(s["hub_score"]) if s.get("hub_score") is not None else "NULL",
+                str(s["community_id"]) if s.get("community_id") is not None else "NULL",
+            ]) + ")"
+            for s in scores
+        )
         self._exec(
-            f"MERGE INTO {PAGES_TABLE} AS t "
-            f"USING (SELECT * FROM (VALUES {union}) "
-            f"AS v(page_id, hub_score, community_id)) AS s "
-            f"ON t.page_id = s.page_id "
+            f"MERGE INTO {PAGES_TABLE} AS target "
+            f"USING (SELECT * FROM VALUES {rows_sql} "
+            f"AS t(page_id, hub_score, community_id)) AS source "
+            f"ON target.page_id = source.page_id "
             f"WHEN MATCHED THEN UPDATE SET "
-            f"  hub_score = s.hub_score, "
-            f"  community_id = s.community_id, "
-            f"  updated_at = current_timestamp()"
+            f"  target.hub_score = source.hub_score, "
+            f"  target.community_id = source.community_id"
         )
         return len(scores)
 
@@ -612,71 +655,6 @@ class WikiClient:
 
         self._log("promote", path=path, query=query)
         return path
-
-    def upsert_vocabulary(
-        self,
-        observations: list[dict],
-        approve_threshold: int = 3,
-    ) -> int:
-        """Increment vocabulary counts for a batch of slug observations.
-
-        Each observation is `{"slug": str, "source": str}`. Existing slugs
-        have their `count` incremented and `last_seen` refreshed; new slugs
-        are inserted with `count=1` and `status='pending'`. Status flips to
-        `approved` once `count >= approve_threshold`.
-
-        Returns the number of observations processed.
-        """
-        if not observations:
-            return 0
-        rows = []
-        for obs in observations:
-            slug = self._escape(obs["slug"])
-            source = self._escape(obs.get("source") or "auto_tag")
-            rows.append(f"SELECT '{slug}' AS slug, '{source}' AS source")
-        union = " UNION ALL ".join(rows)
-        threshold = int(approve_threshold)
-        # Pre-aggregate by slug so MERGE sees one source row per target — Delta
-        # rejects multi-source-to-single-target matches as ambiguous. Without
-        # GROUP BY here, batches with repeated slugs (the LLM proposes the same
-        # tag across multiple pages) fail with
-        # DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE.
-        self._exec(
-            f"MERGE INTO {VOCABULARY_TABLE} AS t "
-            f"USING ("
-            f"  SELECT slug, MAX(source) AS source, COUNT(*) AS occurrences "
-            f"  FROM ({union}) GROUP BY slug"
-            f") AS s "
-            f"ON t.slug = s.slug "
-            f"WHEN MATCHED THEN UPDATE SET "
-            f"  count = t.count + s.occurrences, "
-            f"  last_seen = current_timestamp(), "
-            f"  status = CASE WHEN t.count + s.occurrences >= {threshold} "
-            f"               THEN 'approved' ELSE t.status END "
-            f"WHEN NOT MATCHED THEN INSERT "
-            f"(slug, source, count, first_seen, last_seen, status) "
-            f"VALUES (s.slug, s.source, s.occurrences, "
-            f"        current_timestamp(), current_timestamp(), "
-            f"        CASE WHEN s.occurrences >= {threshold} THEN 'approved' ELSE 'pending' END)"
-        )
-        return len(observations)
-
-    def append_page_tags(self, path: str, tags: list[str]) -> None:
-        """Append tags to `pages.tags`, deduped via array_distinct. Idempotent.
-
-        No-op when `tags` is empty.
-        """
-        if not tags:
-            return
-        path_esc = self._escape(path)
-        arr = ", ".join(f"'{self._escape(t)}'" for t in tags)
-        self._exec(
-            f"UPDATE {PAGES_TABLE} "
-            f"SET tags = array_distinct("
-            f"  array_union(COALESCE(tags, array()), array({arr}))"
-            f"), updated_at = current_timestamp() "
-            f"WHERE path = '{path_esc}'"
-        )
 
     def bulk_write_pages(
         self,
@@ -811,37 +789,16 @@ class WikiClient:
         return list(candidates.values())
 
     def commit_edges(self, edges: list[dict]) -> int:
-        """Batch-write edges with bi-temporal semantics.
+        """Batch-MERGE edges into the links table in a single statement.
 
-        Each edge dict must contain: ``source_page_id``, ``target_page_id``,
-        ``link_type``, ``confidence``, ``origin``. Optional bi-temporal fields:
-        ``valid_from`` (ISO 8601 string — when the fact became true) and
-        ``valid_until`` (when it stopped). Both default to "open-ended now":
-        ``valid_from = current_timestamp()``, ``valid_until = NULL``.
+        Each edge dict must contain: source_page_id, target_page_id, link_type,
+        confidence, origin. Invalid rows are skipped silently.
 
-        Append-only write pattern. For each new edge:
-        1. UPDATE any currently-open row with the same
-           ``(source_page_id, target_page_id, link_type)`` to set
-           ``valid_until`` = the new edge's ``valid_from`` (or
-           ``current_timestamp()`` if unspecified). This produces continuous
-           validity intervals — no gap, no overlap — and preserves the
-           closed row as ordinary table state.
-        2. INSERT the new row with the caller's (or default) ``valid_from``
-           and ``valid_until``.
-
-        For backward-compatible "the fact starts now" callers, no API change
-        is required. For real bi-temporal recording (a fact learned today
-        about a past event), supply ``valid_from``/``valid_until`` per-edge.
-
-        Edges are grouped by ``valid_from`` so the batched UPDATE+INSERT
-        pattern still collapses N edges to at most 2*K SQL round-trips
-        (where K = number of distinct valid_from values supplied).
-        Single-group (no caller-supplied valid_from) is the common case
-        and remains exactly two statements.
+        Collapses N edges into ONE MERGE with a multi-row VALUES source — at
+        scale (60 edges/page × 66 pages/run) this reduces 3960 round-trips to
+        66, which is the difference between a 3-hour run and a 3-minute run.
         """
-        from collections import defaultdict
-
-        valid: list[tuple[str, str, str, float, str, str | None, str | None]] = []
+        valid: list[tuple[str, str, str, float, str]] = []
         for e in edges:
             lt = e.get("link_type", "related")
             origin = e.get("origin", "manual")
@@ -852,51 +809,29 @@ class WikiClient:
                 continue
             if not 0.0 <= conf <= 1.0:
                 continue
-            valid.append((src, tgt, lt, conf, origin,
-                          e.get("valid_from"), e.get("valid_until")))
+            valid.append((src, tgt, lt, conf, origin))
 
         if not valid:
             return 0
 
-        # Group by (valid_from, valid_until) so a single backdated batch can
-        # still close the prior open rows with the right cutoff. Most calls
-        # have all edges in one group (the default-now case).
-        groups: dict[tuple[str | None, str | None], list[tuple]] = defaultdict(list)
-        for row in valid:
-            groups[(row[5], row[6])].append(row)
-
-        for (vf, vu), group in groups.items():
-            # Close-out timestamp for the supersede UPDATE: the new edge's
-            # valid_from (continuous intervals), or current_timestamp().
-            close_sql = f"TIMESTAMP '{self._escape(vf)}'" if vf else "current_timestamp()"
-            keys_sql = ", ".join(
-                f"('{r[0]}', '{r[1]}', '{r[2]}')" for r in group
+        rows_sql = ", ".join(
+            f"('{src}', '{tgt}', '{lt}', CAST({conf} AS FLOAT), '{origin}')"
+            for src, tgt, lt, conf, origin in valid
+        )
+        try:
+            self._exec(
+                f"MERGE INTO {LINKS_TABLE} AS t "
+                f"USING (SELECT * FROM (VALUES {rows_sql}) "
+                f"AS v(src, tgt, lt, conf, org)) AS s "
+                f"ON t.source_page_id = s.src AND t.target_page_id = s.tgt "
+                f"AND t.link_type = s.lt "
+                f"WHEN MATCHED THEN UPDATE SET confidence = s.conf, origin = s.org "
+                f"WHEN NOT MATCHED THEN INSERT "
+                f"(source_page_id, target_page_id, link_type, confidence, origin) "
+                f"VALUES (s.src, s.tgt, s.lt, s.conf, s.org)"
             )
-            try:
-                self._exec(
-                    f"UPDATE {LINKS_TABLE} "
-                    f"SET valid_until = {close_sql} "
-                    f"WHERE valid_until IS NULL "
-                    f"  AND (source_page_id, target_page_id, link_type) IN ({keys_sql})"
-                )
-            except Exception:
-                return 0
-
-            vf_sql = f"TIMESTAMP '{self._escape(vf)}'" if vf else "current_timestamp()"
-            vu_sql = f"TIMESTAMP '{self._escape(vu)}'" if vu else "NULL"
-            rows_sql = ", ".join(
-                f"('{r[0]}', '{r[1]}', '{r[2]}', CAST({r[3]} AS FLOAT), '{r[4]}', "
-                f"{vf_sql}, {vu_sql})"
-                for r in group
-            )
-            try:
-                self._exec(
-                    f"INSERT INTO {LINKS_TABLE} "
-                    f"(source_page_id, target_page_id, link_type, confidence, origin, "
-                    f" valid_from, valid_until) VALUES {rows_sql}"
-                )
-            except Exception:
-                return 0
+        except Exception:
+            return 0
 
         self._log("connect", details=f"committed={len(valid)}")
         return len(valid)
@@ -916,55 +851,6 @@ class WikiClient:
             return []
         sql = graph_neighbors_sql(page["page_id"], depth=depth, link_types=link_types)
         resp = self._exec(sql)
-        rows = resp.result.data_array if resp.result else []
-        if not rows:
-            return []
-        cols = [c.name for c in self._manifest_columns(resp.manifest)]
-        return [dict(zip(cols, row)) for row in rows]
-
-    def graph_neighbors_at(
-        self,
-        path: str,
-        at_timestamp: str,
-        depth: int = 1,
-        link_types: list[str] | None = None,
-    ) -> list[dict]:
-        """Return outgoing neighbors that were valid at ``at_timestamp``.
-
-        Bi-temporal point query (v0.6.0). Useful for reproducing the agent's
-        view of the world at a specific moment, debugging why an answer used
-        a particular set of edges, or auditing historical reasoning paths.
-        """
-        page = self.read_page(path)
-        if not page or not page.get("page_id"):
-            return []
-        sql = graph_neighbors_sql(
-            page["page_id"], depth=depth, link_types=link_types,
-            at_timestamp=at_timestamp,
-        )
-        resp = self._exec(sql)
-        rows = resp.result.data_array if resp.result else []
-        if not rows:
-            return []
-        cols = [c.name for c in self._manifest_columns(resp.manifest)]
-        return [dict(zip(cols, row)) for row in rows]
-
-    def link_history(self, src_path: str, dst_path: str) -> list[dict]:
-        """Return the full chronological version trace of edges between two pages.
-
-        Yields one row per edge version, oldest first. Each row carries the
-        ``link_type``, ``confidence``, ``origin``, ``valid_from``, and
-        ``valid_until`` (None = currently valid).
-        """
-        resp = self._exec(
-            f"SELECT l.link_type, l.confidence, l.origin, l.valid_from, l.valid_until "
-            f"FROM {LINKS_TABLE} l "
-            f"JOIN {PAGES_TABLE} s ON s.page_id = l.source_page_id "
-            f"JOIN {PAGES_TABLE} d ON d.page_id = l.target_page_id "
-            f"WHERE s.path = '{self._escape(src_path)}' "
-            f"  AND d.path = '{self._escape(dst_path)}' "
-            f"ORDER BY valid_from"
-        )
         rows = resp.result.data_array if resp.result else []
         if not rows:
             return []
@@ -1016,3 +902,108 @@ class WikiClient:
                         page_type="synthesis", created_by="maintenance",
                         tags=["meta", "index", "auto-generated"])
         return f"Materialized index with {len(entries)} pages"
+
+    def list_recent_by_cwd_tag(self, cwd_basename: str, limit: int = 3) -> list[dict]:
+        """Return the most-recently-updated session pages tagged with the given
+        cwd basename. Used by the recorder's SessionStart hook to surface
+        "where you left off" context when a user opens Claude Code in a
+        directory they've worked in before.
+
+        Returns ``[{path, title, summary, updated_at}, ...]``. Empty list if
+        ``cwd_basename`` is empty.
+        """
+        if not cwd_basename:
+            return []
+        tag = self._escape(f"cwd:{cwd_basename}")
+        resp = self._exec(
+            f"SELECT path, title, content:summary::STRING AS summary, "
+            f"       CAST(updated_at AS STRING) AS updated_at "
+            f"FROM {PAGES_TABLE} "
+            f"WHERE array_contains(tags, '{tag}') "
+            f"ORDER BY updated_at DESC "
+            f"LIMIT {int(limit)}"
+        )
+        rows = (resp.result.data_array if resp.result else None) or []
+        if not rows:
+            return []
+        cols = [c.name for c in self._manifest_columns(resp.manifest)]
+        return [dict(zip(cols, row)) for row in rows]
+
+    # ---- vocabulary ------------------------------------------------------
+
+    _VOCAB_SOURCES = ("llm", "manual", "seed")
+    _VOCAB_MIN_COUNT_FOR_ACTIVE = 3
+    _VOCAB_ACTIVE_WINDOW_DAYS = 90
+
+    @staticmethod
+    def _normalize_slug(raw: str) -> str:
+        """Lowercase, replace whitespace/underscore runs with single hyphens, strip."""
+        s = (raw or "").strip().lower()
+        out: list[str] = []
+        sep = False
+        for ch in s:
+            if ch.isalnum():
+                out.append(ch)
+                sep = False
+            elif ch in (" ", "_", "-", "/", "\t"):
+                if not sep and out:
+                    out.append("-")
+                    sep = True
+        return "".join(out).strip("-")
+
+    def upsert_vocabulary_slugs(self, slugs: list[str], source: str) -> int:
+        """Insert or bump count for each slug. Returns count of slugs written.
+
+        ``source`` must be one of ``llm | manual | seed``. Slugs are normalized
+        (lowercase, hyphen-separated, alnum). Empty slugs after normalization
+        are dropped. Status defaults to ``candidate``; the daily curate task
+        promotes to ``active`` once count crosses
+        ``_VOCAB_MIN_COUNT_FOR_ACTIVE``.
+        """
+        if source not in self._VOCAB_SOURCES:
+            raise ValueError(
+                f"source must be one of {self._VOCAB_SOURCES}, got {source!r}"
+            )
+        normalized = [n for n in (self._normalize_slug(s) for s in slugs) if n]
+        if not normalized:
+            return 0
+        src_esc = self._escape(source)
+        values_rows = ", ".join(
+            f"('{self._escape(s)}', '{src_esc}', current_timestamp(), current_timestamp())"
+            for s in normalized
+        )
+        promote = self._VOCAB_MIN_COUNT_FOR_ACTIVE
+        sql = (
+            f"MERGE INTO {VOCABULARY_TABLE} t "
+            f"USING (SELECT col1 AS slug, col2 AS source, col3 AS first_seen, col4 AS last_seen "
+            f"       FROM (VALUES {values_rows})) s "
+            f"ON t.slug = s.slug "
+            f"WHEN MATCHED THEN UPDATE SET "
+            f"  count = t.count + 1, "
+            f"  last_seen = s.last_seen, "
+            f"  status = CASE WHEN t.status = 'archived' THEN 'archived' "
+            f"                WHEN t.count + 1 >= {promote} THEN 'active' "
+            f"                ELSE t.status END "
+            f"WHEN NOT MATCHED THEN INSERT "
+            f"  (slug, source, count, first_seen, last_seen, status) "
+            f"  VALUES (s.slug, s.source, 1, s.first_seen, s.last_seen, "
+            f"          CASE WHEN s.source = 'seed' THEN 'active' ELSE 'candidate' END)"
+        )
+        self._exec(sql)
+        return len(normalized)
+
+    def list_active_vocabulary(self) -> list[str]:
+        """Return slugs with ``status='active'`` and recent activity.
+
+        Slugs not seen in the last ``_VOCAB_ACTIVE_WINDOW_DAYS`` days are
+        excluded even if their stored status is still ``active`` — they decay
+        out of the tag set until the daily curate task formally archives them.
+        """
+        resp = self._exec(
+            f"SELECT slug FROM {VOCABULARY_TABLE} "
+            f"WHERE status = 'active' "
+            f"  AND last_seen > current_timestamp() - INTERVAL {self._VOCAB_ACTIVE_WINDOW_DAYS} DAY "
+            f"ORDER BY count DESC, last_seen DESC"
+        )
+        rows = (resp.result.data_array if resp.result else None) or []
+        return [r[0] for r in rows]

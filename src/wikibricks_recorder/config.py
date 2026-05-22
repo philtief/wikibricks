@@ -73,6 +73,52 @@ def list_wikis() -> dict[str, dict[str, str]]:
     }
 
 
+def load_auto_tag_config() -> dict[str, Any]:
+    """Return the ``[auto_tag]`` section from the recorder config, or empty.
+
+    Used by the recorder to opt into LLM-based topic-slug extraction.
+    Default behaviour (no section) is OFF.
+    """
+    section = _load_full_toml().get("auto_tag") or {}
+    if not isinstance(section, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in section.items():
+        out[str(k)] = v
+    return out
+
+
+def load_auto_title_config() -> dict[str, Any]:
+    """Return the ``[auto_title]`` section from the recorder config, or empty.
+
+    Used by the recorder to opt into LLM-generated session titles. Default
+    behaviour (no section) is OFF; recorder falls back to the deterministic
+    ``page_builder.session_title`` boilerplate-skip heuristic.
+    """
+    section = _load_full_toml().get("auto_title") or {}
+    if not isinstance(section, dict):
+        return {}
+    out: dict[str, Any] = {}
+    for k, v in section.items():
+        out[str(k)] = v
+    return out
+
+
+def load_topic_keywords() -> dict[str, list[str]]:
+    """Return the ``[topic_keywords]`` section as ``{slug: [terms, ...]}``.
+    Empty dict if the section is absent or malformed. Used by the recorder
+    to auto-tag sessions with ``customer:<slug>`` at flush time.
+    """
+    section = _load_full_toml().get("topic_keywords") or {}
+    if not isinstance(section, dict):
+        return {}
+    out: dict[str, list[str]] = {}
+    for slug, terms in section.items():
+        if isinstance(terms, list):
+            out[str(slug)] = [str(t) for t in terms if isinstance(t, (str, int))]
+    return out
+
+
 def get_active_target() -> str | None:
     if not ACTIVE_TARGET_FILE.exists():
         return None

@@ -41,7 +41,7 @@ problem and create a **new** commit — never `--amend` or `--no-verify`.
    package ships its own stdio MCP server (`wikibricks-mcp`) because UC
    functions cannot do DML — that is consumer-side and allowed.
 3. **No raw REST API calls.** Use `databricks.sdk.WorkspaceClient` everywhere
-   except the vendored [redacted benchmark] evaluator.
+   except the vendored 2WikiMultiHopQA evaluator.
 4. **No hardcoded workspace IDs.** `databricks.yml` uses generic defaults;
    workspace-specific values belong in `databricks.override.yml` (gitignored).
 5. **No destructive git without explicit confirmation.** No `git push --force`,

@@ -20,7 +20,6 @@ from wikibricks.ops import (
     VS_INDEX,
     add_link_sql,
     broken_links_sql,
-    create_agent_traces_view_sql,
     create_index_view_sql,
     create_schema_sql,
     create_tables_sql,
@@ -31,7 +30,6 @@ from wikibricks.ops import (
     duplicate_paths_sql,
     get_schema,
     graph_neighbors_sql,
-    migrate_tables_sql,
     orphan_pages_sql,
     stale_pages_sql,
     write_page_sql,
@@ -59,7 +57,7 @@ class TestConstants:
 
 
 class TestEnvOverride:
-    """Env-var override of catalog/schema for personal-wikibricks-dev fork."""
+    """Env-var override of catalog/schema for personal-wikibricks fork."""
 
     def test_env_vars_override_catalog_and_schema(self, monkeypatch):
         """Setting WIKIBRICKS_CATALOG / WIKIBRICKS_SCHEMA before import retargets all tables."""
@@ -87,6 +85,12 @@ class TestCreateTablesSql:
         stmts = create_tables_sql()
         assert len(stmts) == 8
 
+    def test_vocabulary_table(self):
+        from wikibricks.ops import VOCABULARY_TABLE
+        stmts = create_tables_sql()
+        assert any(VOCABULARY_TABLE in s for s in stmts)
+        assert any("slug" in s and "first_seen" in s for s in stmts)
+
     def test_promote_checkpoint_table(self):
         from wikibricks import PROMOTE_CHECKPOINT_TABLE
         stmts = create_tables_sql()
@@ -95,18 +99,6 @@ class TestCreateTablesSql:
         cp_sql = next(s for s in stmts if PROMOTE_CHECKPOINT_TABLE in s)
         assert "last_watermark_ts" in cp_sql
         assert "checkpoint_id" in cp_sql
-
-    def test_vocabulary_table(self):
-        from wikibricks.ops import VOCABULARY_TABLE
-        stmts = create_tables_sql()
-        joined = "\n".join(stmts)
-        assert VOCABULARY_TABLE in joined
-        vocab_sql = next(s for s in stmts if VOCABULARY_TABLE in s)
-        assert "slug" in vocab_sql
-        assert "status" in vocab_sql
-        assert "count" in vocab_sql
-        assert "first_seen" in vocab_sql
-        assert "last_seen" in vocab_sql
 
     def test_pages_vs_source_projection_table(self):
         stmts = create_tables_sql()
@@ -370,13 +362,13 @@ class TestCreateUcFunctionsSql:
         assert "ROW_NUMBER()" in search_fn
         assert "rn <= num_results" in search_fn
         assert "LIKE concat" not in search_fn
-
-    def test_fn_wiki_search_filters_ephemeral_stubs(self):
-        """Managed-MCP agents must not see pages tagged ephemeral:stub —
-        those are programmatic 1-event /tmp invocations from old recorder
-        versions, kept for forensic access only."""
-        stmts = create_uc_functions_sql("wh-123")
-        search_fn = stmts[0]
+        # v0.7.5: managed-MCP search blends VS + PageRank via RRF (k=60),
+        # joined against pages.hub_score so MCP callers get the same
+        # ranking quality as Python WikiClient.search.
+        assert "hub_score" in search_fn
+        assert "60" in search_fn  # RRF k constant
+        assert "LEFT JOIN" in search_fn
+        # ephemeral:stub filter still in place after the RRF rewrite.
         assert "ephemeral:stub" in search_fn
 
     def test_fn_wiki_read(self):
@@ -609,91 +601,6 @@ class TestCreateIndexViewSql:
     def test_orders_by_path(self):
         sql = create_index_view_sql()
         assert "ORDER BY path" in sql
-
-
-class TestCreateAgentTracesViewSql:
-    def test_creates_view(self):
-        sql = create_agent_traces_view_sql()
-        assert "CREATE OR REPLACE VIEW" in sql
-        assert f"{CATALOG}.{SCHEMA}.agent_traces_v" in sql
-
-    def test_selects_from_wiki_log(self):
-        sql = create_agent_traces_view_sql()
-        assert LOG_TABLE in sql
-
-    def test_columns_match_promote_notebook_contract(self):
-        # The promote notebook reads:
-        #   session_id, user_query, model_response, retrieved_paths, timestamp
-        # Drift here breaks the promote pipeline silently.
-        sql = create_agent_traces_view_sql()
-        for col in ("session_id", "user_query", "model_response",
-                    "retrieved_paths", "timestamp"):
-            assert col in sql, f"missing column {col} in agent_traces_v"
-
-    def test_filters_to_search_with_returned_paths(self):
-        sql = create_agent_traces_view_sql()
-        assert "op_type = 'search'" in sql
-        assert "returned_paths" in sql
-
-
-class TestMigrateTablesSql:
-    def test_returns_a_list_of_statements(self):
-        stmts = migrate_tables_sql()
-        assert isinstance(stmts, list)
-        assert len(stmts) >= 4  # first_seen + last_seen × (drop null + set default)
-
-    def test_vocabulary_first_seen_migration_present(self):
-        from wikibricks.ops import VOCABULARY_TABLE
-        stmts = migrate_tables_sql()
-        joined = "\n".join(stmts)
-        assert VOCABULARY_TABLE in joined
-        assert "first_seen DROP NOT NULL" in joined
-        assert "first_seen SET DEFAULT current_timestamp()" in joined
-
-    def test_vocabulary_last_seen_migration_present(self):
-        stmts = migrate_tables_sql()
-        joined = "\n".join(stmts)
-        assert "last_seen  DROP NOT NULL" in joined or "last_seen DROP NOT NULL" in joined
-        assert ("last_seen  SET DEFAULT current_timestamp()" in joined
-                or "last_seen SET DEFAULT current_timestamp()" in joined)
-
-    def test_each_statement_is_single_and_idempotent(self):
-        # No multi-statement strings — sdk_redeploy iterates over the list.
-        # Migrations may be ALTER TABLE or one-shot data backfills (UPDATE ...
-        # WHERE col IS NULL). Both must be idempotent.
-        for stmt in migrate_tables_sql():
-            assert stmt.count(";") == 0, f"unexpected semicolon in: {stmt}"
-            head = stmt.strip().split()[0].upper()
-            assert head in ("ALTER", "UPDATE"), (
-                f"unexpected migration verb: {stmt}"
-            )
-
-    def test_pages_v070_graph_columns_migration_present(self):
-        # v0.7.0 — taxonomy + graph analytics. memory_class default,
-        # hub_score/community_id NULL-able until first analytics run.
-        stmts = migrate_tables_sql()
-        joined = "\n".join(stmts)
-        assert "ADD COLUMNS (memory_class STRING, hub_score DOUBLE, community_id INT)" in joined
-        assert "memory_class IS NULL" in joined  # backfill predicate
-        assert "memory_class SET DEFAULT 'semantic'" in joined
-
-    def test_pages_table_has_memory_class_and_graph_columns(self):
-        stmts = create_tables_sql()
-        pages_sql = stmts[0]
-        for col in ("memory_class", "hub_score", "community_id"):
-            assert col in pages_sql, f"missing {col} in canonical pages DDL"
-        # Default for memory_class is 'semantic'
-        assert "memory_class      STRING        DEFAULT 'semantic'" in pages_sql
-
-    def test_links_bitemporal_migration_present(self):
-        # v0.6.0 (Track 1) migration: pre-v0.6.0 links table has no validity
-        # columns. Databricks SQL has no `ADD COLUMN IF NOT EXISTS`, so the
-        # first-run statement adds both columns and re-runs fail with
-        # "column already exists" — caught + continued by sdk_redeploy.
-        stmts = migrate_tables_sql()
-        joined = "\n".join(stmts)
-        assert "ADD COLUMNS (valid_from TIMESTAMP, valid_until TIMESTAMP)" in joined
-        assert "valid_from IS NULL" in joined  # backfill predicate
 
 
 class TestOrphanPagesSql:

@@ -43,9 +43,9 @@ flowchart TD
 
     WIKI["WikiClient (Python)\nDirect SDK path - installed from wheel in app/\nRuns SQL via SQL Warehouse"]
 
-    VS["Vector Search  (DELTA_SYNC index)\npages_index\nEmbedding: [redacted-model]"]
+    VS["Vector Search  (DELTA_SYNC index)\npages_index\nEmbedding: databricks-bge-large-en"]
 
-    SEEDS["Seed Loaders + Scripts\nsrc/wikibricks/seeds/*  ·  scripts/\nsetup · VS index creation\n[redacted benchmark] + 2Wiki eval harness"]
+    SEEDS["Seed Loaders + Scripts\nsrc/wikibricks/seeds/*  ·  scripts/\nsetup · VS index creation\nHotpotQA + 2Wiki eval harness"]
 
     LINT["Nightly Lint Job\nDatabricks Workflow\nWrites issues to log table"]
 

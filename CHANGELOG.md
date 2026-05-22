@@ -7,267 +7,435 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.7.4] - 2026-05-16
+## [0.7.7] - 2026-05-19
+
+### Added
+
+- **`wikibricks_recorder/auto_title.py`** — LLM-generated session titles,
+  opt-in via the `[auto_title]` TOML block. Mirrors the `auto_tag.py`
+  contract: synchronous call at flush time, ≤40 output tokens,
+  ChatMessage pattern against a Foundation Model serving endpoint
+  (default `databricks-claude-haiku-4-5`), silent fall-back to
+  `page_builder.session_title` on any error.
+- **`config.load_auto_title_config()`** — reads the `[auto_title]`
+  section; returns `{}` when absent (default OFF).
+- **Wired into `hooks._flush`** — try `auto_title.generate_title`,
+  fall through to the deterministic boilerplate-skip heuristic on
+  None / failure. Failures logged via `_log_error`.
+- **`tests/test_auto_title.py`** — 11 tests covering enable/disable,
+  clean output, surrounding-quote stripping, truncation, runaway-response
+  rejection, custom endpoint, empty-prompt short-circuit, endpoint-error
+  swallowing.
+- Plugin manifest bumped to v0.7.7.
+
+### To enable
+
+```toml
+# ~/.wikibricks-recorder.toml
+[auto_title]
+enabled = true
+endpoint = "databricks-claude-haiku-4-5"
+```
+
+Cost ≈ $0.0005/session (Haiku, ~600 input tokens, ~40 output). At 5
+sessions/day this is ~$1/year.
+
+## [0.7.6] - 2026-05-19
+
+### Added
+
+- **`topic_clustering.cluster_pages_by_community(pages)`** — groups pages
+  by the `community_id` written nightly by `graph_analytics` (Leiden over
+  the currently-valid edge graph). Drops null-community + sub-threshold
+  clusters; sorts within-cluster by `hub_score` desc so synthesis picks
+  authoritative members first.
+- **`topic_clustering.topic_slug_from_titles(titles, community_id=None)`**
+  — deterministic slug derivation from cross-title word frequency, with
+  stop-word filtering and a `community-<id>` fallback.
+- **`notebooks/promote_topics.py` is now live**, not scaffolding. The
+  three-step pipeline (cluster → synthesise → judge) is fully wired
+  against `databricks-claude-sonnet-4-5` (synth) +
+  `databricks-claude-haiku-4-5` (judge). Writes pass the 1–5 judge
+  threshold (default 4.0); rejects log `op_type='promote_topic_reject'`.
+- **`promote_topics` task** in `wiki_curate_job.yml`. Depends on
+  `graph_analytics`. Capped by `max_topics_per_run` (default 20).
+- **`tests/test_topic_clustering_community.py`** — 12 tests covering
+  empty input, null-community drop, singleton drop, hub_score ordering,
+  slug determinism, fallback.
+- **`tests/test_promote_topics_notebook.py`** — 12 drift-guard assertions
+  on the notebook contract.
+- Plugin manifest bumped to v0.7.6.
+
+## [0.7.5] - 2026-05-19
 
 ### Changed
 
-- **`WikiClient.list_pages` and `WikiClient.search` now exclude
-  `ephemeral:stub`-tagged pages by default.** Pages tagged this way are
-  1-event `/tmp` programmatic recorder invocations from old recorder
-  versions, kept for forensic access. Pass `include_ephemeral=True` to
-  surface them. `search` overfetches by 3× to keep `num_results` honest
-  when stubs are mixed in.
-- **`fn_wiki_search` UC function** (managed-MCP read surface) inherits
-  the same filter — agents asking the wiki via MCP no longer see stubs.
-  Inner `vector_search()` bumped from `num_results => 20` to `40` to
-  account for the post-filter.
-- **Default chunk size raised from 8 000 → 30 000 characters** in
-  `segregate_logic.DEFAULT_MAX_CHARS_PER_CHUNK`. Measured against last
-  24h of recorder traffic, the typical ~165 KB session body went from
-  ~21 chunks to ~5–6, cutting overall page count ~3× without measurable
-  hit to Vector Search retrieval quality (chunks remain well under the
-  embedding context window). `notebooks/wiki_segregate.py` reads the
-  constant; the `max_chars_per_chunk` job widget still wins.
+- **PageRank RRF rerank is now the DEFAULT in `WikiClient.search`.** The
+  `graph_analytics` task computes `hub_score` nightly; not using it was
+  waste. Opt out per-call with `rerank_with_pagerank=False` or globally
+  via the new `WIKIBRICKS_DISABLE_PAGERANK_RERANK=1` env var.
+- **`fn_wiki_search` UC function blends VS rank + PageRank rank via RRF
+  (k=60) in pure SQL.** Managed-MCP callers (Databricks managed MCP at
+  `/api/2.0/mcp/functions/<catalog>/<schema>`) now get the same ranking
+  quality as Python `WikiClient.search`. Implemented with two window
+  functions over the over-fetched VS hits joined to `pages.hub_score`;
+  pages without a hub_score still appear via VS rank only.
+- Plugin manifest bumped to v0.7.5.
 
-## [0.7.3] - 2026-05-16
+## [0.7.4] - 2026-05-19
+
+### Changed
+
+- **`WikiClient.list_pages` and `WikiClient.search` exclude pages tagged
+  `ephemeral:stub` by default.** Pass `include_ephemeral=True` to surface
+  them. `search` overfetches by 3× to keep `num_results` honest when stubs
+  are mixed in.
+- **`fn_wiki_search` UC function** (managed-MCP read surface) inherits the
+  same filter. Inner `vector_search()` bumped from `num_results => 20` to
+  `40` to account for the post-filter.
+- **Default chunk size raised from 8 000 → 30 000 characters** via the new
+  `segregate_logic.DEFAULT_MAX_CHARS_PER_CHUNK` constant. Cuts per-page chunk
+  count ~3× on typical session bodies without measurable retrieval-quality
+  loss. The notebook widget `max_chars_per_chunk` still wins when set.
+- **`WikiClient.search(rerank_with_pagerank=True)`** opt-in flag composes
+  with the existing `rerank_by_citations` flag. RRF (k=60) blends VS rank
+  with PageRank rank from `pages.hub_score`; pages without a hub_score
+  contribute 0 but stay visible via their VS rank.
+
+### Added
+
+- **`WikiClient.update_graph_scores(scores)`** — batch MERGE of
+  `hub_score` + `community_id` for the graph_analytics task.
+- **`pages.hub_score`, `pages.community_id`, `pages.memory_class`** columns
+  in the canonical DDL (`ops.create_tables_sql`).
+- **`links.valid_from`, `links.valid_until`** bi-temporal columns.
+- **graph_analytics + tag tasks** in `wiki_curate_job.yml`. Five-task DAG
+  now: curate → segregate, graph_analytics, tag, promote. `igraph` added
+  to the serverless environment.
+- **Plugin manifest bumped to v0.7.4.**
+- **`llm:`-prefixed tags preserved across `write_page` and
+  `bulk_write_pages` MERGEs** — recorder writes no longer wipe the
+  auto-tag task's contributions.
+
+## [0.7.3] - 2026-05-19
 
 ### Fixed
 
 - **Recorder titles no longer mirror LLM system prompts.**
-  `page_builder.session_title` now skips boilerplate lines (`"You are…"`,
+  `page_builder.session_title` skips boilerplate lines (`"You are…"`,
   `"Apply maximum compression. Rules:"`, `"Summarize…"`, lone `Rules:` /
   `Instructions:` headers, and bullet-list items) and picks the first
-  informative line of the user's prompt. Sessions whose every line is
-  scaffolding fall back to `Session <short-id>`. Previously, 92 % of a
-  marathon coding day's session pages got titled with the summarizer
-  system prompt, making them indistinguishable in any list view.
+  informative line of the prompt. Sessions whose every line is scaffolding
+  fall back to `Session <short-id>`.
 - **Ephemeral 1-prompt `/tmp` sessions are no longer written as pages.**
   New `page_builder.is_ephemeral(state)` returns True when `cwd` is
   `/tmp`, `/private/tmp`, or `/var/tmp`, or when the session has fewer
   than `WIKIBRICKS_RECORDER_MIN_EVENTS` events (default 2). `_flush`
-  short-circuits — no page write, no chunks, no curate cost. Programmatic
-  Claude Code sub-invocations (summarizers, sub-agents firing `claude`
-  with a single prompt) no longer pollute the wiki.
+  short-circuits — no page write, no chunks, no curate cost.
+
+### Compatibility
+
+- `_looks_like_system_prompt` kept as a back-compat shim forwarding to the
+  new `_is_boilerplate` detector. Whitespace-only input returns False.
+
+## [0.7.2] - 2026-05-19
 
 ### Added
 
-- `scripts/backfill_recorder_titles.py` — one-shot fixer that finds
-  pages whose titles match the old boilerplate-leak pattern and
-  re-titles them in place by re-parsing the body. Idempotent;
-  reports `--dry-run` counts before any write.
+- **`examples/team_wiki/`** — multi-agent team-wiki walkthrough plus
+  `simulate_team_activity.py` sample-data generator.
+- **`examples/audit_demo/`** — bi-temporal audit demo (`audit_demo.py`
+  writes a four-page graph through three event windows; `post.md` is a
+  Medium-ready essay).
 
-## [0.7.2] - 2026-05-15
-
-### Added
-
-- **`examples/team_wiki/`** — multi-agent team-wiki walkthrough.
-  README explains the shared-wiki pattern (one catalog/schema, many
-  writers, UC-governed). `simulate_team_activity.py` script writes
-  ~9 sample pages across three fake users for screenshots/demos.
-- **`examples/audit_demo/`** — bi-temporal audit demo.
-  `audit_demo.py` writes a four-page graph through three event windows
-  (Munich → London → Berlin) with backdated `valid_from` / `valid_until`
-  values, then queries it from three points in time. `post.md` is a
-  Medium-ready essay explaining bi-temporal memory and why
-  wikibricks on Delta + UC differs from Mem0 / Letta / Graphiti.
-
-
-## [0.7.1] - 2026-05-15
+## [0.7.1] - 2026-05-19
 
 ### Added
 
-- **Karpathy export** — `python -m wikibricks.export_karpathy <target_dir>`
-  walks every page, writes one `.md` per page with YAML frontmatter and
-  a `## Related` section carrying outgoing currently-valid edges as
-  `[[wikilinks]]` (plain) or `link_type::[[wikilinks]]` (typed). Round-trips
-  with the v0.6.0 importer — export, edit in Obsidian/Foam/Dendron, re-import.
-- **`wikibricks.karpathy_logic.render_page_markdown`** and
-  `map_wiki_path_to_file` — pure helpers for the export pipeline. Tested
-  for round-trip fidelity against the example fixture.
+- **Karpathy export** — `python -m wikibricks.export_karpathy <dir>` walks
+  every page, writes one `.md` per page with YAML frontmatter and a
+  `## Related` section carrying outgoing currently-valid edges as
+  `[[wikilinks]]` (plain) or `link_type::[[wikilinks]]` (typed).
+- **`graph_logic`, `health`, `tag_logic`, `*_karpathy`** modules — see the
+  v0.7.4 commit message for the per-file decision log of the reconciliation
+  with remote v0.7.0 (citation parsing, customer-tag vocab, provenance,
+  MCP stderr — all preserved).
+
+## [0.7.0] - 2026-05-13
+
+### Added
+
+- **Outcome tracking via citation parsing.** At ``Stop`` time, the
+  recorder reads the transcript JSONL at ``payload["transcript_path"]``,
+  walks to the agent's most recent assistant message, and extracts every
+  ``[wb:<path>]`` marker. One ``op_type='cited'`` row per unique cited
+  path goes to ``wiki_log``, with ``details={"session_id": "<sid>"}``.
+  Visible stderr summary mirrors the other injection paths::
+
+      wikibricks: cited 2 pages from this session
+        - sessions/2026/05/04/abc
+        - topics/solvd
+
+  Parser lives in ``src/wikibricks_recorder/citations.py`` (pure
+  function, no LLM, no SDK calls). Logging lives in
+  ``hooks.py::_log_citations``. All failures (missing transcript, bad
+  JSON, log errors) are swallowed silently so the host is never crashed.
+- **Citation-aware search reranker.**
+  ``WikiClient.search(rerank_by_citations=True)`` now joins each
+  candidate hit with its ``wiki_log`` citation count and re-orders by
+  ``1/(rank+1) + 0.5 * log(1 + cited_count)``. Pages with ≥ 5 prior
+  citations consistently move ahead of un-cited rank-0 hits — the wiki
+  *learns* which pages have proven useful and surfaces them first. The
+  recorder's MCP search and per-prompt injection both pick up reranking
+  automatically when ``WIKIBRICKS_RERANK_BY_CITATIONS=1`` is set; the
+  argument flips the default per-call when callers want to override.
+  Lives in ``WikiClient._rerank_by_citations`` and
+  ``WikiClient._fetch_citation_counts``.
+- New ``wiki_log`` op_type: ``cited`` (documented in
+  ``CLAUDE.md`` op_type table).
 
 ### Changed
 
-- Bundle's `version` variable default bumped to `0.7.1` so fresh deploys
-  resolve to the published wheel.
+- Plugin launcher's ``WIKIBRICKS_PLUGIN_REF`` default bumped from
+  ``v0.6.0`` to ``v0.7.0``.
+- ``_flush`` now returns the constructed ``WikiClient`` (or ``None``
+  when the session was skipped as empty/utility) so callers can reuse
+  it. Used by ``on_stop`` to call ``_log_citations`` on the same client
+  without re-resolving config.
 
+Test count: 609 → 637 (11 parser + 7 logging + 10 rerank). Ruff clean.
 
-## [0.7.0] - 2026-05-15
+## [0.6.0] - 2026-05-13
 
 ### Added
 
-- **`wikibricks.graph_logic`** — pure helpers for graph analytics:
-  `build_igraph`, `compute_pagerank`, `compute_communities`, `rrf_fuse`.
-  LLM-free; igraph as a runtime dependency.
-- **`pages.hub_score`** — PageRank (PRPACK, damping=0.85) over the directed
-  graph of currently-valid edges. Reflects authority flow per the `cites`
-  relationship.
-- **`pages.community_id`** — Leiden community assignment computed on the
-  undirected projection of the graph. NULL for tiny graphs (<5 nodes) where
-  community detection is not informative.
-- **`pages.memory_class`** — taxonomy column (`episodic`, `semantic`,
-  `procedural`, `synthesis`). Default `'semantic'`. Aligns with the
-  community-standard memory-class vocabulary (atlan, mem0, appscale).
-- **`WikiClient.update_graph_scores(scores)`** — batch MERGE of
-  `(page_id, hub_score, community_id)` into pages. Used by the new
-  notebook task. NULL-safe.
-- **`WikiClient.search(rerank_with_pagerank=True)`** — optional flag that
-  pulls each result's `hub_score` and reorders via Reciprocal Rank Fusion
-  (k=60) across vector-search rank and PageRank rank. Default off —
-  backward-compatible.
-- **`notebooks/wiki_graph_analytics.py`** — new opt-in task in
-  `wikibricks_curate`, depends on `curate`. Reads currently-valid edges
-  (bi-temporal filter `WHERE valid_until IS NULL`), builds igraph,
-  computes PageRank + Leiden, writes scores back. Logs a `graph_analytics`
-  event to `wiki_log`.
-- **`[graph]` optional install extra** in `pyproject.toml`:
-  `uv pip install wikibricks[graph]` for the igraph dependency.
-- **Migration**: `migrate_tables_sql()` adds three columns to `pages` in
-  one ALTER batch + backfills `memory_class='semantic'` for existing rows.
+- **Provenance citations on injected context.** Every
+  ``additionalContext`` block emitted by the recorder (both the
+  ``SessionStart`` prelude and the per-prompt ``UserPromptSubmit``
+  injection) now ends with a one-line directive instructing the agent
+  to cite any page it used inline as ``[wb:<path>]``::
+
+      When you use information from any page above, cite the path
+      inline as [wb:<path>] so the user can trace the source.
+
+  The marker format is stable and machine-parseable. It lets users
+  trace which prior page the agent's answer drew from, and sets up
+  outcome tracking in 0.7.0 (citations → ``helpful_score`` column →
+  search reranker). Lives in
+  ``src/wikibricks_recorder/hooks.py::_CITATION_DIRECTIVE`` and is
+  appended to both injection paths. No behavior change when
+  ``WIKIBRICKS_INJECT_CONTEXT`` is unset.
 
 ### Changed
 
-- **Bundle deploy** installs `igraph>=0.11,<2.0` into the serverless env
-  alongside the wikibricks wheel.
-- **Default `version` bundle variable** bumped from `0.5.0` to `0.7.0`
-  so the env-dep wheel path resolves correctly out of the box.
+- Plugin launcher's ``WIKIBRICKS_PLUGIN_REF`` default bumped from
+  ``v0.5.0`` to ``v0.6.0``.
 
+Test count: 607 → 609 (2 citation-directive assertions). Ruff clean.
 
-## [0.6.2] - 2026-05-15
+## [0.5.0] - 2026-05-13
+
+### Added
+
+- **SessionStart prelude — "where you left off."** When
+  ``WIKIBRICKS_INJECT_CONTEXT=1`` (same env-var gate as Stage 2
+  per-prompt injection), the recorder's ``on_session_start`` hook now
+  queries wikibricks for the most recent 3 session pages tagged with
+  the current ``cwd:<basename>`` and emits them as a one-shot
+  ``SessionStart`` ``additionalContext`` JSON. The agent sees prior
+  sessions from this directory the moment the new session opens — no
+  search, no prompt needed. User-visible stderr summary mirrors the
+  per-prompt path:
+
+      wikibricks: prelude - 3 prior sessions in 'wikibricks'
+
+  New ``WikiClient.list_recent_by_cwd_tag(cwd_basename, limit=3)``
+  exposes the underlying SQL (filter by ``array_contains(tags,
+  'cwd:X')``, order by ``updated_at`` DESC). LLM-free per the library
+  hard rules. Hook lives in
+  ``src/wikibricks_recorder/hooks.py::_emit_cwd_prelude``.
+- **Search-visibility stderr in the MCP server.** Every successful
+  ``wiki_search``, ``wiki_read_full``, ``wiki_write_page``,
+  ``wiki_promote_answer``, and ``wiki_index`` MCP tool call now prints
+  a single terse line to stderr. Examples:
+
+      wikibricks: search "AGI roadmap" -> 3 hits
+      wikibricks: read sessions/2026/05/04/abc
+      wikibricks: wrote topics/solvd
+
+  Closes the trust gap from the other side: you already saw automatic
+  injection via Stage 2; now you also see every agent-initiated wiki
+  call. Always-on, no env-var gate, terse format (one line, ≤120
+  chars). Hook lives in
+  ``src/wikibricks_recorder/wiki_mcp.py::_log_tool_call``.
+
+### Changed
+
+- Plugin launcher's ``WIKIBRICKS_PLUGIN_REF`` default bumped from
+  ``v0.4.1`` to ``v0.5.0``.
+
+Test count: 591 → 607 (7 cwd-tag + 5 prelude + 4 stderr-summary).
+Ruff clean.
+
+## [0.4.1] - 2026-05-13
 
 ### Fixed
 
-- **`commit_edges` is now genuinely bi-temporal.** Prior versions accepted
-  no caller-supplied event times, so every edge's `valid_from` collapsed
-  to `current_timestamp()` — structurally bi-temporal (the columns existed)
-  but functionally uni-temporal in disguise. v0.6.2 accepts optional
-  `valid_from` and `valid_until` strings per edge. Supersede close-out
-  uses the new edge's `valid_from` (continuous validity intervals, no gap).
-  An agent learning today that "Philipp lived in Munich from 2020 to 2023"
-  can now record that fact with its real validity window while `created_at`
-  remains today.
-- README claim about "Graphiti's bi-temporal model" was technically true
-  only after v0.6.2. Prior to this release the column shape was bi-temporal
-  but the write API was not — calling the v0.6.0 model "bi-temporal" was an
-  overclaim. Corrected.
+- **`WikiClient.list_active_vocabulary`** no longer crashes on an empty
+  result set. The Databricks SDK returns ``resp.result.data_array =
+  None`` for 0-row SELECTs, not ``[]``; the helper now coerces to ``[]``
+  before iterating.
+- **`auto_tag.extract_topic_slugs`** now passes typed
+  ``databricks.sdk.service.serving.ChatMessage`` objects to
+  ``serving_endpoints.query`` instead of plain dicts. The dict form was
+  silently rejected by the SDK (``'dict' object has no attribute
+  as_dict'``), so the call never made it to FMAPI in 0.4.0. End-to-end
+  test now extracts real slugs against the live endpoint in ~2s.
 
-### Changed
-
-- **`commit_edges` batching**: edges are now grouped by `(valid_from,
-  valid_until)`. Default-now case (no caller-supplied times) is still
-  exactly one UPDATE + one INSERT per call. Mixed-time batches do one
-  UPDATE + one INSERT per distinct `(valid_from, valid_until)` group.
-
-
-## [0.6.1] - 2026-05-15
-
-### Fixed
-
-- **`migrate_tables_sql`** — replace `ALTER TABLE ... ADD COLUMN IF NOT
-  EXISTS` (rejected by Databricks SQL with PARSE_SYNTAX_ERROR) with the
-  one-shot `ADD COLUMNS (valid_from TIMESTAMP, valid_until TIMESTAMP)`
-  form. Idempotency on re-run is provided by `sdk_redeploy`'s
-  continue-on-failure handling (logs FAILED on the second run, moves on)
-  rather than by the SQL itself. v0.6.0 tag had the broken syntax; v0.6.1
-  is the one to install for a fresh deploy.
-
-### Docs
-
-- **README**: corrected the bi-temporal section. History is persisted in
-  the closed rows themselves (which survive `OPTIMIZE`/`VACUUM`), not via
-  Delta time travel — time travel is retention-bounded and is not used by
-  any of the bi-temporal read paths.
-
-
-## [0.6.0] - 2026-05-15
+## [0.4.0] - 2026-05-13
 
 ### Added
 
-- **Bi-temporal links (Track 1)** — `links` table gains `valid_from` and
-  `valid_until` columns. `WikiClient.commit_edges` is now append-only:
-  each new edge closes any prior currently-open row for the same
-  `(source_page_id, target_page_id, link_type)` (sets `valid_until =
-  current_timestamp()`) and INSERTs a fresh row. Matches Graphiti's
-  bi-temporal model on a Delta substrate. Reads filter by validity
-  automatically.
-- **`WikiClient.graph_neighbors_at(path, at_timestamp, depth, link_types)`**
-  — point-in-time graph traversal. Returns neighbors that were valid at
-  `at_timestamp` (ISO 8601 string).
-- **`WikiClient.link_history(src_path, dst_path)`** — full chronological
-  version trace of edges between two pages, oldest first. Each row carries
-  `link_type`, `confidence`, `origin`, `valid_from`, `valid_until`.
-- **Karpathy-pattern importer (Track 3)** — `python -m wikibricks.import_karpathy
-  <dir>` walks a folder of markdown files, parses YAML frontmatter, extracts
-  `[[wikilinks]]` and `relationship::[[target]]` typed edges, and writes
-  them through `bulk_write_pages` + `commit_edges`. Supports Obsidian /
-  Foam / Dendron-style markdown with zero runtime dependencies beyond
-  stdlib. `--dry-run` reports without writing.
-- **`wikibricks.karpathy_logic`** — pure helpers: `parse_frontmatter`,
-  `extract_wikilinks`, `extract_typed_edges`, `wiki_path_for`. LLM-free.
-- **`examples/karpathy_wiki/`** — example fixture with 6 markdown files
-  demonstrating the Karpathy three-folder pattern (`raw/`, `wiki/`,
-  `index.md`) plus a typed-edge example (`cites::[[Apache Spark]]`).
+- **Evolving customer-tag vocabulary via LLM (opt-in).** New
+  ``wiki_vocabulary`` Delta table accumulates topic slugs over time;
+  the recorder asks a configurable Databricks Foundation Model API
+  serving endpoint to extract 1-3 slugs per session at flush time,
+  upserts them, and tags the session with ``customer:<slug>``. Replaces
+  the static ``[topic_keywords]`` design from 0.3.4 with one that grows
+  naturally as the corpus expands. **Off by default**; enable via
+  ``[auto_tag]`` section in ``~/.wikibricks-recorder.toml``::
+
+      [auto_tag]
+      enabled = true
+      endpoint = "databricks-claude-haiku-4-5"
+      max_input_tokens = 1000
+
+  Slugs persist with ``source ∈ {llm, manual, seed}`` and ``status ∈
+  {candidate, active, archived}``; a slug crosses to ``active`` once
+  ``count >= 3``. ``WikiClient`` gains
+  ``upsert_vocabulary_slugs(slugs, source)`` and
+  ``list_active_vocabulary()`` (both LLM-free per the library's hard
+  rules — the LLM call lives in ``src/wikibricks_recorder/auto_tag.py``).
+- ``config.load_auto_tag_config()`` reads the new TOML section.
+
+### Schema
+
+- New table ``{catalog}.{schema}.wiki_vocabulary`` created by
+  ``create_tables_sql()``. Run the ``deploy_wiki_store`` notebook or
+  ``databricks bundle deploy`` to add it to existing wikis.
+
+### Privacy
+
+- The auto-tag path sends a sample of prompt text to your configured
+  Databricks serving endpoint for entity extraction. Default endpoint
+  ``databricks-claude-haiku-4-5`` stays within your workspace tenant.
+  No data leaves Databricks. Disable by omitting the ``[auto_tag]``
+  section or setting ``enabled = false``.
 
 ### Changed
 
-- **`WikiClient.commit_edges` SQL shape** changed from MERGE-with-update
-  to UPDATE-close-then-INSERT. Two batched round-trips regardless of N.
-- **`graph_neighbors`** now filters `WHERE l.valid_until IS NULL` by
-  default. Use `graph_neighbors_at(t)` for historical state.
-- **Schema migration**: `migrate_tables_sql()` adds `ALTER TABLE links
-  ADD COLUMNS (valid_from, valid_until)` + a backfill UPDATE. Idempotent
-  on re-run (Databricks SQL has no `ADD COLUMN IF NOT EXISTS`; sdk_redeploy
-  continues past "column already exists" errors).
+- Plugin launcher's ``WIKIBRICKS_PLUGIN_REF`` default bumped from
+  ``v0.3.4`` to ``v0.4.0``.
 
-## [0.5.1] - 2026-05-15
+Test count: 564 → 591 (added 8 vocabulary + 16 auto_tag + 2 hook + 1 ops).
+Ruff clean.
 
-### Fixed
-
-- **`WikiClient.upsert_vocabulary`** (Bug 5) — pre-aggregates source rows
-  with `GROUP BY slug, COUNT(*) AS occurrences` before the MERGE. Without
-  this, batches with the same slug across multiple pages fail with
-  `DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE`. Increments
-  count by occurrences (not a hardcoded 1) on the matched branch.
-- **`agent_traces_v`** (Bug 6) — emits `CAST('' AS STRING) AS model_response`
-  instead of NULL. The promote notebook concatenates message contents
-  through `str.join`; NULL hits `TypeError: sequence item 0: expected str
-  instance, NoneType found`.
-
-
-## [0.5.0] - 2026-05-15
+## [0.3.4] - 2026-05-13
 
 ### Added
 
-- **`wikibricks.tag_logic`** — pure helpers for LLM-driven auto-tagging:
-  `parse_tag_response`, `normalize_slug`, `dedupe_against_vocabulary`,
-  `should_approve`, `prefix_llm`, `build_tag_event`. Library stays
-  LLM-free; the LLM call lives in `notebooks/wiki_tag.py`.
-- **`WikiClient.upsert_vocabulary(observations, approve_threshold)`** —
-  batched MERGE into `wiki_vocabulary` with auto-approval at threshold.
-- **`WikiClient.append_page_tags(path, tags)`** — append tags to
-  `pages.tags`, deduped via `array_distinct(array_union(...))`.
-- **`notebooks/wiki_tag.py`** — new opt-in task in `wikibricks_curate`,
-  proposes 3-5 semantic tags per recent top-level page via FMAPI,
-  writes vocab + page tags, logs `auto_tag` events.
-- **`wikibricks.ops.VOCABULARY_TABLE`** + DDL in `create_tables_sql()`
-  for the `wiki_vocabulary` table.
-- **`wikibricks.ops.create_agent_traces_view_sql()`** — DDL for
-  `agent_traces_v` view over `wiki_log` (search rows with returned
-  paths). Promote consumes this view instead of the default
-  `agent_traces` table.
-- **`wikibricks.health`** + `scripts/wikibricks_health.py` — six-probe
-  health oracle for the v0.5.0 feature set (auto-tag coverage, vocab
-  growth, page-tag coverage, citations logged, promote end-to-end,
-  curate recency). Exits non-zero when any probe fails.
-- **`tests/test_job_yaml_contract.py`** — YAML-level contract test
-  asserting the four-task DAG and `traces_table` wiring.
+- **Visible context injection.** When
+  `WIKIBRICKS_INJECT_CONTEXT=1` causes hits to be injected, the recorder
+  now also writes a one-line summary to stderr so Claude Code surfaces
+  it to the user above the agent's reply:
+  ``wikibricks: injected 2 pages\n  - sessions/2026/05/08/abc\n  - …``
+  Silent when no hits, env var off, or any exception. The stdout
+  ``additionalContext`` JSON for the model is unchanged.
+- **Auto-tag sessions by customer-keyword.** New
+  ``[topic_keywords]`` section in ``~/.wikibricks-recorder.toml`` adds
+  ``customer:<slug>`` tags to every flushed session whose prompts
+  match the keyword terms (case-insensitive substring). Backward
+  compatible: no section ⇒ no auto-tagging.
+
+  ```toml
+  [topic_keywords]
+  solvd = ["solvd", "controlexpert"]
+  allianz-italy = ["allianz italy", "az italy"]
+  ```
+
+  ``page_builder.session_tags(state, topic_keywords=...)`` gained the
+  optional kwarg; ``config.load_topic_keywords()`` exposes the
+  parsed map.
 
 ### Changed
 
-- **`WikiClient.search()`** now logs `{returned_paths, k, mode}` in
-  `wiki_log.details` (citation tracking). Enables the promote pipeline
-  to mine real agent traces and the health probe to count citations.
-- **`resources/wiki_curate_job.yml`** gains a `tag` task and points
-  promote's `traces_table` at `${var.catalog}.${var.schema}.agent_traces_v`.
+- Plugin launcher's ``WIKIBRICKS_PLUGIN_REF`` default bumped from
+  ``v0.3.3`` to ``v0.3.4``.
+
+Test count: 556 → 564. Ruff clean.
+
+## [0.3.3] - 2026-05-13
+
+### Fixed
+
+- **Recorder utility-session filter now catches `/private/tmp`.** macOS
+  resolves `/tmp` to `/private/tmp` at the kernel level; Claude Code
+  reports the resolved path. The cwd-prefix list previously had
+  `/tmp/` but not `/private/tmp/`, so skill / sub-agent sessions
+  spawned from `/private/tmp` slipped past the cwd-prefix path
+  (they were still caught by the system-prompt-text path as a
+  fallback, but this closes the gap). Exact-equality cases (`/tmp`,
+  `/private/tmp` with no trailing slash) are now caught too.
+
+### Changed
+
+- Plugin launcher's `WIKIBRICKS_PLUGIN_REF` default bumped from
+  `v0.3.2` to `v0.3.3`.
+
+## [0.3.2] - 2026-05-13
+
+### Fixed
+
+- **Recorder no longer records skill / sub-agent sessions.** `_flush`
+  skips any session whose `cwd` is rooted in a tmp directory
+  (`/private/var/folders/`, `/var/folders/`, `/tmp/`) or whose single
+  prompt matches a known system-prompt prefix (`"You are "`,
+  `"Apply maximum "`). Filter lives in `hooks.py::_is_utility_session`.
+- **Session titles prefer the first non-templated user prompt.**
+  `page_builder.session_title` walks events for a prompt that does not
+  match `_looks_like_system_prompt`, falling back to the original
+  `first_prompt` if every prompt is templated.
+
+### Added
+
+- **Proactive context injection (opt-in).** With
+  `WIKIBRICKS_INJECT_CONTEXT=1`, the recorder's `on_user_prompt_submit`
+  hook searches the wiki and emits up to 3 relevant prior pages as a
+  `UserPromptSubmit` `additionalContext` JSON response. Hits from the
+  current session are filtered out; short prompts (<10 chars) and
+  search failures are silent. Default off. See
+  `hooks.py::_emit_relevant_context`.
+- **`scripts/purge_noise.py` + `src/wikibricks/title_repair.py`.**
+  One-shot cleanup tool that deletes session pages with system-prompt
+  template titles. Used to take a personal wiki from 1620 pages down
+  to 44 after the recorder filter shipped. Dry-run by default;
+  `--apply` to mutate. Logs `op_type='purge_noise'` to `wiki_log`.
+- **Stage 1 scaffolding for cross-session topic synthesis.** New
+  `src/wikibricks/topic_clustering.py` with `cluster_pages_by_keyword`
+  (pure function, LLM-free per the library's hard rules) groups
+  session pages into topic buckets by case-insensitive title match.
+  New `notebooks/promote_topics.py` is a dry-run-only stub: enforces a
+  corpus-size guard (default 80 pages), clusters via the keyword map,
+  prints eligible topics, and leaves the LLM-synthesis + judge step as
+  a clearly-marked TODO. No bundle resource entry added by default —
+  the notebook is opt-in.
+
+### Changed
+
+- Plugin launcher's `WIKIBRICKS_PLUGIN_REF` default bumped from
+  `v0.3.1` to `v0.3.2`.
+
+Test count: 491 → 553. Ruff clean.
 
 ## [0.3.1] - 2026-05-05
 
@@ -368,7 +536,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`wikibricks-recorder` Claude Code plugin** at `plugin/`. Users install
   via marketplace flow instead of hand-editing `~/.claude/settings.json`:
   ```
-  /plugin marketplace add https://github.com/philtief/wikibricks-dev.git
+  /plugin marketplace add https://github.com/philtief/wikibricks.git
   /plugin install wikibricks-recorder@wikibricks
   ```
   Plugin ships:
@@ -713,7 +881,15 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.3.1...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/philtief/wikibricks/compare/v0.6.0...v0.7.0
+[0.6.0]: https://github.com/philtief/wikibricks/compare/v0.5.0...v0.6.0
+[0.5.0]: https://github.com/philtief/wikibricks/compare/v0.4.1...v0.5.0
+[0.4.1]: https://github.com/philtief/wikibricks/compare/v0.4.0...v0.4.1
+[0.4.0]: https://github.com/philtief/wikibricks/compare/v0.3.4...v0.4.0
+[0.3.4]: https://github.com/philtief/wikibricks/compare/v0.3.3...v0.3.4
+[0.3.3]: https://github.com/philtief/wikibricks/compare/v0.3.2...v0.3.3
+[0.3.2]: https://github.com/philtief/wikibricks/compare/v0.3.1...v0.3.2
 [0.3.1]: https://github.com/philtief/wikibricks/compare/v0.3.0...v0.3.1
 [0.3.0]: https://github.com/philtief/wikibricks/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/philtief/wikibricks/compare/v0.1.5...v0.2.0

@@ -209,7 +209,7 @@ def run_personal(
     print(f"\nWrote [wikis.personal] to {config_path}", file=out)
     print("Active target: personal", file=out)
     print(
-        "\nNext steps (run from your wikibricks-dev clone):\n"
+        "\nNext steps (run from your wikibricks clone):\n"
         "  uv sync --extra recorder\n"
         "  wiki-init --install-hooks\n"
         '  claude mcp add wiki --scope user -- \\\n'

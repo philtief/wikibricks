@@ -70,7 +70,6 @@ from wikibricks.ops import (  # noqa: E402
     create_tables_sql,
     create_uc_functions_sql,
     drop_uc_functions_sql,
-    migrate_tables_sql,
 )
 
 
@@ -120,11 +119,6 @@ def main() -> None:
     print("\n=== tables ===")
     for stmt in create_tables_sql():
         head = stmt.strip().split("\n")[0][:80]
-        print(f"  {_exec(w, stmt)} :: {head}")
-
-    print("\n=== migrations (idempotent ALTERs for schema drift) ===")
-    for stmt in migrate_tables_sql():
-        head = stmt[:80]
         print(f"  {_exec(w, stmt)} :: {head}")
 
     print("\n=== volume + wheel ===")

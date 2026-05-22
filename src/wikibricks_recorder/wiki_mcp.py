@@ -16,7 +16,7 @@ Tools (mirror the deployed UC subset on reads):
 Register::
 
     claude mcp add wiki --scope user -- \
-      uvx --from "wikibricks[recorder] @ file:///abs/path/to/wikibricks-dev" wikibricks-mcp
+      uvx --from "wikibricks[recorder] @ file:///abs/path/to/wikibricks" wikibricks-mcp
 
 Auth uses the local Databricks profile. Workspace target + user_id resolved
 at startup via `config.load_config()` — env var, ~/.wikibricks-recorder.toml,
@@ -197,6 +197,35 @@ def _json_default(o: Any) -> str:
     return str(o)
 
 
+def _log_tool_call(name: str, arguments: dict[str, Any], result: Any) -> None:
+    """Emit a terse one-line stderr summary of an MCP tool call so the user
+    sees agent-initiated wiki activity above the agent's reply. Always-on,
+    never raises — failures are silent.
+    """
+    try:
+        import sys
+
+        if name == "wiki_search":
+            q = (arguments.get("query") or "")[:60]
+            n = len(result) if isinstance(result, list) else "?"
+            line = f'wikibricks: search "{q}" -> {n} hits'
+        elif name == "wiki_read_full":
+            line = f"wikibricks: read {arguments.get('path', '')}"
+        elif name == "wiki_write_page":
+            line = f"wikibricks: wrote {arguments.get('path', '')}"
+        elif name == "wiki_promote_answer":
+            line = f"wikibricks: promoted answer to {arguments.get('path', '')}"
+        elif name == "wiki_index":
+            prefix = arguments.get("prefix", "") or ""
+            n = len(result) if isinstance(result, list) else "?"
+            line = f"wikibricks: index {prefix!r} -> {n} pages"
+        else:
+            line = f"wikibricks: {name}"
+        print(line[:120], file=sys.stderr)
+    except Exception:
+        pass
+
+
 def format_tool_response(
     name: str,
     arguments: dict[str, Any],
@@ -206,12 +235,14 @@ def format_tool_response(
 
     Any exception (unknown tool, bad args, backend error) is wrapped as
     `{"error": "<message>"}` so the server returns a structured response
-    instead of crashing the stdio loop.
+    instead of crashing the stdio loop. A one-line stderr summary is
+    emitted on success so the user sees agent-initiated tool calls.
     """
     try:
         result = dispatch_tool(name, arguments, tools=tools)
     except Exception as exc:
         return json.dumps({"error": str(exc)})
+    _log_tool_call(name, arguments, result)
     return json.dumps(result, default=_json_default)
 
 

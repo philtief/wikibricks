@@ -16,8 +16,11 @@
 
 # COMMAND ----------
 
-# The `wikibricks` wheel is installed via the serverless environment
-# `dependencies` in resources/wiki_curate_job.yml. No %pip install here.
+# MAGIC %md
+# MAGIC The `wikibricks` wheel is installed via the task-level serverless
+# MAGIC environment in `resources/wiki_curate_job.yml`. No in-notebook
+# MAGIC `%pip install` here — the bundle artifact path is substituted at
+# MAGIC deploy time.
 
 # COMMAND ----------
 

@@ -231,10 +231,9 @@ Adding, renaming, or removing a method is a breaking change — bump the minor
 version and document it in CHANGELOG. Current methods:
 
 - `write_page`, `bulk_write_pages`, `read_page`, `list_pages`, `history`
-- `search` (modes: `HYBRID` / `ANN` / `FULL_TEXT`) — logs `{returned_paths, k, mode}` to `wiki_log.details` for citation tracking
+- `search` (modes: `HYBRID` / `ANN` / `FULL_TEXT`)
 - `ingest_source`, `promote_answer`, `materialize_index`, `sync_index`
 - `propose_edges`, `commit_edges`, `graph_neighbors`, `fix_broken_links`
-- `upsert_vocabulary(observations, approve_threshold)`, `append_page_tags(path, tags)` — used by `notebooks/wiki_tag.py`
 - `_log` (private, used by notebooks; `spec_set` allows it)
 
 UC functions exposed via MCP (defined in `src/wikibricks/ops.py`):
@@ -261,9 +260,9 @@ framework to give an agent direct promote-to-memory capability.
 | `vs_sync` / `vs_sync_fail` | `sync_index()` result |
 | `verify_fix` | `fix_broken_links` healed an edge |
 | `curate_run` | End-of-run summary from the curate notebook |
+| `cited` | A prior session cited this page via a `[wb:<path>]` marker — drives the citation-aware search reranker |
 | `segregate` | A page was split into a parent + N chunk children |
 | `segregate_skip` | An oversize page could not be split (single paragraph too large) |
-| `auto_tag` | The `wiki_tag` task proposed + committed LLM tags for a page; `details` carries `{proposed, committed, deduped_against_vocab, model, raw_truncated}` |
 
 Never invent new op_types silently — add a row to this table and to the
 `wiki_log` section in README.md.

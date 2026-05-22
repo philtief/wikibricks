@@ -62,7 +62,6 @@ WAREHOUSE_ID = _param("warehouse_id", "")
 TAG_ENDPOINT = _param("tag_endpoint", "databricks-meta-llama-3-3-70b-instruct")
 MAX_PAGES_PER_RUN = int(_param("max_pages_per_run", "20"))
 TAG_CONCURRENCY = int(_param("tag_concurrency", "4"))
-APPROVE_THRESHOLD = int(_param("approve_threshold", "3"))
 MAX_TAGS_PER_PAGE = int(_param("max_tags_per_page", "5"))
 
 w = WorkspaceClient()
@@ -170,22 +169,39 @@ print(f"LLM proposed tags for {len(results)} pages")
 
 # COMMAND ----------
 
-vocab_observations: list[dict] = []
+vocab_slugs: list[str] = []
 for r in results:
-    # Both new (committed) and seen-again (deduped) slugs become observations
-    # so existing vocab counts increment toward the approval threshold.
+    # Both new (committed) and seen-again (deduped) slugs are upserted so
+    # existing vocab counts increment toward the promote threshold enforced
+    # inside upsert_vocabulary_slugs (see _VOCAB_MIN_COUNT_FOR_ACTIVE).
     for slug in r["committed"] + r["deduped"]:
-        vocab_observations.append({"slug": slug, "source": "auto_tag"})
+        vocab_slugs.append(slug)
 
-if vocab_observations:
-    wiki.upsert_vocabulary(vocab_observations, approve_threshold=APPROVE_THRESHOLD)
+if vocab_slugs:
+    wiki.upsert_vocabulary_slugs(vocab_slugs, source="llm")
+
+def append_page_tags(path: str, tags: list[str]) -> None:
+    """Array-append `llm:`-prefixed tags onto a page without disturbing
+    existing entries. WikiClient no longer ships a dedicated helper for
+    this (tag preservation moved into the write_page/bulk_write_pages
+    MERGE path in v0.7.4); the tag task touches `pages` directly via UPDATE.
+    """
+    tag_lits = ", ".join(f"'{t}'" for t in tags)
+    path_esc = path.replace("'", "''")
+    run_sql(
+        f"UPDATE {PAGES_TABLE} "
+        f"SET tags = array_distinct(concat(COALESCE(tags, array()), "
+        f"                                  ARRAY({tag_lits}))) "
+        f"WHERE path = '{path_esc}'"
+    )
+
 
 tagged_pages = 0
 for r in results:
     all_slugs = r["committed"] + r["deduped"]
     if not all_slugs:
         continue
-    wiki.append_page_tags(r["page"]["path"], prefix_llm(all_slugs))
+    append_page_tags(r["page"]["path"], prefix_llm(all_slugs))
     tagged_pages += 1
     event = build_tag_event(
         path=r["page"]["path"],
@@ -197,4 +213,4 @@ for r in results:
     )
     wiki._log("auto_tag", path=r["page"]["path"], details=json.dumps(event))  # noqa: SLF001
 
-print(f"tagged: {tagged_pages}, vocab observations: {len(vocab_observations)}")
+print(f"tagged: {tagged_pages}, vocab observations: {len(vocab_slugs)}")

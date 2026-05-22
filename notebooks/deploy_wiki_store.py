@@ -7,8 +7,9 @@
 
 # COMMAND ----------
 
-# The `wikibricks` wheel is installed via the serverless environment
-# `dependencies` in resources/wiki_curate_job.yml. No %pip install here.
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.7.0-py3-none-any.whl
+# MAGIC # ^ Update path to where the wheel lives in your workspace.
+# MAGIC %restart_python
 
 # COMMAND ----------
 
@@ -42,7 +43,6 @@ from databricks.sdk.service.vectorsearch import EndpointType  # noqa: E402
 
 from wikibricks.ops import (  # noqa: E402
     VS_ENDPOINT,
-    create_agent_traces_view_sql,
     create_index_view_sql,
     create_schema_sql,
     create_tables_sql,
@@ -96,12 +96,6 @@ result = w.statement_execution.execute_statement(
     statement=create_index_view_sql(),
 )
 print(f"View wiki_index: {result.status.state}")
-
-result = w.statement_execution.execute_statement(
-    warehouse_id=WAREHOUSE_ID,
-    statement=create_agent_traces_view_sql(),
-)
-print(f"View agent_traces_v: {result.status.state}")
 
 # COMMAND ----------
 
