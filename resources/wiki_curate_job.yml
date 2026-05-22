@@ -145,6 +145,6 @@ resources:
             # placeholder-substitution bug fixed alongside this).
             dependencies:
               - "igraph>=0.11,<2.0"
-              - ./dist/*.whl
+              - ../dist/*.whl
       queue:
         enabled: true
