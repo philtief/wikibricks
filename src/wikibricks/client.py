@@ -91,6 +91,7 @@ class WikiClient:
         source_ids: list[str] | None = None,
         parent_id: str | None = None,
         chunk_index: int | None = None,
+        content_text_override: str | None = None,
     ) -> str:
         """Create or update a wiki page. Archives previous version to history.
 
@@ -104,6 +105,11 @@ class WikiClient:
             source_ids: Optional list of source IDs to link provenance.
             parent_id: For chunk children, the parent page's `page_id`.
             chunk_index: For chunk children, 1-based position. `0` is also valid.
+            content_text_override: When set, write this literal text into
+                ``content_text`` (the Vector Search-embedded column) instead
+                of ``concat(content.summary, content.body)``. Lets the
+                recorder embed a dense LLM summary while keeping the raw
+                transcript readable via ``fn_wiki_read``.
 
         Returns:
             Confirmation message.
@@ -117,6 +123,16 @@ class WikiClient:
         src_sql = f"ARRAY({','.join(repr(s) for s in source_ids)})" if source_ids else "NULL"
         parent_sql = f"'{self._escape(parent_id)}'" if parent_id else "NULL"
         chunk_sql = str(chunk_index) if chunk_index is not None else "NULL"
+
+        if content_text_override is None:
+            content_text_expr = (
+                f"concat(\n"
+                f"                PARSE_JSON('{content_esc}'):summary::STRING, ' ',\n"
+                f"                PARSE_JSON('{content_esc}'):body::STRING)"
+            )
+        else:
+            override_esc = self._escape(content_text_override)
+            content_text_expr = f"'{override_esc}'"
 
         archive_sql = f"""
         INSERT INTO {HISTORY_TABLE}
@@ -139,9 +155,7 @@ class WikiClient:
             title = '{title_esc}',
             page_type = '{page_type}',
             content = PARSE_JSON('{content_esc}'),
-            content_text = concat(
-                PARSE_JSON('{content_esc}'):summary::STRING, ' ',
-                PARSE_JSON('{content_esc}'):body::STRING),
+            content_text = {content_text_expr},
             tags = array_distinct(array_union(
                 {tags_sql},
                 filter(COALESCE(target.tags, array()), t -> t LIKE 'llm:%')
@@ -157,9 +171,7 @@ class WikiClient:
              source_ids, parent_id, chunk_index, created_by, version)
         VALUES (uuid(), '{path}', '{title_esc}', '{page_type}',
                 PARSE_JSON('{content_esc}'),
-                concat(
-                    PARSE_JSON('{content_esc}'):summary::STRING, ' ',
-                    PARSE_JSON('{content_esc}'):body::STRING),
+                {content_text_expr},
                 {tags_sql}, {src_sql}, {parent_sql}, {chunk_sql},
                 '{created_by}', 1)
         """
