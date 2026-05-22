@@ -222,7 +222,7 @@ for cid, members in sorted_clusters:
 
 # COMMAND ----------
 
-print(f"\n=== Summary ===")
+print("\n=== Summary ===")
 print(f"Wrote {len(written)} topic pages:")
 for s in written:
     print(f"  topics/{s}")
