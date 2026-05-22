@@ -49,9 +49,11 @@ from wikibricks_recorder import auto_summary, page_builder  # noqa: E402
 
 CONCAT_PREFIX = "eval/summary_first/concat"
 SUMMARY_PREFIX = "eval/summary_first/summary"
+INTENT_TAIL_PREFIX = "eval/summary_first/intent_tail"
 K_LIST = (1, 3, 5, 10)
 MAX_K = max(K_LIST)
 SYNC_WAIT_SECONDS = 90
+INTENT_TAIL_MAX_CHARS = 2000
 
 TOPICS = [
     {
@@ -304,6 +306,13 @@ def main() -> int:
         action="store_true",
         help="Skip the VS sync sleep (only safe with --skip-writes).",
     )
+    parser.add_argument(
+        "--mode",
+        choices=("HYBRID", "ANN", "BOTH"),
+        default="BOTH",
+        help="Retrieval mode for the query phase. BOTH runs HYBRID and ANN "
+             "in sequence and emits both to the report.",
+    )
     args = parser.parse_args()
 
     catalog = _require("WIKIBRICKS_CATALOG")
@@ -350,8 +359,8 @@ def main() -> int:
                 tags=["eval", "summary_first", "arm:concat"],
             )
 
-            # Treatment arm: dense summary IS content.summary AND
-            # content_text_override (the 0.7.8 path).
+            # Treatment arm B: dense summary IS content.summary AND
+            # content_text_override (the pure 0.7.8 path).
             client.write_page(
                 f"{SUMMARY_PREFIX}/{slug}",
                 title=f"[eval/summary] {slug}",
@@ -359,7 +368,23 @@ def main() -> int:
                 tags=["eval", "summary_first", "arm:summary"],
                 content_text_override=summary,
             )
-            print(f"[eval] {slug}: wrote both arms (summary={len(summary)}c)")
+
+            # Treatment arm C: dense summary + raw first_prompt tail.
+            # Closes the content_text length gap that v1 left open —
+            # keyword-leg of HYBRID gets the original user intent text
+            # appended, while the semantic leg still benefits from the
+            # dense summary's structured framing.
+            fp = state.get("first_prompt", "")[:INTENT_TAIL_MAX_CHARS]
+            tail_override = summary + "\n\n## Raw intent\n" + fp
+            client.write_page(
+                f"{INTENT_TAIL_PREFIX}/{slug}",
+                title=f"[eval/intent_tail] {slug}",
+                content_json=content,
+                tags=["eval", "summary_first", "arm:intent_tail"],
+                content_text_override=tail_override,
+            )
+            print(f"[eval] {slug}: wrote 3 arms "
+                  f"(summary={len(summary)}c tail={len(tail_override)}c)")
 
         print("[eval] triggering VS sync...")
         client.sync_index()
@@ -369,43 +394,62 @@ def main() -> int:
 
     # ---- QUERY PHASE -------------------------------------------------------
 
+    modes = ["HYBRID", "ANN"] if args.mode == "BOTH" else [args.mode]
     rows: list[dict] = []
-    for topic in TOPICS:
-        slug = topic["slug"]
-        concat_path = f"{CONCAT_PREFIX}/{slug}"
-        summary_path = f"{SUMMARY_PREFIX}/{slug}"
-        for q_i, query in enumerate(topic["queries"], start=1):
-            hits = client.search(
-                query,
-                mode="HYBRID",
-                num_results=MAX_K,
-                rerank_with_pagerank=False,
-                rerank_by_citations=False,
-                include_ephemeral=True,
-            )
-            rank_a = _rank_of(hits, concat_path)
-            rank_b = _rank_of(hits, summary_path)
-            rows.append({
-                "topic": slug,
-                "query_id": q_i,
-                "query": query,
-                "rank_concat": rank_a,
-                "rank_summary": rank_b,
-                "winner": (
-                    "summary" if rank_b < rank_a
-                    else "concat" if rank_a < rank_b
-                    else "tie"
-                ),
-            })
-            print(f"[eval] {slug} q{q_i}: rank_concat={rank_a:>3} "
-                  f"rank_summary={rank_b:>3}")
+    for mode in modes:
+        for topic in TOPICS:
+            slug = topic["slug"]
+            concat_path = f"{CONCAT_PREFIX}/{slug}"
+            summary_path = f"{SUMMARY_PREFIX}/{slug}"
+            intent_tail_path = f"{INTENT_TAIL_PREFIX}/{slug}"
+            for q_i, query in enumerate(topic["queries"], start=1):
+                hits = client.search(
+                    query,
+                    mode=mode,
+                    num_results=MAX_K,
+                    rerank_with_pagerank=False,
+                    rerank_by_citations=False,
+                    include_ephemeral=True,
+                )
+                rank_a = _rank_of(hits, concat_path)
+                rank_b = _rank_of(hits, summary_path)
+                rank_c = _rank_of(hits, intent_tail_path)
+                # Winner: lowest rank wins (1 is best). Ties → "tie".
+                arms_ranked = sorted(
+                    [("concat", rank_a), ("summary", rank_b), ("intent_tail", rank_c)],
+                    key=lambda x: x[1],
+                )
+                winner = (
+                    "tie"
+                    if arms_ranked[0][1] == arms_ranked[1][1]
+                    else arms_ranked[0][0]
+                )
+                rows.append({
+                    "mode": mode,
+                    "topic": slug,
+                    "query_id": q_i,
+                    "query": query,
+                    "rank_concat": rank_a,
+                    "rank_summary": rank_b,
+                    "rank_intent_tail": rank_c,
+                    "winner": winner,
+                })
+                print(f"[eval] {mode} {slug} q{q_i}: "
+                      f"concat={rank_a:>2} summary={rank_b:>2} "
+                      f"intent_tail={rank_c:>2}  → {winner}")
 
     # ---- METRICS -----------------------------------------------------------
 
-    metrics = _compute_metrics(rows)
-    _print_metrics(metrics, rows)
+    metrics_by_mode = {
+        mode: _compute_metrics([r for r in rows if r["mode"] == mode])
+        for mode in modes
+    }
+    for mode in modes:
+        print(f"\n[eval] === Results ({mode}) ===")
+        _print_metrics(metrics_by_mode[mode],
+                       [r for r in rows if r["mode"] == mode])
     _write_csv(rows, args.output + ".csv")
-    _write_markdown(rows, metrics, summaries, args.output + ".md")
+    _write_markdown(rows, metrics_by_mode, summaries, args.output + ".md")
     print(f"[eval] wrote {args.output}.csv and {args.output}.md")
     return 0
 
@@ -414,47 +458,46 @@ def _recall_at_k(ranks: list[int], k: int) -> float:
     return sum(1 for r in ranks if r <= k) / len(ranks) if ranks else 0.0
 
 
+ARMS = ("concat", "summary", "intent_tail")
+
+
 def _compute_metrics(rows: list[dict]) -> dict:
-    concat_ranks = [r["rank_concat"] for r in rows]
-    summary_ranks = [r["rank_summary"] for r in rows]
+    ranks = {arm: [r[f"rank_{arm}"] for r in rows] for arm in ARMS}
     n = len(rows)
-    wins = sum(1 for r in rows if r["winner"] == "summary")
+    per_arm_wins = {arm: sum(1 for r in rows if r["winner"] == arm) for arm in ARMS}
     ties = sum(1 for r in rows if r["winner"] == "tie")
-    losses = sum(1 for r in rows if r["winner"] == "concat")
-    return {
+    out: dict = {
         "n_queries": n,
-        "concat": {
-            f"recall@{k}": _recall_at_k(concat_ranks, k) for k in K_LIST
-        } | {"mean_rank": statistics.mean(concat_ranks) if concat_ranks else 0},
-        "summary": {
-            f"recall@{k}": _recall_at_k(summary_ranks, k) for k in K_LIST
-        } | {"mean_rank": statistics.mean(summary_ranks) if summary_ranks else 0},
-        "delta": {
-            f"recall@{k}": _recall_at_k(summary_ranks, k) - _recall_at_k(concat_ranks, k)
-            for k in K_LIST
-        },
-        "wins": wins,
         "ties": ties,
-        "losses": losses,
-        "win_rate": wins / n if n else 0,
+        "wins": per_arm_wins,
     }
+    for arm in ARMS:
+        out[arm] = {f"recall@{k}": _recall_at_k(ranks[arm], k) for k in K_LIST}
+        out[arm]["mean_rank"] = (
+            statistics.mean(ranks[arm]) if ranks[arm] else 0
+        )
+        out[arm]["win_rate"] = per_arm_wins[arm] / n if n else 0
+    return out
 
 
 def _print_metrics(metrics: dict, rows: list[dict]) -> None:
-    print("\n[eval] === Results ===")
-    print(f"[eval] {metrics['n_queries']} queries across {len({r['topic'] for r in rows})} topics")
-    print(f"[eval] wins:   {metrics['wins']:>3}  "
-          f"ties: {metrics['ties']:>3}  "
-          f"losses: {metrics['losses']:>3}  "
-          f"win_rate: {metrics['win_rate']:.0%}")
+    n = metrics["n_queries"]
+    print(f"[eval] {n} queries across {len({r['topic'] for r in rows})} topics")
+    print(f"[eval] wins: concat={metrics['wins']['concat']:>2}  "
+          f"summary={metrics['wins']['summary']:>2}  "
+          f"intent_tail={metrics['wins']['intent_tail']:>2}  "
+          f"ties={metrics['ties']:>2}")
+    header = f"[eval] {'metric':<12}" + "".join(f" {arm:>12}" for arm in ARMS)
+    print(header)
     for k in K_LIST:
-        a = metrics['concat'][f'recall@{k}']
-        b = metrics['summary'][f'recall@{k}']
-        d = metrics['delta'][f'recall@{k}']
-        sign = "+" if d >= 0 else ""
-        print(f"[eval] recall@{k}: concat={a:.0%}  summary={b:.0%}  delta={sign}{d:+.0%}")
-    print(f"[eval] mean rank: concat={metrics['concat']['mean_rank']:.2f}  "
-          f"summary={metrics['summary']['mean_rank']:.2f}")
+        row = f"[eval] {'recall@' + str(k):<12}"
+        for arm in ARMS:
+            row += f" {metrics[arm][f'recall@{k}']:>11.0%} "
+        print(row)
+    row = f"[eval] {'mean_rank':<12}"
+    for arm in ARMS:
+        row += f" {metrics[arm]['mean_rank']:>11.2f} "
+    print(row)
 
 
 def _write_csv(rows: list[dict], path: str) -> None:
@@ -468,66 +511,93 @@ def _write_csv(rows: list[dict], path: str) -> None:
 
 
 def _write_markdown(
-    rows: list[dict], metrics: dict, summaries: dict[str, str], path: str
+    rows: list[dict], metrics_by_mode: dict[str, dict],
+    summaries: dict[str, str], path: str,
 ) -> None:
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    delta_at_5 = metrics['delta']['recall@5']
-    decision = (
-        "FLIP DEFAULT TO ON in v0.7.9"
-        if delta_at_5 >= 0.10 and metrics["win_rate"] >= 0.70
-        else "KEEP OPT-IN, iterate on prompt"
-    )
+    modes = list(metrics_by_mode.keys())
+
+    def _best_summary_lift(mode: str) -> tuple[str, float]:
+        """Best (arm, recall@5 lift over concat) for non-concat arms."""
+        m = metrics_by_mode[mode]
+        concat_at5 = m["concat"]["recall@5"]
+        best = max(
+            ((arm, m[arm]["recall@5"] - concat_at5) for arm in ("summary", "intent_tail")),
+            key=lambda x: x[1],
+        )
+        return best
+
+    decisions = []
+    for mode in modes:
+        arm, lift = _best_summary_lift(mode)
+        m = metrics_by_mode[mode]
+        win_rate = m[arm]["win_rate"]
+        ok = lift >= 0.10 and win_rate >= 0.70
+        verdict = "FLIP" if ok else "keep opt-in"
+        decisions.append(
+            f"- **{mode}**: best non-concat arm = `{arm}` "
+            f"(recall@5 lift {lift:+.0%}, win_rate {win_rate:.0%}) → **{verdict}**"
+        )
+
     lines = [
-        "# A/B retrieval eval — 0.7.8 summary-first",
+        "# A/B/C retrieval eval — 0.7.8 summary-first (v2 prompt)",
         "",
         f"**Date:** {datetime.now(timezone.utc):%Y-%m-%d}",
         f"**Topics:** {len({r['topic'] for r in rows})}  "
-        f"**Queries:** {metrics['n_queries']}  "
-        f"**Decision:** **{decision}**",
+        f"**Queries per mode:** {metrics_by_mode[modes[0]]['n_queries']}  "
+        f"**Modes:** {', '.join(modes)}  "
+        f"**Arms:** concat (control), summary (v2 prompt), "
+        f"intent_tail (v2 prompt + raw first_prompt)",
         "",
-        "## Aggregate",
+        "## Decisions",
         "",
-        "| Metric | concat (control) | summary (treatment) | Δ |",
-        "|---|---|---|---|",
+        *decisions,
+        "",
     ]
-    for k in K_LIST:
-        a = metrics['concat'][f'recall@{k}']
-        b = metrics['summary'][f'recall@{k}']
-        d = metrics['delta'][f'recall@{k}']
+    for mode in modes:
+        m = metrics_by_mode[mode]
+        lines += [
+            f"## Aggregate — {mode}",
+            "",
+            "| Metric | concat | summary | intent_tail |",
+            "|---|---|---|---|",
+        ]
+        for k in K_LIST:
+            lines.append(
+                f"| recall@{k} | {m['concat'][f'recall@{k}']:.0%} | "
+                f"{m['summary'][f'recall@{k}']:.0%} | "
+                f"{m['intent_tail'][f'recall@{k}']:.0%} |"
+            )
         lines.append(
-            f"| recall@{k} | {a:.0%} | {b:.0%} | {d:+.0%} |"
+            f"| mean_rank | {m['concat']['mean_rank']:.2f} | "
+            f"{m['summary']['mean_rank']:.2f} | "
+            f"{m['intent_tail']['mean_rank']:.2f} |"
         )
-    lines.append(
-        f"| mean rank | {metrics['concat']['mean_rank']:.2f} | "
-        f"{metrics['summary']['mean_rank']:.2f} | "
-        f"{metrics['summary']['mean_rank'] - metrics['concat']['mean_rank']:+.2f} |"
-    )
-    lines += [
-        "",
-        f"**Wins / Ties / Losses:** {metrics['wins']} / {metrics['ties']} / "
-        f"{metrics['losses']}  (win_rate {metrics['win_rate']:.0%})",
-        "",
-        "## Per-query ranks",
-        "",
-        "| Topic | Q | rank_concat | rank_summary | winner |",
-        "|---|---|---|---|---|",
-    ]
-    for r in rows:
         lines.append(
-            f"| {r['topic']} | {r['query_id']} | {r['rank_concat']} | "
-            f"{r['rank_summary']} | {r['winner']} |"
+            f"| wins | {m['wins']['concat']} | "
+            f"{m['wins']['summary']} | {m['wins']['intent_tail']} |"
         )
-    lines += [
-        "",
-        "## Decision rule",
-        "",
-        "Per `2026-05-22-summary-first-eval-plan.md`: flip the default to ON",
-        "in v0.7.9 if recall@5 lifts ≥ 10pp AND win_rate ≥ 70%. Otherwise",
-        "leave opt-in and iterate on the system prompt.",
-        "",
-    ]
+        lines += ["", f"Ties: {m['ties']}", ""]
+
+    lines += ["## Per-query ranks", ""]
+    for mode in modes:
+        lines += [
+            f"### {mode}",
+            "",
+            "| Topic | Q | concat | summary | intent_tail | winner |",
+            "|---|---|---|---|---|---|",
+        ]
+        for r in rows:
+            if r["mode"] != mode:
+                continue
+            lines.append(
+                f"| {r['topic']} | {r['query_id']} | {r['rank_concat']} | "
+                f"{r['rank_summary']} | {r['rank_intent_tail']} | {r['winner']} |"
+            )
+        lines.append("")
+
     if summaries:
-        lines += ["## Generated summaries (one per topic)", ""]
+        lines += ["## Generated summaries (one per topic, v2 prompt)", ""]
         for slug, summary in summaries.items():
             lines.append(f"### {slug}")
             lines.append("")

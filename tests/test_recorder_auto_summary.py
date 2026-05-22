@@ -197,3 +197,46 @@ def test_generate_summary_returns_none_for_blank_response():
         _long_state(), {"enabled": True}, ws
     )
     assert result is None
+
+
+# --- build_content_text_override (v0.7.9 intent-tail composition) ----------
+
+
+def test_build_override_combines_summary_and_first_prompt():
+    state = {"first_prompt": "refactor payments to use stripe.Webhook.construct_event"}
+    summary = "## Intent\n- refactor"
+    override = auto_summary.build_content_text_override(state, summary)
+    assert override.startswith(summary)
+    assert "## Raw intent" in override
+    assert "stripe.Webhook.construct_event" in override
+
+
+def test_build_override_caps_first_prompt_at_2000_chars():
+    state = {"first_prompt": "x" * 5000}
+    summary = "## Intent\n- y"
+    override = auto_summary.build_content_text_override(state, summary)
+    # summary + "\n\n## Raw intent\n" header + capped 2000 chars
+    assert override.endswith("x" * 2000)
+    # total length: summary (~14) + header (~17) + 2000 ≈ 2031
+    assert len(override) <= len(summary) + 17 + 2000
+
+
+def test_build_override_returns_summary_when_no_first_prompt():
+    state = {"first_prompt": ""}
+    summary = "## Intent\n- y"
+    assert auto_summary.build_content_text_override(state, summary) == summary
+
+
+def test_build_override_returns_empty_when_summary_empty():
+    state = {"first_prompt": "anything"}
+    assert auto_summary.build_content_text_override(state, "") == ""
+
+
+def test_build_override_strips_whitespace_in_first_prompt():
+    """Leading/trailing whitespace on first_prompt shouldn't waste tail budget."""
+    state = {"first_prompt": "   refactor payments   \n\n   "}
+    summary = "S"
+    override = auto_summary.build_content_text_override(state, summary)
+    assert "refactor payments" in override
+    # The header should still appear exactly once
+    assert override.count("## Raw intent") == 1

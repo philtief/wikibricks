@@ -187,9 +187,11 @@ def _base_cfg():
             "warehouse_id": "w", "profile": "p"}
 
 
-def test_flush_passes_dense_summary_as_content_text_override():
-    """When auto_summary is enabled and returns text, _flush passes it as
-    content_text_override to write_page AND uses it as content.summary."""
+def test_flush_passes_dense_summary_plus_intent_tail_as_override():
+    """v0.7.9: content_text_override is dense_summary + "## Raw intent" tail.
+    The dense summary remains content.summary; the override is the
+    composed string that VS embeds (lifts recall@1 +15pp over pure summary,
+    beats baseline concat on mean_rank 2.10 vs 2.65 — eval v2 numbers)."""
     state = _flushable_state()
     cfg = _base_cfg()
     summary = "## Intent\n- refactor payments module"
@@ -205,7 +207,15 @@ def test_flush_passes_dense_summary_as_content_text_override():
         client = mock_build.return_value
         _flush(state)
         kwargs = client.write_page.call_args.kwargs
-        assert kwargs["content_text_override"] == summary
+        override = kwargs["content_text_override"]
+        assert override is not None
+        # Override starts with the dense summary
+        assert override.startswith(summary)
+        # And carries the raw-intent tail with a stable header
+        assert "## Raw intent" in override
+        # First prompt content lands in the tail
+        assert "refactor payments" in override
+        # content.summary stays the dense summary, unchanged
         assert kwargs["content_json"]["summary"] == summary
         assert "## Timeline" in kwargs["content_json"]["body"]
 
