@@ -78,7 +78,7 @@ resp = wiki._exec(
     f"  AND NOT array_contains(COALESCE(tags, array()), 'ephemeral:stub')"
 )
 rows = resp.result.data_array or []
-cols = [c.name for c in resp.manifest.columns]
+cols = [c.name for c in resp.manifest.schema.columns]
 pages = [
     {"page_id": r[0], "path": r[1], "title": r[2],
      "community_id": int(r[3]) if r[3] is not None else None,

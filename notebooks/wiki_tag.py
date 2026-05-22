@@ -180,12 +180,28 @@ for r in results:
 if vocab_slugs:
     wiki.upsert_vocabulary_slugs(vocab_slugs, source="llm")
 
+def append_page_tags(path: str, tags: list[str]) -> None:
+    """Array-append `llm:`-prefixed tags onto a page without disturbing
+    existing entries. WikiClient no longer ships a dedicated helper for
+    this (tag preservation moved into the write_page/bulk_write_pages
+    MERGE path in v0.7.4); the tag task touches `pages` directly via UPDATE.
+    """
+    tag_lits = ", ".join(f"'{t}'" for t in tags)
+    path_esc = path.replace("'", "''")
+    run_sql(
+        f"UPDATE {PAGES_TABLE} "
+        f"SET tags = array_distinct(concat(COALESCE(tags, array()), "
+        f"                                  ARRAY({tag_lits}))) "
+        f"WHERE path = '{path_esc}'"
+    )
+
+
 tagged_pages = 0
 for r in results:
     all_slugs = r["committed"] + r["deduped"]
     if not all_slugs:
         continue
-    wiki.append_page_tags(r["page"]["path"], prefix_llm(all_slugs))
+    append_page_tags(r["page"]["path"], prefix_llm(all_slugs))
     tagged_pages += 1
     event = build_tag_event(
         path=r["page"]["path"],
