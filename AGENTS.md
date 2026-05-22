@@ -263,6 +263,8 @@ framework to give an agent direct promote-to-memory capability.
 | `cited` | A prior session cited this page via a `[wb:<path>]` marker — drives the citation-aware search reranker |
 | `segregate` | A page was split into a parent + N chunk children |
 | `segregate_skip` | An oversize page could not be split (single paragraph too large) |
+| `summary_ok` | Recorder wrote a dense LLM summary into content_text_override (auto_summary enabled, model returned text). v0.7.8+. |
+| `summary_fail` | Recorder had auto_summary enabled but the model returned nothing (or errored) — fell back to the default concat path. v0.7.8+. |
 
 Never invent new op_types silently — add a row to this table and to the
 `wiki_log` section in README.md.

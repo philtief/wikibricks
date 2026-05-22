@@ -287,7 +287,8 @@ def _flush(state: dict[str, Any]):
     # and we fall back to the default concat(summary, body) path.
     dense_summary = None
     summary_cfg = config.load_auto_summary_config()
-    if auto_summary.is_enabled(summary_cfg):
+    summary_enabled = auto_summary.is_enabled(summary_cfg)
+    if summary_enabled:
         try:
             dense_summary = auto_summary.generate_summary(state, summary_cfg, client.ws)
         except Exception as e:
@@ -301,6 +302,27 @@ def _flush(state: dict[str, Any]):
         tags=tags,
         content_text_override=dense_summary,
     )
+
+    # Emit a telemetry row so operators can grep wiki_log for the LLM-
+    # summary success rate. Only emitted when auto_summary is enabled —
+    # opt-out users keep a clean log.
+    if summary_enabled:
+        try:
+            if dense_summary:
+                client._log(
+                    "summary_ok",
+                    path=path,
+                    details=json.dumps({"chars": len(dense_summary)}),
+                )
+            else:
+                client._log(
+                    "summary_fail",
+                    path=path,
+                    details=json.dumps({"reason": "none_returned"}),
+                )
+        except Exception as e:
+            _log_error("summary log", e)
+
     return client
 
 

@@ -266,3 +266,61 @@ def test_flush_swallows_summary_exception_and_falls_back():
         _flush(state)
         client.write_page.assert_called_once()
         assert client.write_page.call_args.kwargs.get("content_text_override") is None
+
+
+def test_flush_logs_summary_ok_when_dense_summary_present():
+    """When auto_summary is enabled and returns text, _flush logs a
+    `summary_ok` op_type so operators can see the success rate."""
+    state = _flushable_state()
+    cfg = _base_cfg()
+    with patch("wikibricks_recorder.hooks.config.load_config", return_value=cfg), \
+         patch("wikibricks_recorder.hooks.config.load_auto_tag_config", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_topic_keywords", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_auto_title_config", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_auto_summary_config",
+               return_value={"enabled": True}), \
+         patch("wikibricks_recorder.hooks.auto_summary.generate_summary",
+               return_value="## Intent\n- x"), \
+         patch("wikibricks_recorder.hooks._build_wiki_client") as mock_build:
+        client = mock_build.return_value
+        _flush(state)
+        ops = [c.args[0] for c in client._log.call_args_list]
+        assert "summary_ok" in ops
+
+
+def test_flush_logs_summary_fail_when_enabled_but_returned_none():
+    """When auto_summary is enabled but returns None, _flush logs
+    `summary_fail` — a measurable signal for tuning the prompt."""
+    state = _flushable_state()
+    cfg = _base_cfg()
+    with patch("wikibricks_recorder.hooks.config.load_config", return_value=cfg), \
+         patch("wikibricks_recorder.hooks.config.load_auto_tag_config", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_topic_keywords", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_auto_title_config", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_auto_summary_config",
+               return_value={"enabled": True}), \
+         patch("wikibricks_recorder.hooks.auto_summary.generate_summary",
+               return_value=None), \
+         patch("wikibricks_recorder.hooks._build_wiki_client") as mock_build:
+        client = mock_build.return_value
+        _flush(state)
+        ops = [c.args[0] for c in client._log.call_args_list]
+        assert "summary_fail" in ops
+
+
+def test_flush_disabled_auto_summary_does_not_log_either_op():
+    """When auto_summary is disabled, neither summary_ok nor summary_fail
+    is emitted — keeps the log clean for users who opt out."""
+    state = _flushable_state()
+    cfg = _base_cfg()
+    with patch("wikibricks_recorder.hooks.config.load_config", return_value=cfg), \
+         patch("wikibricks_recorder.hooks.config.load_auto_tag_config", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_topic_keywords", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_auto_title_config", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_auto_summary_config", return_value={}), \
+         patch("wikibricks_recorder.hooks._build_wiki_client") as mock_build:
+        client = mock_build.return_value
+        _flush(state)
+        ops = [c.args[0] for c in client._log.call_args_list]
+        assert "summary_ok" not in ops
+        assert "summary_fail" not in ops
