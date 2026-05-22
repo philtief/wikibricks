@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.8] - 2026-05-22
+
+### Added
+
+- **`wikibricks_recorder/auto_summary.py`** — opt-in dense LLM summary at
+  session flush. One Haiku 4.5 call produces a structured Markdown summary
+  (Intent / Approach / Outcome / Artifacts) that becomes the VS-embedded
+  `content_text` via a new `write_page(..., content_text_override=...)`
+  kwarg. The raw transcript stays in `content.body` for `fn_wiki_read`.
+- **`WikiClient.write_page(content_text_override=...)`** — optional kwarg
+  on the library write path (both `ops.write_page_sql` and the inline
+  MERGE SQL in `WikiClient.write_page`). When set, the literal string
+  is written into `content_text` instead of `concat(summary, body)`.
+  Default behavior unchanged for every existing caller.
+- **`config.load_auto_summary_config()`** — reads the `[auto_summary]`
+  section; returns `{}` when absent (default OFF).
+- **`page_builder.session_content(dense_summary=...)`** — when a non-empty
+  dense summary is provided, it replaces the truncated-first-prompt
+  default in `content.summary`. Empty-string falls through to the
+  legacy default — guards against accidentally embedding a blank LLM
+  response.
+- **`summary_ok` / `summary_fail` `wiki_log` op_types** — operators can
+  grep `wiki_log` for LLM-summary success rate. Emitted only when
+  `auto_summary` is enabled (opt-out users keep a clean log).
+- **15 new tests** across `test_recorder_auto_summary.py` (19 total),
+  `test_recorder_config.py` (3 new), `test_recorder_hooks.py` (7 new),
+  `test_recorder_page_builder.py` (3 new), `test_wiki_ops.py` (3 new),
+  `test_client.py` (3 new). Suite grew from 798 → 836.
+- Plugin manifest bumped to v0.7.8.
+
+### Why
+
+Vector Search embeds `concat(content.summary, content.body)`. Before 0.7.8
+that meant retrieval embeddings were dominated by raw tool output and
+bash logs — the recorder's own session transcripts. With `auto_summary`
+enabled, VS embeds a 150–300-token structured summary whose every claim
+traces to a verbatim transcript span (strict system prompt). Raw events
+stay accessible via `fn_wiki_read` and the body field.
+
+The four-section schema (Intent / Approach / Outcome / Artifacts) is
+the LangMem episodic-memory pattern recast as bullet propositions
+(per the Dense X / Proposition Retrieval finding that atomic
+self-contained propositions beat passages across 5 retrieval datasets).
+
+### Research
+
+`docs/research/2026-05-22-summary-first-research.md` cites the MemGPT
+external-storage pattern, RAPTOR summary-as-embedded-unit, LangMem
+episodic schema, Dense X proposition retrieval, and the Anthropic
+memory-tool compaction contract. Plan at
+`docs/superpowers/plans/2026-05-22-recorder-summary-first.md`.
+
+### To enable
+
+```toml
+# ~/.wikibricks-recorder.toml
+[auto_summary]
+enabled = true
+endpoint = "databricks-claude-haiku-4-5"
+max_input_chars = 12000
+```
+
+Cost ≈ $0.02/session on Haiku 4.5 (~3k input + ~400 output). At 5
+sessions/day this is ~$36/year — negligible.
+
 ## [0.7.7] - 2026-05-19
 
 ### Added
