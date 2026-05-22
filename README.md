@@ -34,8 +34,8 @@ and let it record one Claude Code session.
 ### 1. Deploy the wiki store (one-time, ~3 minutes)
 
 ```bash
-git clone https://github.com/philtief/wikibricks.git
-cd wikibricks
+git clone https://github.com/philtief/wikibricks-dev.git
+cd wikibricks-dev
 cp databricks.override.example.yml databricks.override.yml
 # edit: host, profile, catalog, schema, warehouse_id
 
@@ -51,14 +51,14 @@ UC functions, and the daily curate Lakeflow Job.
 In any Claude Code session:
 
 ```
-/plugin marketplace add https://github.com/philtief/wikibricks.git
+/plugin marketplace add https://github.com/philtief/wikibricks-dev.git
 /plugin install wikibricks-recorder@wikibricks
 ```
 
 Then once per machine:
 
 ```bash
-uvx --from "git+https://github.com/philtief/wikibricks.git@v0.3.0" \
+uvx --from "git+https://github.com/philtief/wikibricks-dev.git@v0.3.0" \
     wiki-init personal      # | team-create | team-join
 ```
 
@@ -163,14 +163,25 @@ weaker models that get distracted by long tool lists.
 DML (writes) is exposed separately via `make_agent_tools(...)` — UC
 SQL functions can't perform writes.
 
+## Evaluation
+
+- **HotpotQA retrieval pilot** — 500 queries, HYBRID recall@10 ≈ **89%**
+  on a 66,569-page corpus. See
+  [`docs/hotpotqa_evaluation.md`](docs/hotpotqa_evaluation.md).
+- **2WikiMultiHopQA (official v1.1)** — 350-query ablation. Best
+  variant (Sonnet 4.6 + HYBRID + K=10) reaches Joint F1 **21.2** — on
+  par with the 2020 paper's open-retrieval baseline. Modern
+  task-tuned SOTA is 50–65 and outside WikiBricks' scope. See
+  [`docs/twowiki_evaluation.md`](docs/twowiki_evaluation.md).
+
 ## Development
 
 ```bash
 uv sync                              # core library
 uv sync --extra recorder             # also install the recorder package
-uv run pytest                        # 501 tests, no workspace needed
+uv run pytest                        # 836 tests, no workspace needed
 uv run ruff check src tests scripts
-uv build                             # → dist/wikibricks-0.3.1-py3-none-any.whl
+uv build                             # → dist/wikibricks-0.7.8-py3-none-any.whl
 ```
 
 For the recorder, see [`plugin/README.md`](plugin/README.md). For

@@ -25,7 +25,15 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
-from wikibricks_recorder import auto_tag, auto_title, citations, config, page_builder, session
+from wikibricks_recorder import (
+    auto_summary,
+    auto_tag,
+    auto_title,
+    citations,
+    config,
+    page_builder,
+    session,
+)
 
 
 def _read_payload() -> dict[str, Any]:
@@ -272,12 +280,49 @@ def _flush(state: dict[str, Any]):
     if not title:
         title = page_builder.session_title(state)
 
+    # v0.7.8: opt-in dense LLM summary via [auto_summary] config block.
+    # When present, becomes both content.summary AND the VS-embedded
+    # content_text via write_page's content_text_override kwarg. Any
+    # failure (disabled / short session / endpoint error) returns None
+    # and we fall back to the default concat(summary, body) path.
+    dense_summary = None
+    summary_cfg = config.load_auto_summary_config()
+    summary_enabled = auto_summary.is_enabled(summary_cfg)
+    if summary_enabled:
+        try:
+            dense_summary = auto_summary.generate_summary(state, summary_cfg, client.ws)
+        except Exception as e:
+            _log_error("auto_summary.generate_summary", e)
+            dense_summary = None
+
     client.write_page(
         path,
         title=title,
-        content_json=page_builder.session_content(state),
+        content_json=page_builder.session_content(state, dense_summary=dense_summary),
         tags=tags,
+        content_text_override=dense_summary,
     )
+
+    # Emit a telemetry row so operators can grep wiki_log for the LLM-
+    # summary success rate. Only emitted when auto_summary is enabled —
+    # opt-out users keep a clean log.
+    if summary_enabled:
+        try:
+            if dense_summary:
+                client._log(
+                    "summary_ok",
+                    path=path,
+                    details=json.dumps({"chars": len(dense_summary)}),
+                )
+            else:
+                client._log(
+                    "summary_fail",
+                    path=path,
+                    details=json.dumps({"reason": "none_returned"}),
+                )
+        except Exception as e:
+            _log_error("summary log", e)
+
     return client
 
 

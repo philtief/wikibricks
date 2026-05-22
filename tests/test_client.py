@@ -107,6 +107,58 @@ class TestWritePage:
         with pytest.raises(RuntimeError, match="SQL execution failed"):
             wiki.write_page("test/page", "Test", '{"summary":"s","body":"b"}')
 
+    def test_content_text_override_replaces_concat_branches(self):
+        """When the recorder passes content_text_override, the MERGE SQL
+        writes that literal text into content_text — not the concat of
+        summary and body. Vector Search embeds the override; humans
+        still read content.body via fn_wiki_read."""
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+
+        override = "## Intent\n- refactor payments module"
+        wiki.write_page(
+            "sessions/u/2026/05/22/abc",
+            "Refactor payments",
+            {"summary": "irrelevant", "body": "huge transcript"},
+            content_text_override=override,
+        )
+
+        merge_sql = ws.statement_execution.execute_statement.call_args_list[1].kwargs["statement"]
+        # Override appears literally in the MERGE
+        assert "## Intent" in merge_sql
+        assert "refactor payments module" in merge_sql
+        # The concat(:summary, :body) shape must NOT appear when overriding
+        assert ":summary::STRING, ' '," not in merge_sql
+
+    def test_content_text_default_unchanged_when_no_override(self):
+        """Without override, the MERGE keeps the pre-0.7.8 behavior:
+        content_text = concat(content.summary, content.body)."""
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.write_page("test/page", "Test", {"summary": "s", "body": "b"})
+
+        merge_sql = ws.statement_execution.execute_statement.call_args_list[1].kwargs["statement"]
+        assert "concat(" in merge_sql
+        assert ":summary::STRING" in merge_sql
+        assert ":body::STRING" in merge_sql
+
+    def test_content_text_override_escapes_single_quotes(self):
+        """Override text containing single quotes must be SQL-escaped
+        so the MERGE statement stays parseable."""
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.write_page(
+            "test/page",
+            "Test",
+            {"summary": "s", "body": "b"},
+            content_text_override="it's working",
+        )
+        merge_sql = ws.statement_execution.execute_statement.call_args_list[1].kwargs["statement"]
+        assert "it\\'s working" in merge_sql
+
 
 class TestReadPage:
     def test_returns_dict_for_existing_page(self):

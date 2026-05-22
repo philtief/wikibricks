@@ -1,7 +1,7 @@
 {
   "name": "wikibricks-recorder",
   "description": "Records every Claude Code session as one WikiBricks page (catalog/schema/warehouse you control), and exposes the wiki to the agent via 5 stdio MCP tools so it can search and read prior sessions.",
-  "version": "0.7.7",
+  "version": "0.7.8",
   "homepage": "https://github.com/philtief/wikibricks",
   "repository": "https://github.com/philtief/wikibricks.git",
   "license": "Apache-2.0",

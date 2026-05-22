@@ -154,10 +154,24 @@ def session_tags(
     return tags
 
 
-def session_content(state: dict[str, Any]) -> dict[str, str]:
-    """Build {'summary', 'body'} for the wiki page's VARIANT content column."""
-    summary = (state.get("first_prompt") or "").strip().replace("\n", " ")
-    summary = summary[:SUMMARY_MAX] if summary else f"Session {state['session_id'][:8]}"
+def session_content(
+    state: dict[str, Any],
+    *,
+    dense_summary: str | None = None,
+) -> dict[str, str]:
+    """Build {'summary', 'body'} for the wiki page's VARIANT content column.
+
+    If ``dense_summary`` is a non-empty string, it replaces the default
+    truncated-first-prompt summary. The raw transcript body is built the
+    same way either path. Empty-string dense_summary falls through to
+    the legacy default — guards against accidentally embedding a blank
+    LLM response.
+    """
+    if dense_summary:
+        summary = dense_summary
+    else:
+        summary = (state.get("first_prompt") or "").strip().replace("\n", " ")
+        summary = summary[:SUMMARY_MAX] if summary else f"Session {state['session_id'][:8]}"
 
     body_lines = [
         f"# Session {state['session_id']}",

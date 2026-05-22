@@ -57,7 +57,7 @@ class TestConstants:
 
 
 class TestEnvOverride:
-    """Env-var override of catalog/schema for personal-wikibricks fork."""
+    """Env-var override of catalog/schema for personal-wikibricks-dev fork."""
 
     def test_env_vars_override_catalog_and_schema(self, monkeypatch):
         """Setting WIKIBRICKS_CATALOG / WIKIBRICKS_SCHEMA before import retargets all tables."""
@@ -292,6 +292,60 @@ class TestWritePageSql:
         stmts = write_page_sql("test/page", "Test", "concept", '{"summary":"s"}', "agent")
         merge_sql = stmts[1]
         assert "PARSE_JSON" in merge_sql
+
+    def test_content_text_override_replaces_concat_branches(self):
+        """When `content_text_override` is set, both INSERT and UPDATE
+        branches write the literal override text into `content_text`
+        instead of `concat(summary, body)`. VS embeds the override."""
+        override = "## Intent\n- short dense summary"
+        stmts = write_page_sql(
+            "sessions/u/2026/05/22/abc",
+            "Test session",
+            "session",
+            {"summary": "raw first prompt", "body": "huge raw events..."},
+            "user@example.com",
+            tags=["session"],
+            content_text_override=override,
+        )
+        merge_sql = stmts[1]
+        # The override must appear literally in the MERGE SQL
+        assert "## Intent" in merge_sql
+        assert "short dense summary" in merge_sql
+        # The default `concat(PARSE_JSON(...):summary::STRING, ' ',
+        # PARSE_JSON(...):body::STRING)` path must NOT appear when an
+        # override is set — overriding the body concat is the point.
+        assert ":summary::STRING, ' '," not in merge_sql
+
+    def test_default_behavior_unchanged_when_no_override(self):
+        """Without `content_text_override`, both branches still build
+        content_text via `concat(summary, body)` — preserving the
+        pre-0.7.8 contract for every existing caller."""
+        stmts = write_page_sql(
+            "test/page",
+            "Test",
+            "concept",
+            '{"summary":"s","body":"b"}',
+            "agent",
+        )
+        merge_sql = stmts[1]
+        assert "concat(" in merge_sql
+        assert ":summary::STRING" in merge_sql
+        assert ":body::STRING" in merge_sql
+
+    def test_content_text_override_escapes_single_quotes(self):
+        """Override text containing single quotes must be SQL-escaped
+        (same backslash-escape convention used for the content payload)
+        so the MERGE statement stays parseable."""
+        stmts = write_page_sql(
+            "test/page",
+            "Test",
+            "concept",
+            '{"summary":"s","body":"b"}',
+            "agent",
+            content_text_override="it's working",
+        )
+        merge_sql = stmts[1]
+        assert "it\\'s working" in merge_sql
 
 
 class TestCreateVsIndexSpec:

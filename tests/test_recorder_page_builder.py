@@ -6,6 +6,7 @@ import pytest
 
 from wikibricks_recorder.page_builder import (
     _looks_like_system_prompt,
+    session_content,
     session_tags,
     session_title,
 )
@@ -115,3 +116,55 @@ def test_session_tags_multiple_customers():
     })
     assert "customer:solvd" in tags
     assert "customer:allianz-italy" in tags
+
+
+def test_session_content_uses_dense_summary_when_provided():
+    """When the recorder supplies a dense LLM-generated summary, it
+    replaces the default truncated-first-prompt summary in
+    content.summary. The raw transcript still flows into content.body."""
+    state = {
+        "session_id": "abc12345-def",
+        "first_prompt": "ignore me — should not appear as summary",
+        "events": [
+            {"kind": "prompt", "ts": "2026-05-22T10:00:00Z", "prompt": "x"},
+        ],
+        "started_at": "2026-05-22T10:00:00Z",
+        "cwd": "/home/u",
+        "model": "claude-opus",
+    }
+    dense = "## Intent\n- refactor payment module\n## Outcome\n- done"
+    content = session_content(state, dense_summary=dense)
+    assert content["summary"] == dense
+    assert "## Timeline" in content["body"]
+    assert "prompt @" in content["body"]
+
+
+def test_session_content_falls_back_to_default_summary_when_no_dense():
+    """Without dense_summary, content.summary is the legacy truncated
+    first_prompt."""
+    state = {
+        "session_id": "abc12345-def",
+        "first_prompt": "Refactor payments",
+        "events": [
+            {"kind": "prompt", "ts": "2026-05-22T10:00:00Z", "prompt": "x"},
+        ],
+        "started_at": "2026-05-22T10:00:00Z",
+        "cwd": "/home/u",
+        "model": "claude-opus",
+    }
+    content = session_content(state)
+    assert content["summary"].startswith("Refactor payments")
+    assert "## Timeline" in content["body"]
+
+
+def test_session_content_dense_summary_empty_string_falls_through():
+    """Empty-string dense_summary is treated as 'no summary' so the
+    legacy default kicks in. Avoids accidentally embedding an empty
+    string when the LLM returns blank."""
+    state = {
+        "session_id": "abc",
+        "first_prompt": "Real first prompt",
+        "events": [{"kind": "prompt", "ts": "t", "prompt": "x"}],
+    }
+    content = session_content(state, dense_summary="")
+    assert content["summary"].startswith("Real first prompt")
