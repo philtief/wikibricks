@@ -334,3 +334,73 @@ def test_flush_disabled_auto_summary_does_not_log_either_op():
         ops = [c.args[0] for c in client._log.call_args_list]
         assert "summary_ok" not in ops
         assert "summary_fail" not in ops
+
+
+def test_flush_envelope_mode_writes_override_and_proposed_edges():
+    """When [auto_summary] mode='envelope', _flush fetches candidates,
+    calls generate_envelope, writes the structured override, and stages
+    proposed edges via bulk_propose_edges."""
+    state = _flushable_state()
+    cfg = _base_cfg()
+    summary_cfg = {"enabled": True, "mode": "envelope"}
+    fake_envelope = {
+        "summary_markdown": "## Intent\n- refactor",
+        "entities": [{"name": "Stripe"}],
+        "tags": ["topic:payments"],
+        "edges": [{
+            "target_path": "topics/stripe",
+            "link_type": "cites",
+            "evidence": "uses Stripe.construct_event",
+        }],
+    }
+    with patch("wikibricks_recorder.hooks.config.load_config", return_value=cfg), \
+         patch("wikibricks_recorder.hooks.config.load_auto_tag_config", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_topic_keywords", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_auto_title_config", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_auto_summary_config",
+               return_value=summary_cfg), \
+         patch("wikibricks_recorder.hooks.auto_summary.generate_envelope",
+               return_value=fake_envelope), \
+         patch("wikibricks_recorder.hooks._build_wiki_client") as mock_build:
+        client = mock_build.return_value
+        # Stub search() so envelope-mode candidate fetch works
+        client.search.return_value = [
+            {"path": "topics/stripe", "title": "Stripe", "content_text": "..."}
+        ]
+        _flush(state)
+        # write_page received the structured override
+        kwargs = client.write_page.call_args.kwargs
+        override = kwargs["content_text_override"]
+        assert "## Intent" in override
+        assert "Tags: topic:payments" in override
+        assert "Entities: Stripe" in override
+        # First-prompt tail is dropped
+        assert "## Raw intent" not in override
+        # Proposed edge made it through
+        client.bulk_propose_edges.assert_called_once()
+        proposed = client.bulk_propose_edges.call_args.args[0]
+        assert len(proposed) == 1
+        assert proposed[0]["target_path"] == "topics/stripe"
+
+
+def test_flush_intent_tail_mode_unchanged_v0_7_9_path():
+    """Default mode (or mode='intent_tail') keeps the v0.7.9 behavior."""
+    state = _flushable_state()
+    cfg = _base_cfg()
+    with patch("wikibricks_recorder.hooks.config.load_config", return_value=cfg), \
+         patch("wikibricks_recorder.hooks.config.load_auto_tag_config", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_topic_keywords", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_auto_title_config", return_value={}), \
+         patch("wikibricks_recorder.hooks.config.load_auto_summary_config",
+               return_value={"enabled": True}), \
+         patch("wikibricks_recorder.hooks.auto_summary.generate_summary",
+               return_value="## Intent\n- x"), \
+         patch("wikibricks_recorder.hooks.auto_summary.generate_envelope") as mock_env, \
+         patch("wikibricks_recorder.hooks._build_wiki_client") as mock_build:
+        client = mock_build.return_value
+        _flush(state)
+        # Envelope path NOT taken
+        mock_env.assert_not_called()
+        # v0.7.9 override (intent_tail) IS written
+        kwargs = client.write_page.call_args.kwargs
+        assert "## Raw intent" in kwargs["content_text_override"]
