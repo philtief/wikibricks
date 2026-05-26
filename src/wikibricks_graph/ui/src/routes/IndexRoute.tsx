@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router-dom";
 
 import { FilterSidebar } from "../components/FilterSidebar";
 import { GraphCanvas } from "../components/GraphCanvas";
+import { PageDetailDrawer } from "../components/PageDetailDrawer";
 import { useGraphLoader } from "../lib/useGraphLoader";
 import { useGraphStore } from "../lib/graphStore";
 
@@ -82,6 +83,13 @@ export function IndexRoute() {
             height={window.innerHeight - 40 /* header */}
           />
         </div>
+        {focus && (
+          <PageDetailDrawer
+            path={focus}
+            onClose={clearFocus}
+            onNavigateTo={(nextPath) => handleNodeClick(nextPath)}
+          />
+        )}
       </main>
     </div>
   );
