@@ -47,12 +47,16 @@ _graph_cache: GraphCache | None = None
 
 
 def get_user_ws():
-    """FastAPI dependency for the user-OBO WorkspaceClient.
+    """FastAPI dependency for the WorkspaceClient.
+
+    v0.7.12 currently returns the **app service-principal client** from
+    `get_workspace_client()` — NOT a true per-request OBO client. For a
+    single-owner wiki this is acceptable; for multi-user deploys this
+    means every user's queries run as the app SP, not as the requesting
+    user. True OBO via the `x-forwarded-access-token` header is v0.7.13+
+    work.
 
     Tests override via `app.dependency_overrides[get_user_ws] = lambda: fake_ws`.
-    In production (Databricks Apps) this resolves to a per-request OBO
-    client; we use the same factory here for simplicity. Future hardening
-    can switch to true per-request OBO via x-forwarded-access-token.
     """
     return get_workspace_client()
 

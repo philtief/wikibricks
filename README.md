@@ -181,7 +181,7 @@ uv sync                              # core library
 uv sync --extra recorder             # also install the recorder package
 uv run pytest                        # 879 tests, no workspace needed
 uv run ruff check src tests scripts
-uv build                             # → dist/wikibricks-0.7.12-py3-none-any.whl
+uv build                             # → dist/wikibricks-0.7.13-py3-none-any.whl
 ```
 
 For the recorder, see [`plugin/README.md`](plugin/README.md). For

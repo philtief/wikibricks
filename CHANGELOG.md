@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.13] - 2026-05-26
+
+### Fixed (v0.7.12 final-review hotfixes)
+
+- **`ui/src/lib/api.ts`** — `fetchPage` now encodes each path segment
+  via `encodeURIComponent` and rejoins with `/`. Faithful round-trip
+  for paths containing literal `%`.
+- **`backend/services/graph_cache.py`** — `GraphCache.get_or_fetch`
+  now wraps the cache-miss branch in `threading.Lock` (double-checked-
+  locking). Prevents duplicate cold-cache fetches when multiple
+  concurrent requests miss the cache simultaneously. New test asserts
+  N=5 concurrent threads only land 1 fetcher call.
+- **`backend/core.get_user_ws` docstring** — corrected to state the
+  v0.7.12 reality: returns the app-SP client, not per-request OBO.
+  True OBO is v0.7.13+ work.
+
+### Added
+
+- **`ui/src/routes/IndexRoute.tsx`** — `useWindowSize()` hook adds a
+  `window.resize` listener so the graph canvas re-layouts on viewport
+  change. The v0.7.12 width/height were snapshotted at first render.
+
 ## [0.7.12] - 2026-05-26
 
 ### Added
@@ -1150,7 +1172,8 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.12...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.13...HEAD
+[0.7.13]: https://github.com/philtief/wikibricks/compare/v0.7.12...v0.7.13
 [0.7.12]: https://github.com/philtief/wikibricks/compare/v0.7.11...v0.7.12
 [0.7.11]: https://github.com/philtief/wikibricks/compare/v0.7.10...v0.7.11
 [0.7.10]: https://github.com/philtief/wikibricks/compare/v0.7.9...v0.7.10

@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { useSearchParams } from "react-router-dom";
 
 import { FilterSidebar } from "../components/FilterSidebar";
@@ -8,12 +9,28 @@ import { useGraphStore } from "../lib/graphStore";
 
 const ALLOWED_DEPTH = new Set([0, 1, 2, 3]);
 
+function useWindowSize() {
+  const [size, setSize] = useState({
+    width: window.innerWidth,
+    height: window.innerHeight,
+  });
+  useEffect(() => {
+    function onResize() {
+      setSize({ width: window.innerWidth, height: window.innerHeight });
+    }
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return size;
+}
+
 export function IndexRoute() {
   useGraphLoader();
   const [searchParams, setSearchParams] = useSearchParams();
   const loading = useGraphStore((s) => s.loading);
   const error = useGraphStore((s) => s.error);
   const nodes = useGraphStore((s) => s.nodes);
+  const { width: winW, height: winH } = useWindowSize();
 
   const focus = searchParams.get("focus") || undefined;
   const depthParam = Number.parseInt(searchParams.get("depth") || "2", 10);
@@ -79,8 +96,8 @@ export function IndexRoute() {
             focus={focus}
             depth={depth}
             onNodeClick={handleNodeClick}
-            width={window.innerWidth - 256 /* sidebar */}
-            height={window.innerHeight - 40 /* header */}
+            width={winW - 256 /* sidebar */}
+            height={winH - 40 /* header */}
           />
         </div>
         {focus && (
