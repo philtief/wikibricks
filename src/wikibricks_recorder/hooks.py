@@ -280,32 +280,52 @@ def _flush(state: dict[str, Any]):
     if not title:
         title = page_builder.session_title(state)
 
-    # v0.7.8: opt-in dense LLM summary via [auto_summary] config block.
-    # When present, becomes both content.summary AND the VS-embedded
-    # content_text via write_page's content_text_override kwarg. Any
-    # failure (disabled / short session / endpoint error) returns None
-    # and we fall back to the default concat(summary, body) path.
-    dense_summary = None
+    # v0.7.10: branch on [auto_summary] mode = "envelope" | "intent_tail"
+    dense_summary: str | None = None
+    override: str | None = None
+    envelope = None
     summary_cfg = config.load_auto_summary_config()
     summary_enabled = auto_summary.is_enabled(summary_cfg)
-    if summary_enabled:
+    mode = (summary_cfg.get("mode") or "intent_tail").lower()
+
+    if summary_enabled and mode == "envelope":
+        # Fetch candidate neighbors (top-10 VS hits on the raw transcript)
+        try:
+            transcript_sample = (state.get("first_prompt") or "")[:8000]
+            hits = client.search(
+                transcript_sample, mode="HYBRID", num_results=10,
+                rerank_with_pagerank=False, rerank_by_citations=False,
+                include_ephemeral=False,
+            )
+            candidates = [
+                {"path": h.get("path") or "", "title": h.get("title") or "",
+                 "summary": (h.get("content_text") or "")[:200]}
+                for h in (hits or [])
+            ]
+        except Exception as e:
+            _log_error("envelope candidate fetch", e)
+            candidates = []
+        try:
+            envelope = auto_summary.generate_envelope(
+                state, summary_cfg, client.ws, candidates,
+            )
+        except Exception as e:
+            _log_error("auto_summary.generate_envelope", e)
+            envelope = None
+        if envelope:
+            dense_summary = envelope.get("summary_markdown") or None
+            from wikibricks_recorder import envelope as env_module
+            override = env_module.build_override_text(title=title, env=envelope)
+    elif summary_enabled:
+        # v0.7.9 intent_tail path (default)
         try:
             dense_summary = auto_summary.generate_summary(state, summary_cfg, client.ws)
         except Exception as e:
             _log_error("auto_summary.generate_summary", e)
             dense_summary = None
+        if dense_summary:
+            override = auto_summary.build_content_text_override(state, dense_summary)
 
-    # v0.7.9: content_text_override is dense_summary + raw first_prompt
-    # tail. Pure dense summaries hurt recall@1 (eval v2: 35% → 5%) because
-    # they paraphrase the user's natural phrasing — even when identifiers
-    # are quoted verbatim. Appending up to 2k chars of the first prompt
-    # restores keyword density for HYBRID retrieval (+15pp recall@1 over
-    # pure summary, beats baseline concat on mean_rank 2.10 vs 2.65).
-    override = (
-        auto_summary.build_content_text_override(state, dense_summary)
-        if dense_summary
-        else None
-    )
     client.write_page(
         path,
         title=title,
@@ -314,23 +334,33 @@ def _flush(state: dict[str, Any]):
         content_text_override=override,
     )
 
-    # Emit a telemetry row so operators can grep wiki_log for the LLM-
-    # summary success rate. Only emitted when auto_summary is enabled —
-    # opt-out users keep a clean log.
+    # v0.7.10: stage LLM-proposed edges in edges_proposed
+    if envelope and envelope.get("edges"):
+        edges_to_stage = [
+            {
+                "source_path": path,
+                "target_path": e["target_path"],
+                "link_type": e["link_type"],
+                "evidence": e["evidence"],
+                "confidence": 0.7,
+                "created_by": "auto_summary@envelope",
+            }
+            for e in envelope["edges"]
+        ]
+        try:
+            client.bulk_propose_edges(edges_to_stage)
+        except Exception as e:
+            _log_error("bulk_propose_edges", e)
+
+    # Telemetry (existing summary_ok / summary_fail kept; mode dimension added)
     if summary_enabled:
         try:
             if dense_summary:
-                client._log(
-                    "summary_ok",
-                    path=path,
-                    details=json.dumps({"chars": len(dense_summary)}),
-                )
+                client._log("summary_ok", path=path,
+                            details=json.dumps({"chars": len(dense_summary), "mode": mode}))
             else:
-                client._log(
-                    "summary_fail",
-                    path=path,
-                    details=json.dumps({"reason": "none_returned"}),
-                )
+                client._log("summary_fail", path=path,
+                            details=json.dumps({"reason": "none_returned", "mode": mode}))
         except Exception as e:
             _log_error("summary log", e)
 

@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.10] - 2026-05-26
+
+### Added
+
+- **`auto_summary.generate_envelope`** — single structured-output LLM
+  call returning `{summary_markdown, entities, tags, edges}`. Replaces
+  the v0.7.9 pure-summary call when `[auto_summary] mode = "envelope"`.
+- **`wikibricks_recorder.envelope` module** — schema, prompt builder
+  (with candidate-neighbor injection per arXiv:2510.20345), parser,
+  edge filter (case-insensitive path normalization to defeat LLM case-
+  shifting), content_text override builder. 12 unit tests.
+- **`WikiClient.bulk_propose_edges`** — stages LLM-proposed edges in
+  the new `edges_proposed` Delta table. Uses `INSERT INTO ... SELECT
+  ... UNION ALL ...` form (the SQL-warehouse-safe pattern).
+- **`edges_proposed` Delta table** — staging area for LLM-emitted typed
+  edges with provenance (source_path, target_path, link_type,
+  evidence, confidence, status). DDL in `ops.create_tables_sql`.
+- **`notebooks/promote_edges.py` + task in `wiki_curate_job.yml`** —
+  nightly auto-confirms staged edges where target exists + evidence
+  non-empty + no duplicate. Joins `edges_proposed` paths to
+  `pages.page_id` and inserts into `links` with
+  `origin='auto_summary_envelope'`.
+- **`hooks._flush` mode branching** — `[auto_summary] mode` selects
+  `"envelope"` (new) or `"intent_tail"` (v0.7.9 default, unchanged).
+  Envelope mode fetches top-10 VS candidates → calls generate_envelope
+  → builds override → stages proposed edges.
+- **`propose_edges` and `promote_edge` `wiki_log` op_types** for the
+  new flow. Telemetry table in `AGENTS.md` updated.
+- **33 new tests** (suite 841 → 874).
+
+### Changed
+
+- **Envelope-mode `content_text` override drops the `first_prompt`
+  tail** — replaced with `title + summary + tags + entities`. Denser,
+  keyword-rich, no conversational noise. v0.7.9 intent_tail mode
+  unchanged.
+
+### Why
+
+Anthropic Structured Outputs (GA Feb 2026) makes a single
+multi-purpose JSON call reliable. WikiBricks' graph (typed edges,
+PageRank, communities) is most valuable when summaries are AWARE of
+their neighbors — proposing typed edges at write time so subsequent
+retrieval + community synthesis have richer signal. See
+`docs/research/2026-05-26-graph-aware-summary-research.md` for the
+HippoRAG / RAPTOR / LightRAG references.
+
+Edges go to a staging table — never directly to `links` — so
+hallucinated targets are quarantined (mitigation pattern from
+arXiv:2510.20345). Path normalization (lower + strip) on the
+candidate-filter further hardens against LLM case-shift bypasses.
+
+### To enable
+
+```toml
+# ~/.wikibricks-recorder.toml
+[auto_summary]
+enabled = true
+mode = "envelope"
+endpoint = "databricks-claude-haiku-4-5"
+```
+
+Default mode is `"intent_tail"` (v0.7.9 behavior) until the
+larger-N eval validates `"envelope"`. See plan at
+`docs/superpowers/plans/2026-05-26-graph-aware-summary.md`.
+
 ## [0.7.9] - 2026-05-22
 
 ### Changed
@@ -984,16 +1050,8 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.9...HEAD
-[0.7.9]: https://github.com/philtief/wikibricks/compare/v0.7.8...v0.7.9
-[0.7.8]: https://github.com/philtief/wikibricks/compare/v0.7.7...v0.7.8
-[0.7.7]: https://github.com/philtief/wikibricks/compare/v0.7.6...v0.7.7
-[0.7.6]: https://github.com/philtief/wikibricks/compare/v0.7.5...v0.7.6
-[0.7.5]: https://github.com/philtief/wikibricks/compare/v0.7.4...v0.7.5
-[0.7.4]: https://github.com/philtief/wikibricks/compare/v0.7.3...v0.7.4
-[0.7.3]: https://github.com/philtief/wikibricks/compare/v0.7.2...v0.7.3
-[0.7.2]: https://github.com/philtief/wikibricks/compare/v0.7.1...v0.7.2
-[0.7.1]: https://github.com/philtief/wikibricks/compare/v0.7.0...v0.7.1
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.10...HEAD
+[0.7.10]: https://github.com/philtief/wikibricks/compare/v0.7.9...v0.7.10
 [0.7.0]: https://github.com/philtief/wikibricks/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/philtief/wikibricks/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/philtief/wikibricks/compare/v0.4.1...v0.5.0

@@ -7,6 +7,7 @@ import pytest
 
 from wikibricks.ops import (
     CATALOG,
+    EDGES_PROPOSED_TABLE,
     HISTORY_TABLE,
     LINKS_TABLE,
     LOG_TABLE,
@@ -81,9 +82,9 @@ class TestEnvOverride:
 
 
 class TestCreateTablesSql:
-    def test_returns_eight_statements(self):
+    def test_returns_nine_statements(self):
         stmts = create_tables_sql()
-        assert len(stmts) == 8
+        assert len(stmts) == 9
 
     def test_vocabulary_table(self):
         from wikibricks.ops import VOCABULARY_TABLE
@@ -761,3 +762,86 @@ class TestGraphNeighborsSql:
             graph_neighbors_sql("page-a", depth=0)
         with pytest.raises(ValueError):
             graph_neighbors_sql("page-a", depth=4)
+
+
+def test_create_tables_sql_includes_edges_proposed():
+    sql_statements = create_tables_sql()
+    joined = "\n".join(sql_statements)
+    # Assert against the constant so a rename of EDGES_PROPOSED_TABLE
+    # cannot silently drift away from the DDL test.
+    assert EDGES_PROPOSED_TABLE in joined
+    assert "source_path" in joined
+    assert "target_path" in joined
+    assert "link_type" in joined
+    assert "evidence" in joined
+    assert "status" in joined
+
+
+def test_propose_edges_sql_statements_returns_insert():
+    from wikibricks.ops import propose_edges_sql_statements
+
+    rows = [
+        {
+            "source_path": "sessions/u/2026/05/22/abc",
+            "target_path": "topics/stripe-webhooks",
+            "link_type": "cites",
+            "evidence": "uses stripe.Webhook.construct_event",
+            "confidence": 0.85,
+            "created_by": "auto_summary@v0.7.10",
+        },
+    ]
+    sql = propose_edges_sql_statements(rows)
+    # SQL warehouses reject INSERT INTO t VALUES (uuid(), ...) — must use
+    # the INSERT INTO t (cols) SELECT uuid(), ... form instead.
+    assert "INSERT INTO" in sql
+    assert "SELECT uuid()" in sql
+    assert "edges_proposed" in sql
+    assert "stripe-webhooks" in sql
+    assert "stripe.Webhook.construct_event" in sql
+    assert "cites" in sql
+    # Default status is 'pending'
+    assert "'pending'" in sql or "pending" in sql.lower()
+
+
+def test_propose_edges_sql_handles_empty_rows():
+    from wikibricks.ops import propose_edges_sql_statements
+
+    assert propose_edges_sql_statements([]) == ""
+
+
+def test_propose_edges_sql_escapes_single_quotes():
+    from wikibricks.ops import propose_edges_sql_statements
+
+    rows = [{
+        "source_path": "s",
+        "target_path": "t",
+        "link_type": "related",
+        "evidence": "it's an example",
+        "confidence": 0.5,
+        "created_by": "test",
+    }]
+    sql = propose_edges_sql_statements(rows)
+    assert "it\\'s an example" in sql
+
+
+def test_propose_edges_sql_escapes_backslashes():
+    """Backslashes must be doubled (SQL string-literal convention).
+
+    The order in _esc — replace('\\', '\\\\') THEN replace("'", "\\'") —
+    matters: escaping backslashes after escaping quotes would double-escape
+    the backslash that _is_ part of an apostrophe escape. This test pins
+    the order down.
+    """
+    from wikibricks.ops import propose_edges_sql_statements
+
+    rows = [{
+        "source_path": "s",
+        "target_path": "t",
+        "link_type": "related",
+        "evidence": r"path\to\file",   # raw string: backslashes literal
+        "confidence": 0.5,
+        "created_by": "test",
+    }]
+    sql = propose_edges_sql_statements(rows)
+    # Each literal backslash should be doubled in the SQL string
+    assert r"path\\to\\file" in sql

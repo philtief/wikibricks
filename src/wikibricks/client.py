@@ -8,6 +8,7 @@ import re
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
 
+from wikibricks import ops
 from wikibricks.ops import (
     HISTORY_TABLE,
     LINKS_TABLE,
@@ -847,6 +848,24 @@ class WikiClient:
 
         self._log("connect", details=f"committed={len(valid)}")
         return len(valid)
+
+    def bulk_propose_edges(self, rows: list[dict]) -> int:
+        """Stage LLM-proposed edges in the edges_proposed table.
+
+        Each row dict must have: source_path, target_path, link_type,
+        evidence, confidence, created_by. The nightly promote_edges job
+        auto-confirms rows whose target exists and evidence is non-empty.
+
+        Returns the number of rows staged. Returns 0 (no-op) on empty input.
+        """
+        if not rows:
+            return 0
+        sql = ops.propose_edges_sql_statements(rows)
+        if not sql:
+            return 0
+        self._exec(sql)
+        self._log("propose_edges", details=json.dumps({"n_proposed": len(rows)}))
+        return len(rows)
 
     def graph_neighbors(
         self,

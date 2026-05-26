@@ -815,3 +815,37 @@ class TestFixBrokenLinks:
         ws.statement_execution.execute_statement.return_value = _mock_response([[5]], columns=["c"])
         wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
         assert wiki.fix_broken_links() == 0
+
+
+class TestBulkProposeEdges:
+    def test_writes_rows_via_propose_edges_sql(self, monkeypatch):
+        from wikibricks import ops
+        from wikibricks.client import WikiClient
+
+        captured = {}
+
+        def fake_builder(rows):
+            captured["rows"] = rows
+            return "INSERT INTO edges_proposed VALUES (...)"
+
+        monkeypatch.setattr(ops, "propose_edges_sql_statements", fake_builder)
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.return_value = _mock_response([])
+        client = WikiClient(warehouse_id="w", workspace_client=ws)
+
+        rows = [
+            {"source_path": "s/1", "target_path": "t/1", "link_type": "cites",
+             "evidence": "ok", "confidence": 0.8, "created_by": "test"},
+            {"source_path": "s/1", "target_path": "t/2", "link_type": "related",
+             "evidence": "ok", "confidence": 0.7, "created_by": "test"},
+        ]
+        n = client.bulk_propose_edges(rows)
+        assert n == 2
+        assert captured["rows"] == rows
+
+    def test_empty_rows_is_noop(self):
+        from wikibricks.client import WikiClient
+        ws = MagicMock()
+        client = WikiClient(warehouse_id="w", workspace_client=ws)
+        assert client.bulk_propose_edges([]) == 0
+        ws.statement_execution.execute_statement.assert_not_called()
