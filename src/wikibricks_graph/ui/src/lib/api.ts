@@ -35,7 +35,8 @@ export async function refreshGraph(): Promise<void> {
 }
 
 export async function fetchPage(path: string): Promise<PageDetail> {
-  return _get<PageDetail>(`/pages/${encodeURI(path)}`);
+  const encoded = path.split("/").map(encodeURIComponent).join("/");
+  return _get<PageDetail>(`/pages/${encoded}`);
 }
 
 export async function listProposedEdges(): Promise<ProposedEdgeOut[]> {
