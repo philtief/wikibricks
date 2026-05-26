@@ -52,9 +52,9 @@ def test_logs_promote_edge_op_type():
     assert '"promote_edge"' in txt
 
 
-def test_pip_install_pinned_to_0_7_10():
+def test_pip_install_pinned_to_0_7_11():
     txt = NB.read_text()
-    assert "wikibricks-0.7.10-py3-none-any.whl" in txt
+    assert "wikibricks-0.7.11-py3-none-any.whl" in txt
 
 
 def test_escapes_link_type_in_sql():

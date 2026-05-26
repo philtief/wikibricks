@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.11] - 2026-05-26
+
+### Fixed (hotfix on 0.7.10 — caught by final code-quality review)
+
+- **`notebooks/promote_edges.py`: `link_type` was interpolated into
+  the duplicate-check SQL without escaping.** Now uses a `_esc` helper
+  applied to all SQL interpolations (target_path, source_path,
+  link_type, proposal_id, orphan ids). [Important]
+- **`notebooks/promote_edges.py`: promotion loop only validated
+  `target_path` existence, not `source_path`.** Under Delta visibility
+  races (write committed but not yet visible to other warehouse
+  connections), the final `INSERT INTO links` INNER JOIN would silently
+  drop rows while `status='confirmed'` was already set — silent edge
+  loss. Now adds an explicit source-exists check (`rejected:
+  source_missing`) PLUS a compensating LEFT-JOIN check after the
+  INSERT to catch any orphan rows and mark them `rejected:
+  source_join_orphan`. [Important]
+- **`notebooks/promote_edges.py`: rejection-update loop double-
+  processed orphan rows.** The compensating UPDATE marked orphans
+  rejected and appended `[rejected: source_join_orphan]` to evidence;
+  the subsequent rejection loop then re-appended the same marker. Now
+  tracks orphan ids in a set and skips them in the rejection loop.
+  [Important]
+- **`notebooks/promote_edges.py`: `rejected_reasons` telemetry dict
+  hard-coded three reasons.** Now uses `Counter(reason for _, reason
+  in rejected)` so new reasons (including the two added in this
+  release) are counted automatically. [Minor]
+
+### Coverage
+
+5 new drift-guard tests in `tests/test_promote_edges_notebook.py`
+(suite 874 → 879).
+
+### Why
+
+The v0.7.10 release introduced the nightly `promote_edges.py` notebook
+that promotes LLM-proposed edges from `edges_proposed` into the
+canonical `links` table. Per-task code review during 0.7.10 missed
+these four findings — they surfaced only in the final
+v0.7.9..v0.7.10 cross-cutting review. Hotfix-released as 0.7.11
+because Important #2 is a silent-data-loss path that could affect
+any user who enables `[auto_summary] mode = "envelope"`.
+
+The auto_summary library + envelope-mode write path are unchanged.
+
 ## [0.7.10] - 2026-05-26
 
 ### Added
@@ -1050,7 +1095,8 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.10...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.11...HEAD
+[0.7.11]: https://github.com/philtief/wikibricks/compare/v0.7.10...v0.7.11
 [0.7.10]: https://github.com/philtief/wikibricks/compare/v0.7.9...v0.7.10
 [0.7.0]: https://github.com/philtief/wikibricks/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/philtief/wikibricks/compare/v0.5.0...v0.6.0
