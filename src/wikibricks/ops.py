@@ -163,7 +163,7 @@ def create_tables_sql():
         """,
         f"""
         CREATE TABLE IF NOT EXISTS {EDGES_PROPOSED_TABLE} (
-            proposal_id   STRING DEFAULT uuid(),
+            proposal_id   STRING NOT NULL,
             source_path   STRING NOT NULL,
             target_path   STRING NOT NULL,
             link_type     STRING NOT NULL,
@@ -171,8 +171,7 @@ def create_tables_sql():
             confidence    DOUBLE,
             created_by    STRING,
             created_at    TIMESTAMP DEFAULT current_timestamp(),
-            status        STRING DEFAULT 'pending',
-            CONSTRAINT edges_proposed_pk PRIMARY KEY (proposal_id)
+            status        STRING DEFAULT 'pending'
         )
         USING DELTA
         TBLPROPERTIES (
