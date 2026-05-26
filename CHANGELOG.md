@@ -7,6 +7,61 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.12] - 2026-05-26
+
+### Added
+
+- **`src/wikibricks_graph/`** — new Databricks App that visualizes the
+  wiki as an interactive force-directed graph. Replaces the Streamlit
+  `wikibricks-app` (same `/Workspace/.../wikibricks-app` slot).
+- **Backend (FastAPI)**: `/api/graph` (with ETag), `/api/graph/refresh`,
+  `/api/pages/{path:path}`, `/api/edges/proposed` + approve/reject.
+  Hides chunks by default. In-process `cachetools.TTLCache` snapshot
+  + `blake2b` ETag. Dependencies: `fastapi`, `uvicorn`, `pydantic`,
+  `databricks-sdk`, `cachetools`. 33 backend tests.
+- **Frontend (Vite + React + TypeScript)**: `@xyflow/react@^12` +
+  `d3-force@^3` force-directed graph; Zustand for state; URL search
+  params (`?focus=&depth=`) drive ego-network deep links; `FilterSidebar`
+  for community / page_type / typed-edges-only / chunks / search;
+  `PageDetailDrawer` with title + tags + 1-hop neighbor chips + body;
+  `/queue` route for approving / rejecting LLM-proposed edges. 25 unit
+  tests for pure logic (store, ego BFS, palette, force layout).
+- **Deployed** at https://wikibricks-app-7474653189849615.aws.databricksapps.com
+  (env vars set on the Databricks Apps side: `WIKIBRICKS_CATALOG`,
+  `WIKIBRICKS_SCHEMA`, `WIKIBRICKS_WAREHOUSE_ID`).
+- **Plugin manifest + launcher REF** bumped to `v0.7.12`. Notebook
+  `%pip` lines + README test count refreshed.
+
+### Pivoted from APX → manual scaffold
+
+The original plan specified `apx init` for scaffolding. APX install
+(curl-pipe-to-sh from an external domain) was blocked by auto-mode
+without explicit user authorization. Pivoted to the FE-blessed manual
+scaffold pattern from the `fe-databricks-tools:databricks-apps` skill
+— same tech stack (FastAPI + Vite + React + Tailwind + Zustand), with
+hand-written fetch wrappers in place of Orval auto-typed-client.
+
+### Why
+
+The previous Streamlit `wikibricks-app` was a list-and-edit UI that
+made the wiki's graph structure invisible. With v0.7.10 envelope mode
+now staging LLM-proposed typed edges, the graph is the most valuable
+view — clusters, citations, hub pages, and orphans are immediate at a
+glance. The new app makes the WikiBricks graph a first-class surface.
+
+### Research + plan
+
+- `docs/research/2026-05-26-graph-interface-research.md`
+- `docs/superpowers/plans/2026-05-26-graph-interface.md`
+
+### To browse
+
+Visit https://wikibricks-app-7474653189849615.aws.databricksapps.com
+(authenticate via Databricks SSO). Click any node to deep-link into
+its 2-hop neighborhood. Use the sidebar to filter by community / page
+type / search. The `/queue` route lists proposed edges from envelope
+mode for review.
+
 ## [0.7.11] - 2026-05-26
 
 ### Fixed (hotfix on 0.7.10 — caught by final code-quality review)
@@ -1095,7 +1150,8 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.11...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.12...HEAD
+[0.7.12]: https://github.com/philtief/wikibricks/compare/v0.7.11...v0.7.12
 [0.7.11]: https://github.com/philtief/wikibricks/compare/v0.7.10...v0.7.11
 [0.7.10]: https://github.com/philtief/wikibricks/compare/v0.7.9...v0.7.10
 [0.7.0]: https://github.com/philtief/wikibricks/compare/v0.6.0...v0.7.0
