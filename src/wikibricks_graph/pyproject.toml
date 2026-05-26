@@ -1,0 +1,27 @@
+[project]
+name = "wikibricks-graph"
+version = "0.7.12"
+description = "Graph-visualization Databricks App for WikiBricks"
+requires-python = ">=3.10"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "pydantic>=2.9",
+    "databricks-sdk>=0.44",
+    "cachetools>=5.5",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "httpx>=0.27",  # for FastAPI TestClient
+    "ruff>=0.7",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+
+[tool.setuptools.packages.find]
+include = ["backend*"]
+exclude = ["ui*", "tests*", "node_modules*"]
