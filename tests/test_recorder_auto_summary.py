@@ -240,3 +240,87 @@ def test_build_override_strips_whitespace_in_first_prompt():
     assert "refactor payments" in override
     # The header should still appear exactly once
     assert override.count("## Raw intent") == 1
+
+
+# --- generate_envelope (v0.7.10 structured-output path) ----------------------
+
+
+def test_generate_envelope_returns_none_when_disabled():
+    state = _long_state()
+    ws = MagicMock()
+    result = auto_summary.generate_envelope(
+        state, {"enabled": False}, ws, candidates=[]
+    )
+    assert result is None
+
+
+def test_generate_envelope_returns_none_for_short_session():
+    state = {"first_prompt": "hi", "events": []}
+    ws = MagicMock()
+    result = auto_summary.generate_envelope(
+        state, {"enabled": True, "mode": "envelope"}, ws, candidates=[]
+    )
+    assert result is None
+
+
+def test_generate_envelope_happy_path():
+    import json as _json
+    state = _long_state()
+    raw = _json.dumps({
+        "summary_markdown": "## Intent\n- refactor",
+        "entities": [{"name": "Stripe", "type": "library"}],
+        "tags": ["topic:payments"],
+        "edges": [],
+    })
+    ws = MagicMock()
+    resp = MagicMock()
+    resp.choices = [MagicMock(message=MagicMock(content=raw))]
+    ws.serving_endpoints.query.return_value = resp
+
+    result = auto_summary.generate_envelope(
+        state, {"enabled": True, "mode": "envelope"}, ws,
+        candidates=[],
+    )
+    assert result is not None
+    assert "## Intent" in result["summary_markdown"]
+    assert result["entities"][0]["name"] == "Stripe"
+    assert "topic:payments" in result["tags"]
+
+
+def test_generate_envelope_swallows_endpoint_errors():
+    state = _long_state()
+    ws = MagicMock()
+    ws.serving_endpoints.query.side_effect = RuntimeError("boom")
+    result = auto_summary.generate_envelope(
+        state, {"enabled": True}, ws, candidates=[]
+    )
+    assert result is None
+
+
+def test_generate_envelope_filters_hallucinated_edges():
+    """Edges whose target isn't in the candidates list are dropped."""
+    import json as _json
+    state = _long_state()
+    raw = _json.dumps({
+        "summary_markdown": "S",
+        "entities": [],
+        "tags": [],
+        "edges": [
+            {"target_path": "topics/real", "link_type": "cites",
+             "evidence": "real evidence"},
+            {"target_path": "topics/HALLUCINATED", "link_type": "cites",
+             "evidence": "fake"},
+        ],
+    })
+    ws = MagicMock()
+    resp = MagicMock()
+    resp.choices = [MagicMock(message=MagicMock(content=raw))]
+    ws.serving_endpoints.query.return_value = resp
+
+    result = auto_summary.generate_envelope(
+        state, {"enabled": True}, ws,
+        candidates=[{"path": "topics/real", "title": "Real", "summary": ""}],
+    )
+    assert result is not None
+    assert len(result["edges"]) == 1
+    assert result["edges"][0]["target_path"] == "topics/real"

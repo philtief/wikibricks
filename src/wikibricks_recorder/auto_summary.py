@@ -26,6 +26,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from wikibricks_recorder import envelope as env_module
+
 DEFAULT_ENDPOINT = "databricks-claude-haiku-4-5"
 DEFAULT_MAX_INPUT_CHARS = 12_000
 DEFAULT_MIN_CHARS_FOR_SUMMARY = 2_000
@@ -183,3 +185,67 @@ def generate_summary(
     except (AttributeError, IndexError, KeyError):
         return None
     return _clean_summary(content)
+
+
+def generate_envelope(
+    state: dict[str, Any],
+    cfg: dict[str, Any],
+    workspace_client: Any,
+    candidates: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Call the LLM with a structured-output prompt and return the
+    parsed envelope dict.
+
+    The envelope is::
+
+        {
+          "summary_markdown": str,
+          "entities": list[{"name", "type"}],
+          "tags": list[str],
+          "edges": list[{"target_path", "link_type", "evidence"}]
+        }
+
+    ``candidates`` is the list of existing wiki pages the LLM may propose
+    edges to (typically top-10 VS hits on the raw session text). Returns
+    ``None`` when disabled, when the session is too short, or on any
+    endpoint / parsing failure.
+
+    Edges in the returned envelope are post-filtered against the
+    candidates list and against the allowed link_type vocabulary.
+    """
+    if not is_enabled(cfg):
+        return None
+    if not _should_summarize(state):
+        return None
+    sample = _sample_transcript(
+        state, max_chars=int(cfg.get("max_input_chars", DEFAULT_MAX_INPUT_CHARS))
+    )
+    if not sample:
+        return None
+    endpoint = cfg.get("endpoint", DEFAULT_ENDPOINT)
+    prompt = env_module.build_prompt(transcript=sample, candidates=candidates)
+    try:
+        from databricks.sdk.service.serving import ChatMessage, ChatMessageRole
+
+        response = workspace_client.serving_endpoints.query(
+            name=endpoint,
+            messages=[
+                ChatMessage(role=ChatMessageRole.SYSTEM, content=prompt),
+                ChatMessage(role=ChatMessageRole.USER, content="Emit the JSON envelope now."),
+            ],
+            max_tokens=1500,
+        )
+    except Exception:
+        return None
+    try:
+        raw = response.choices[0].message.content
+    except (AttributeError, IndexError, KeyError):
+        return None
+    parsed = env_module.parse_envelope(raw)
+    if parsed is None:
+        return None
+    candidate_paths = [c.get("path", "") for c in candidates]
+    parsed["edges"] = env_module.filter_edges_to_candidates(
+        parsed["edges"], candidate_paths
+    )
+    return parsed
