@@ -25,6 +25,7 @@
 
 # COMMAND ----------
 import json
+from collections import Counter
 
 from databricks.sdk import WorkspaceClient
 
@@ -35,6 +36,11 @@ warehouse_id = dbutils.widgets.get("warehouse_id")  # noqa: F821
 catalog = dbutils.widgets.get("catalog")  # noqa: F821
 schema = dbutils.widgets.get("schema")  # noqa: F821
 client = WikiClient(warehouse_id=warehouse_id, workspace_client=ws)
+
+
+def _esc(s):
+    """SQL-escape a string: backslash first, then single-quote doubling."""
+    return (s or "").replace("\\", "\\\\").replace("'", "''")
 
 # COMMAND ----------
 # Pull all pending rows
@@ -60,10 +66,9 @@ for proposal_id, source_path, target_path, link_type, evidence, confidence in ro
         rejected.append((proposal_id, "empty_evidence"))
         continue
     # Target exists?
-    target_escaped = target_path.replace(chr(39), chr(39) + chr(39))
     check_sql = (
         f"SELECT 1 FROM {catalog}.{schema}.pages "
-        f"WHERE path = '{target_escaped}' LIMIT 1"
+        f"WHERE path = '{_esc(target_path)}' LIMIT 1"
     )
     r = ws.statement_execution.execute_statement(
         warehouse_id=warehouse_id, statement=check_sql, wait_timeout="30s"
@@ -71,16 +76,28 @@ for proposal_id, source_path, target_path, link_type, evidence, confidence in ro
     if not r.result or not r.result.data_array:
         rejected.append((proposal_id, "target_missing"))
         continue
+    # Source page must also exist — defense against race conditions
+    # where _flush stages edges before the page MERGE is visible to
+    # other warehouse connections.
+    src_check_sql = (
+        f"SELECT 1 FROM {catalog}.{schema}.pages "
+        f"WHERE path = '{_esc(source_path)}' LIMIT 1"
+    )
+    r = ws.statement_execution.execute_statement(
+        warehouse_id=warehouse_id, statement=src_check_sql, wait_timeout="30s"
+    )
+    if not r.result or not r.result.data_array:
+        rejected.append((proposal_id, "source_missing"))
+        continue
     # Duplicate in links? Resolve source_path + target_path → page_ids via
     # a double-JOIN on pages — the links table is keyed by page_id, not path.
-    source_escaped = source_path.replace(chr(39), chr(39) + chr(39))
     dup_sql = (
         f"SELECT 1 FROM {catalog}.{schema}.links l "
         f"JOIN {catalog}.{schema}.pages src ON src.page_id = l.source_page_id "
         f"JOIN {catalog}.{schema}.pages tgt ON tgt.page_id = l.target_page_id "
-        f"WHERE src.path = '{source_escaped}' "
-        f"AND tgt.path = '{target_escaped}' "
-        f"AND l.link_type = '{link_type}' LIMIT 1"
+        f"WHERE src.path = '{_esc(source_path)}' "
+        f"AND tgt.path = '{_esc(target_path)}' "
+        f"AND l.link_type = '{_esc(link_type)}' LIMIT 1"
     )
     r = ws.statement_execution.execute_statement(
         warehouse_id=warehouse_id, statement=dup_sql, wait_timeout="30s"
@@ -130,6 +147,37 @@ if confirmed_ids:
         """,
         wait_timeout="30s",
     )
+    # Verify the JOIN inserted every confirmed_id. Any row whose
+    # source_path → pages.path JOIN missed is an orphan — mark it
+    # rejected with reason 'source_join_orphan' so we don't silently
+    # lose edges to Delta visibility races.
+    confirmed_check_sql = (
+        f"SELECT ep.proposal_id "
+        f"FROM {catalog}.{schema}.edges_proposed ep "
+        f"LEFT JOIN {catalog}.{schema}.pages src ON src.path = ep.source_path "
+        f"LEFT JOIN {catalog}.{schema}.pages tgt ON tgt.path = ep.target_path "
+        f"WHERE ep.proposal_id IN ({ids_list}) "
+        f"AND (src.page_id IS NULL OR tgt.page_id IS NULL)"
+    )
+    r = ws.statement_execution.execute_statement(
+        warehouse_id=warehouse_id, statement=confirmed_check_sql, wait_timeout="30s"
+    )
+    orphan_ids = [row[0] for row in (r.result.data_array or [])] if r.result else []
+    if orphan_ids:
+        orphan_list = ",".join(f"'{_esc(i)}'" for i in orphan_ids)
+        ws.statement_execution.execute_statement(
+            warehouse_id=warehouse_id,
+            statement=(
+                f"UPDATE {catalog}.{schema}.edges_proposed "
+                f"SET status = 'rejected', "
+                f"evidence = concat(coalesce(evidence, ''), ' [rejected: source_join_orphan]') "
+                f"WHERE proposal_id IN ({orphan_list})"
+            ),
+            wait_timeout="30s",
+        )
+        # Adjust the confirmed_ids list for accurate telemetry
+        confirmed_ids = [i for i in confirmed_ids if i not in orphan_ids]
+        rejected.extend((i, "source_join_orphan") for i in orphan_ids)
 
 if rejected:
     for proposal_id, reason in rejected:
@@ -138,8 +186,8 @@ if rejected:
             statement=(
                 f"UPDATE {catalog}.{schema}.edges_proposed "
                 f"SET status = 'rejected', "
-                f"evidence = concat(coalesce(evidence, ''), ' [rejected: {reason}]') "
-                f"WHERE proposal_id = '{proposal_id}'"
+                f"evidence = concat(coalesce(evidence, ''), ' [rejected: {_esc(reason)}]') "
+                f"WHERE proposal_id = '{_esc(proposal_id)}'"
             ),
             wait_timeout="30s",
         )
@@ -151,10 +199,7 @@ client._log(
     details=json.dumps({
         "confirmed": len(confirmed_ids),
         "rejected": len(rejected),
-        "rejected_reasons": {
-            r: sum(1 for _, rr in rejected if rr == r)
-            for r in {"empty_evidence", "target_missing", "duplicate"}
-        },
+        "rejected_reasons": dict(Counter(reason for _, reason in rejected)),
     }),
 )
 print("DONE")

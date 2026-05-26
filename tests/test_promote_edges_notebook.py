@@ -55,3 +55,36 @@ def test_logs_promote_edge_op_type():
 def test_pip_install_pinned_to_0_7_10():
     txt = NB.read_text()
     assert "wikibricks-0.7.10-py3-none-any.whl" in txt
+
+
+def test_escapes_link_type_in_sql():
+    """link_type must be SQL-escaped before interpolation — review
+    finding #1 from v0.7.10."""
+    txt = NB.read_text()
+    # The helper _esc must wrap link_type interpolation in dup_sql
+    assert "_esc(link_type)" in txt
+
+
+def test_validates_source_path_exists():
+    """Source page existence check guards against race condition where
+    _flush stages edges before the page MERGE becomes visible — review
+    finding #2 from v0.7.10."""
+    txt = NB.read_text()
+    assert "source_missing" in txt
+    assert "WHERE path = '" in txt  # source-check SQL
+
+
+def test_handles_orphan_confirmed_rows():
+    """Compensating UPDATE catches any confirmed row whose JOIN at INSERT
+    time didn't yield a links row — defense in depth for finding #3."""
+    txt = NB.read_text()
+    assert "source_join_orphan" in txt
+    assert "LEFT JOIN" in txt
+
+
+def test_uses_counter_for_rejected_reasons():
+    """rejected_reasons counts whatever reasons appear, not a hardcoded
+    set — review minor #1."""
+    txt = NB.read_text()
+    assert "from collections import Counter" in txt
+    assert "Counter(reason for _, reason in rejected)" in txt
