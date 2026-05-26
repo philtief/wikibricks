@@ -265,6 +265,8 @@ framework to give an agent direct promote-to-memory capability.
 | `segregate_skip` | An oversize page could not be split (single paragraph too large) |
 | `summary_ok` | Recorder wrote a dense LLM summary into content_text_override (auto_summary enabled, model returned text). v0.7.8+. |
 | `summary_fail` | Recorder had auto_summary enabled but the model returned nothing (or errored) — fell back to the default concat path. v0.7.8+. |
+| `propose_edges` | Recorder envelope-mode (`[auto_summary] mode = "envelope"`) emitted N LLM-proposed edges to the `edges_proposed` staging table. v0.7.10+. |
+| `promote_edge` | Nightly `promote_edges` notebook validated K pending rows against `pages` + `links`, confirmed and inserted into `links`, rejected M with reasons. v0.7.10+. |
 
 Never invent new op_types silently — add a row to this table and to the
 `wiki_log` section in README.md.
