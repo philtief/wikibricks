@@ -11,6 +11,8 @@ from functools import lru_cache
 
 from databricks.sdk import WorkspaceClient
 
+from backend.services.graph_cache import GraphCache
+
 IS_DATABRICKS_APP = bool(os.environ.get("DATABRICKS_APP_NAME"))
 
 
@@ -39,3 +41,25 @@ def get_app_config() -> dict[str, str]:
         "schema": os.environ["WIKIBRICKS_SCHEMA"],
         "warehouse_id": os.environ["WIKIBRICKS_WAREHOUSE_ID"],
     }
+
+
+_graph_cache: GraphCache | None = None
+
+
+def get_user_ws():
+    """FastAPI dependency for the user-OBO WorkspaceClient.
+
+    Tests override via `app.dependency_overrides[get_user_ws] = lambda: fake_ws`.
+    In production (Databricks Apps) this resolves to a per-request OBO
+    client; we use the same factory here for simplicity. Future hardening
+    can switch to true per-request OBO via x-forwarded-access-token.
+    """
+    return get_workspace_client()
+
+
+def get_graph_cache() -> GraphCache:
+    """Process-wide singleton TTLCache. Tests can patch _graph_cache."""
+    global _graph_cache
+    if _graph_cache is None:
+        _graph_cache = GraphCache(ttl_seconds=600)
+    return _graph_cache
