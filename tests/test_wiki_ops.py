@@ -7,6 +7,7 @@ import pytest
 
 from wikibricks.ops import (
     CATALOG,
+    EDGES_PROPOSED_TABLE,
     HISTORY_TABLE,
     LINKS_TABLE,
     LOG_TABLE,
@@ -764,11 +765,11 @@ class TestGraphNeighborsSql:
 
 
 def test_create_tables_sql_includes_edges_proposed():
-    from wikibricks.ops import create_tables_sql
-
     sql_statements = create_tables_sql()
     joined = "\n".join(sql_statements)
-    assert "edges_proposed" in joined
+    # Assert against the constant so a rename of EDGES_PROPOSED_TABLE
+    # cannot silently drift away from the DDL test.
+    assert EDGES_PROPOSED_TABLE in joined
     assert "source_path" in joined
     assert "target_path" in joined
     assert "link_type" in joined
@@ -790,7 +791,10 @@ def test_propose_edges_sql_statements_returns_insert():
         },
     ]
     sql = propose_edges_sql_statements(rows)
+    # SQL warehouses reject INSERT INTO t VALUES (uuid(), ...) — must use
+    # the INSERT INTO t (cols) SELECT uuid(), ... form instead.
     assert "INSERT INTO" in sql
+    assert "SELECT uuid()" in sql
     assert "edges_proposed" in sql
     assert "stripe-webhooks" in sql
     assert "stripe.Webhook.construct_event" in sql
@@ -818,3 +822,26 @@ def test_propose_edges_sql_escapes_single_quotes():
     }]
     sql = propose_edges_sql_statements(rows)
     assert "it\\'s an example" in sql
+
+
+def test_propose_edges_sql_escapes_backslashes():
+    """Backslashes must be doubled (SQL string-literal convention).
+
+    The order in _esc — replace('\\', '\\\\') THEN replace("'", "\\'") —
+    matters: escaping backslashes after escaping quotes would double-escape
+    the backslash that _is_ part of an apostrophe escape. This test pins
+    the order down.
+    """
+    from wikibricks.ops import propose_edges_sql_statements
+
+    rows = [{
+        "source_path": "s",
+        "target_path": "t",
+        "link_type": "related",
+        "evidence": r"path\to\file",   # raw string: backslashes literal
+        "confidence": 0.5,
+        "created_by": "test",
+    }]
+    sql = propose_edges_sql_statements(rows)
+    # Each literal backslash should be doubled in the SQL string
+    assert r"path\\to\\file" in sql

@@ -279,24 +279,29 @@ def propose_edges_sql_statements(rows: list[dict]) -> str:
     def _esc(s: str) -> str:
         return (s or "").replace("\\", "\\\\").replace("'", "\\'")
 
-    values = []
+    # SQL warehouses reject INSERT INTO t VALUES (uuid(), ...) with
+    # INVALID_INLINE_TABLE.CANNOT_EVALUATE_EXPRESSION_IN_INLINE_TABLE.
+    # Use INSERT INTO t (cols) SELECT uuid(), ... UNION ALL SELECT ...
+    # instead (mirrors the pattern in WikiClient._log).
+    selects = []
     for r in rows:
-        values.append(
-            f"(uuid(), "
-            f"'{_esc(r['source_path'])}', "
-            f"'{_esc(r['target_path'])}', "
-            f"'{_esc(r['link_type'])}', "
-            f"'{_esc(r.get('evidence', ''))}', "
-            f"{float(r.get('confidence', 0.0))}, "
-            f"'{_esc(r.get('created_by', 'unknown'))}', "
-            f"current_timestamp(), 'pending')"
+        selects.append(
+            f"SELECT uuid() AS proposal_id, "
+            f"'{_esc(r['source_path'])}' AS source_path, "
+            f"'{_esc(r['target_path'])}' AS target_path, "
+            f"'{_esc(r['link_type'])}' AS link_type, "
+            f"'{_esc(r.get('evidence', ''))}' AS evidence, "
+            f"{float(r.get('confidence', 0.0))} AS confidence, "
+            f"'{_esc(r.get('created_by', 'unknown'))}' AS created_by, "
+            f"current_timestamp() AS created_at, "
+            f"'pending' AS status"
         )
 
     return (
         f"INSERT INTO {EDGES_PROPOSED_TABLE} "
         f"(proposal_id, source_path, target_path, link_type, evidence, "
-        f"confidence, created_by, created_at, status) VALUES\n"
-        + ",\n".join(values)
+        f"confidence, created_by, created_at, status)\n"
+        + "\nUNION ALL\n".join(selects)
     )
 
 
