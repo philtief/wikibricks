@@ -21,6 +21,7 @@ LOG_TABLE = f"{CATALOG}.{SCHEMA}.wiki_log"
 PAGES_VS_SOURCE_TABLE = f"{CATALOG}.{SCHEMA}.pages_vs_source"
 PROMOTE_CHECKPOINT_TABLE = f"{CATALOG}.{SCHEMA}.promote_checkpoint"
 VOCABULARY_TABLE = f"{CATALOG}.{SCHEMA}.wiki_vocabulary"
+EDGES_PROPOSED_TABLE = f"{CATALOG}.{SCHEMA}.edges_proposed"
 VS_INDEX = f"{CATALOG}.{SCHEMA}.pages_index"
 VS_ENDPOINT = "wiki-vs-endpoint"
 EMBEDDING_MODEL = "databricks-bge-large-en"
@@ -29,7 +30,7 @@ SCHEMA_VOLUME_PATH = f"/Volumes/{CATALOG}/{SCHEMA}/sources/WIKIBRICKS.MD"
 
 
 def create_tables_sql():
-    """Return SQL statements to create the wiki tables."""
+    """Return DDL for the wiki tables plus the edges_proposed staging table."""
     return [
         f"""
         CREATE TABLE IF NOT EXISTS {PAGES_TABLE} (
@@ -160,6 +161,25 @@ def create_tables_sql():
         USING DELTA
         TBLPROPERTIES ('delta.feature.allowColumnDefaults' = 'supported')
         """,
+        f"""
+        CREATE TABLE IF NOT EXISTS {EDGES_PROPOSED_TABLE} (
+            proposal_id   STRING DEFAULT uuid(),
+            source_path   STRING NOT NULL,
+            target_path   STRING NOT NULL,
+            link_type     STRING NOT NULL,
+            evidence      STRING,
+            confidence    DOUBLE,
+            created_by    STRING,
+            created_at    TIMESTAMP DEFAULT current_timestamp(),
+            status        STRING DEFAULT 'pending',
+            CONSTRAINT edges_proposed_pk PRIMARY KEY (proposal_id)
+        )
+        USING DELTA
+        TBLPROPERTIES (
+            'delta.enableChangeDataFeed' = 'true',
+            'delta.feature.allowColumnDefaults' = 'supported'
+        )
+        """,
     ]
 
 
@@ -241,6 +261,43 @@ def write_page_sql(
     """
 
     return [archive_sql, merge_sql]
+
+
+def propose_edges_sql_statements(rows: list[dict]) -> str:
+    """Build a single INSERT statement that stages N LLM-proposed edges.
+
+    Each row dict must have: source_path, target_path, link_type, evidence,
+    confidence, created_by. Status defaults to 'pending' — the nightly
+    promote_edges job auto-confirms rows whose target_path exists and
+    evidence is non-empty.
+
+    Returns an empty string when rows is empty (caller short-circuits).
+    """
+    if not rows:
+        return ""
+
+    def _esc(s: str) -> str:
+        return (s or "").replace("\\", "\\\\").replace("'", "\\'")
+
+    values = []
+    for r in rows:
+        values.append(
+            f"(uuid(), "
+            f"'{_esc(r['source_path'])}', "
+            f"'{_esc(r['target_path'])}', "
+            f"'{_esc(r['link_type'])}', "
+            f"'{_esc(r.get('evidence', ''))}', "
+            f"{float(r.get('confidence', 0.0))}, "
+            f"'{_esc(r.get('created_by', 'unknown'))}', "
+            f"current_timestamp(), 'pending')"
+        )
+
+    return (
+        f"INSERT INTO {EDGES_PROPOSED_TABLE} "
+        f"(proposal_id, source_path, target_path, link_type, evidence, "
+        f"confidence, created_by, created_at, status) VALUES\n"
+        + ",\n".join(values)
+    )
 
 
 def create_vs_index_spec():
