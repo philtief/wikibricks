@@ -88,3 +88,15 @@ def test_uses_counter_for_rejected_reasons():
     txt = NB.read_text()
     assert "from collections import Counter" in txt
     assert "Counter(reason for _, reason in rejected)" in txt
+
+
+def test_orphan_rows_not_double_processed_by_rejection_loop():
+    """The compensating UPDATE already marks orphans rejected and
+    appends '[rejected: source_join_orphan]' to evidence. The
+    rejection loop must skip them, not re-process — otherwise the
+    evidence column ends up with two appended markers."""
+    txt = NB.read_text()
+    # The fix introduces an orphan_set that's checked in the rejection loop
+    assert "orphan_set" in txt
+    # The skip is via `continue` immediately after the check
+    assert "if proposal_id in orphan_set:" in txt

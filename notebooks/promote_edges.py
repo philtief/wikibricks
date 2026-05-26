@@ -111,6 +111,7 @@ print(f"confirmed: {len(confirmed_ids)}  rejected: {len(rejected)}")
 
 # COMMAND ----------
 # Update statuses + insert into links
+orphan_set: set[str] = set()
 if confirmed_ids:
     ids_list = ",".join(f"'{i}'" for i in confirmed_ids)
     # Update status FIRST so the INSERT below sees the same rowset — but
@@ -177,10 +178,15 @@ if confirmed_ids:
         )
         # Adjust the confirmed_ids list for accurate telemetry
         confirmed_ids = [i for i in confirmed_ids if i not in orphan_ids]
+        orphan_set = set(orphan_ids)
         rejected.extend((i, "source_join_orphan") for i in orphan_ids)
 
 if rejected:
     for proposal_id, reason in rejected:
+        # Orphans were already UPDATEd by the compensating block above —
+        # skip to avoid double-appending '[rejected: ...]' to evidence.
+        if proposal_id in orphan_set:
+            continue
         ws.statement_execution.execute_statement(
             warehouse_id=warehouse_id,
             statement=(
