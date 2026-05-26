@@ -21,7 +21,7 @@
 # MAGIC across alternate paths) is deferred to v0.7.12+.
 
 # COMMAND ----------
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.7.11-py3-none-any.whl
+# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.7.12-py3-none-any.whl
 
 # COMMAND ----------
 import json
