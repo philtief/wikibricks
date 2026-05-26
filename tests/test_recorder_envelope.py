@@ -51,6 +51,23 @@ def test_parse_envelope_handles_missing_optional_keys():
     assert e["edges"] == []
 
 
+def test_parse_envelope_coerces_non_list_optional_fields_to_empty():
+    """If the LLM returns a string instead of a list for entities/tags/edges,
+    parse_envelope must coerce to [] rather than passing the malformed value
+    through. Otherwise downstream build_override_text indexes into a string."""
+    raw = json.dumps({
+        "summary_markdown": "S",
+        "entities": "Stripe",         # WRONG type — should be a list
+        "tags": {"customer": "az"},   # also wrong — should be a list
+        "edges": None,
+    })
+    e = envelope.parse_envelope(raw)
+    assert e is not None
+    assert e["entities"] == []
+    assert e["tags"] == []
+    assert e["edges"] == []
+
+
 def test_filter_edges_to_candidates_drops_unknown_targets():
     edges = [
         {"target_path": "topics/known", "link_type": "cites", "evidence": "ok"},
@@ -83,6 +100,23 @@ def test_filter_edges_normalizes_unknown_link_types():
     assert kept[1]["link_type"] == "cites"
 
 
+def test_filter_edges_normalizes_case_and_whitespace():
+    """LLM-emitted target_path with case-shift or trailing space must still
+    match a candidate (anti-hallucination contract)."""
+    edges = [
+        {"target_path": "Topics/Foo", "link_type": "cites", "evidence": "ok"},
+        {"target_path": "topics/bar ", "link_type": "cites", "evidence": "ok"},
+        {"target_path": "topics/UNKNOWN", "link_type": "cites", "evidence": "ok"},
+    ]
+    kept = envelope.filter_edges_to_candidates(
+        edges, ["topics/foo", "topics/bar"]
+    )
+    assert len(kept) == 2
+    # Canonical (candidate) form is stored, not the LLM variant
+    assert kept[0]["target_path"] == "topics/foo"
+    assert kept[1]["target_path"] == "topics/bar"
+
+
 def test_build_override_text_includes_all_fields():
     e = {
         "summary_markdown": "## Intent\n- refactor",
@@ -105,13 +139,18 @@ def test_build_override_text_caps_entity_count():
         "edges": [],
     }
     text = envelope.build_override_text(title="T", env=e)
-    # Cap at 20 entities — the heuristic the spec calls out
-    # Count distinct entity names that appear (e0..e19 should be there; e20+ should not)
-    for i in range(20):
-        assert f"e{i}" in text
-    # e25 must not appear (and any entity beyond 20)
-    assert "e25" not in text
-    assert "e30" not in text
+    # Cap at 20 entities — the heuristic the spec calls out.
+    # Substring checks ("e0" in text) are dangerous: "e0" matches "e10",
+    # "e20" matches "e2", etc. Extract the Entities: line and count names
+    # exactly so an off-by-one in the cap cannot pass.
+    entity_line = next(line for line in text.split("\n") if line.startswith("Entities:"))
+    names = [n.strip() for n in entity_line[len("Entities:"):].split(",")]
+    assert len(names) == envelope.MAX_ENTITIES_IN_OVERRIDE
+    # First 20 entities must be in order
+    assert names == [f"e{i}" for i in range(envelope.MAX_ENTITIES_IN_OVERRIDE)]
+    # Entities past the cap must not appear anywhere in the text
+    assert "e20" not in text
+    assert "e49" not in text
 
 
 def test_build_prompt_includes_candidates_inline():

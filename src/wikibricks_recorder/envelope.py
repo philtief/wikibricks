@@ -99,33 +99,52 @@ def parse_envelope(raw: str | None) -> dict[str, Any] | None:
         return None
     if not isinstance(data, dict):
         return None
+
+    def _list(key: str) -> list:
+        v = data.get(key)
+        return v if isinstance(v, list) else []
+
     return {
         "summary_markdown": str(data.get("summary_markdown", "")).strip(),
-        "entities": data.get("entities") or [],
-        "tags": data.get("tags") or [],
-        "edges": data.get("edges") or [],
+        "entities": _list("entities"),
+        "tags": _list("tags"),
+        "edges": _list("edges"),
     }
 
 
 def filter_edges_to_candidates(
-    edges: list[dict[str, Any]],
-    candidate_paths: list[str],
+    edges: list[dict[str, Any]] | None,
+    candidate_paths: list[str] | None,
 ) -> list[dict[str, Any]]:
     """Drop edges whose target isn't in the candidate set or whose evidence
     is empty. Normalize unknown link_types to 'related' (safe default).
+
+    Target-path matching is case-insensitive and whitespace-tolerant so an
+    LLM that returns ``"Topics/Foo"`` or ``"topics/foo "`` still matches
+    a ``topics/foo`` candidate. The kept edge stores the *canonical*
+    candidate string (not the LLM's variant) so downstream
+    ``edges_proposed`` rows match exactly what's in ``pages.path``.
     """
-    candidate_set = set(candidate_paths)
+    edges = edges or []
+    candidate_paths = candidate_paths or []
+    candidate_lookup = {p.lower().strip(): p for p in candidate_paths}
     kept: list[dict[str, Any]] = []
     for e in edges:
-        target = e.get("target_path")
+        target_raw = e.get("target_path")
+        if not isinstance(target_raw, str):
+            continue
+        target_norm = target_raw.lower().strip()
+        canonical = candidate_lookup.get(target_norm)
+        if not canonical:
+            continue
         evidence = (e.get("evidence") or "").strip()
-        if not target or not evidence or target not in candidate_set:
+        if not evidence:
             continue
         link_type = e.get("link_type", "related")
         if link_type not in ALLOWED_LINK_TYPES:
             link_type = "related"
         kept.append({
-            "target_path": target,
+            "target_path": canonical,
             "link_type": link_type,
             "evidence": evidence,
         })
