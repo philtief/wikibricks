@@ -132,6 +132,23 @@ resources:
               cluster_threshold: ${var.cluster_threshold}
           environment_key: serverless
           timeout_seconds: 1800
+        - task_key: promote_edges
+          # v0.7.10 — deterministic edge promoter. Pulls pending rows
+          # from edges_proposed and auto-confirms iff target_path exists
+          # in pages, evidence is non-empty, and no identical edge is
+          # already in links. Confirmed rows are INSERTed into links
+          # (page_ids resolved via JOIN on pages). No LLM judge in
+          # v0.7.10 — more sophisticated judging is deferred.
+          depends_on:
+            - task_key: curate
+          notebook_task:
+            notebook_path: ../notebooks/promote_edges.py
+            base_parameters:
+              catalog: ${var.catalog}
+              schema: ${var.schema}
+              warehouse_id: ${var.warehouse_id}
+          environment_key: serverless
+          timeout_seconds: 1800
       environments:
         - environment_key: serverless
           spec:
