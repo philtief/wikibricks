@@ -8,15 +8,36 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.7.13-py3-none-any.whl
-# MAGIC # ^ Update path to where the wheel lives in your workspace.
-# MAGIC %restart_python
+# MAGIC %md
+# MAGIC The `wikibricks` wheel is installed via the task-level serverless
+# MAGIC environment in `resources/autoeval_job.yml`. No in-notebook
+# MAGIC `%pip install` here — the bundle artifact path is substituted at
+# MAGIC deploy time. For manual runs outside the bundle, install the wheel
+# MAGIC first with `%pip install /Volumes/<your-catalog>/<your-schema>/wheels/wikibricks-*.whl`.
 
 # COMMAND ----------
 
-from databricks.sdk import WorkspaceClient
+import os
 
-from wikibricks.ops import (
+
+def _param(name: str, default: str) -> str:
+    try:
+        val = dbutils.widgets.get(name)  # noqa: F821
+    except Exception:
+        dbutils.widgets.text(name, default)  # noqa: F821
+        val = default
+    return val or default
+
+
+# Resolve catalog/schema BEFORE importing wikibricks so its module-level
+# VS_INDEX / PAGES_TABLE / … constants point at the deploy target, not the
+# `main.wiki` defaults baked into `wikibricks.ops` at import time.
+os.environ["WIKIBRICKS_CATALOG"] = _param("catalog", "main")
+os.environ["WIKIBRICKS_SCHEMA"] = _param("schema", "wiki")
+
+from databricks.sdk import WorkspaceClient  # noqa: E402
+
+from wikibricks.ops import (  # noqa: E402
     VS_INDEX,
     eval_mrr,
     eval_precision_at_k,

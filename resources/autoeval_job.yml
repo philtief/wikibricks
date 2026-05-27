@@ -20,5 +20,11 @@ resources:
         - environment_key: serverless
           spec:
             client: "2"
+            # The wikibricks wheel comes from the bundle artifact — same
+            # pattern as wiki_curate_job.yml. Avoids the in-notebook
+            # `%pip install /Volumes/<catalog>/<schema>/wheels/...` line
+            # whose placeholders never get substituted at runtime.
+            dependencies:
+              - ../dist/*.whl
       queue:
         enabled: true

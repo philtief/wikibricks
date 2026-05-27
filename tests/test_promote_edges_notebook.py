@@ -52,9 +52,22 @@ def test_logs_promote_edge_op_type():
     assert '"promote_edge"' in txt
 
 
-def test_pip_install_pinned_to_0_7_13():
+def test_no_pip_install_magic_line():
+    """v0.7.14 — wheel comes from the bundle's task-level serverless env, not
+    an in-notebook %pip install. The previous in-notebook line carried an
+    unsubstituted <catalog>/<schema> placeholder and silently broke the
+    promote_edges task; align with the other nightly notebooks."""
     txt = NB.read_text()
-    assert "wikibricks-0.7.13-py3-none-any.whl" in txt
+    # Reject an executable MAGIC %pip install line (the comment-prose mention
+    # in the explanatory markdown cell is fine).
+    for line in txt.splitlines():
+        stripped = line.strip()
+        assert not stripped.startswith("# MAGIC %pip install"), (
+            f"executable %pip install line still present: {line!r}"
+        )
+    # Reject unsubstituted bundle placeholders anywhere.
+    assert "/Volumes/<catalog>" not in txt
+    assert "<schema>/wheels" not in txt
 
 
 def test_escapes_link_type_in_sql():
