@@ -21,7 +21,11 @@
 # MAGIC across alternate paths) is deferred to v0.7.12+.
 
 # COMMAND ----------
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.7.13-py3-none-any.whl
+# MAGIC %md
+# MAGIC The `wikibricks` wheel is installed via the task-level serverless
+# MAGIC environment in `resources/wiki_curate_job.yml`. No in-notebook
+# MAGIC `%pip install` here — the bundle artifact path is substituted at
+# MAGIC deploy time.
 
 # COMMAND ----------
 import json

@@ -7,9 +7,12 @@
 
 # COMMAND ----------
 
-# MAGIC %pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-0.7.13-py3-none-any.whl
-# MAGIC # ^ Update path to where the wheel lives in your workspace.
-# MAGIC %restart_python
+# MAGIC %md
+# MAGIC The `wikibricks` wheel is installed via the task-level serverless
+# MAGIC environment in `resources/deploy_job.yml`. No in-notebook
+# MAGIC `%pip install` here — the bundle artifact path is substituted at
+# MAGIC deploy time. For manual runs outside the bundle, install the wheel
+# MAGIC first with `%pip install /Volumes/<your-catalog>/<your-schema>/wheels/wikibricks-*.whl`.
 
 # COMMAND ----------
 
@@ -75,14 +78,24 @@ print(f"Schema: {result.status.state}")
 
 # COMMAND ----------
 
-table_names = ["pages", "pages_history", "links", "sources", "wiki_log",
-               "pages_vs_source", "promote_checkpoint"]
-for i, stmt in enumerate(create_tables_sql()):
+import re
+
+
+def _table_name_from_create_sql(stmt: str) -> str:
+    """Extract `<table>` from `CREATE TABLE IF NOT EXISTS <catalog>.<schema>.<table>`.
+    Falls back to the first identifier-like token after the schema."""
+    m = re.search(r"CREATE\s+TABLE\s+IF\s+NOT\s+EXISTS\s+[\w.`]+\.([\w`]+)\s*\(", stmt, re.I)
+    if m:
+        return m.group(1).strip("`")
+    return "<unknown>"
+
+
+for stmt in create_tables_sql():
     result = w.statement_execution.execute_statement(
         warehouse_id=WAREHOUSE_ID,
         statement=stmt,
     )
-    print(f"Table {table_names[i]}: {result.status.state}")
+    print(f"Table {_table_name_from_create_sql(stmt)}: {result.status.state}")
 
 # COMMAND ----------
 

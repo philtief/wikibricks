@@ -81,6 +81,21 @@ class TestUpsertVocabularySlugs:
         assert "'droptable'" in sql
         assert "'namewith-quote'" in sql
 
+    def test_dedupes_input_slugs_for_merge(self):
+        """Duplicate or post-normalization-equivalent slugs must collapse to one
+        source row. Delta MERGE rejects multiple source rows matching the same
+        target row (DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE)."""
+        wiki, ws = _client()
+        n = wiki.upsert_vocabulary_slugs(
+            ["solvd", "solvd", "Solvd", "allianz"], source="llm"
+        )
+        # All four normalize to {solvd, allianz}; return value reflects deduped count.
+        assert n == 2
+        sql = ws.statement_execution.execute_statement.call_args.kwargs["statement"]
+        # Each unique slug appears exactly once in the VALUES rows.
+        assert sql.count("('solvd',") == 1
+        assert sql.count("('allianz',") == 1
+
 
 class TestListActiveVocabulary:
     def test_returns_active_slugs(self):

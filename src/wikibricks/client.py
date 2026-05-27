@@ -995,7 +995,9 @@ class WikiClient:
             raise ValueError(
                 f"source must be one of {self._VOCAB_SOURCES}, got {source!r}"
             )
-        normalized = [n for n in (self._normalize_slug(s) for s in slugs) if n]
+        # Dedupe — Delta MERGE rejects multiple source rows matching the same
+        # target row, and several input phrases can normalize to the same slug.
+        normalized = list(dict.fromkeys(n for n in (self._normalize_slug(s) for s in slugs) if n))
         if not normalized:
             return 0
         src_esc = self._escape(source)

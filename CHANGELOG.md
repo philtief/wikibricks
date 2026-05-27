@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.14] - 2026-05-27
+
+### Fixed (`wikibricks_curate`, `wikibricks_autoeval`, `wikibricks_deploy` jobs)
+
+- **`src/wikibricks/client.py::upsert_vocabulary_slugs`** — dedupe the
+  normalized slug list before building the MERGE source. The MERGE matches
+  on `slug`, and several input phrases can normalize to the same slug
+  (e.g. `"Solvd"` and `"solvd"`), so two source rows would match one target
+  row and Delta would raise
+  `DELTA_MULTIPLE_SOURCE_ROW_MATCHING_TARGET_ROW_IN_MERGE`. The `tag` task
+  hit this nightly because `vocab_slugs` aggregates `committed + deduped`
+  across pages and overlapping LLM-proposed tags are normal.
+- **`notebooks/promote_edges.py`** — drop the in-notebook
+  `%pip install /Volumes/<catalog>/<schema>/wheels/wikibricks-…whl` line.
+  The `<catalog>/<schema>` placeholders are never substituted at runtime
+  (the `%pip` magic fires before widget values are read), so the install
+  failed every night with `CalledProcessError`. The wheel is already
+  installed via the task-level serverless `environments` block in
+  `resources/wiki_curate_job.yml`; align with the other nightly notebooks
+  (`wiki_curate`, `wiki_segregate`, `promote_topics`, `promote_from_traces`).
+- **`resources/autoeval_job.yml` + `notebooks/run_autoeval.py`** — same
+  pattern as `promote_edges`. Add `../dist/*.whl` to the task-level
+  serverless `environments` block so the bundle artifact is installed at
+  task startup; drop the broken in-notebook `%pip install` line. Also set
+  `WIKIBRICKS_CATALOG` / `WIKIBRICKS_SCHEMA` from the notebook's `catalog`
+  / `schema` widgets **before** importing `wikibricks.ops`, otherwise
+  `VS_INDEX` resolves to the module-default `main.wiki.pages_index` and
+  the query fails with `ResourceDoesNotExist`. Scheduled weekly Monday
+  06:00 UTC — failing every week since 2026-04-27.
+- **`resources/deploy_job.yml` + `notebooks/deploy_wiki_store.py`** — same
+  bundle-wheel pattern. Replace the hard-coded 7-element `table_names`
+  list (`["pages", … "promote_checkpoint"]`) with a regex parse of the
+  `CREATE TABLE` statement to keep label printing in sync as
+  `create_tables_sql()` adds tables (currently 9 with `wiki_vocabulary`
+  and `edges_proposed`). The hard-coded list raised `IndexError: list
+  index out of range` at table 8.
+
 ## [0.7.13] - 2026-05-26
 
 ### Fixed (v0.7.12 final-review hotfixes)
