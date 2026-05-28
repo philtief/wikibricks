@@ -113,3 +113,19 @@ def test_orphan_rows_not_double_processed_by_rejection_loop():
     assert "orphan_set" in txt
     # The skip is via `continue` immediately after the check
     assert "if proposal_id in orphan_set:" in txt
+
+
+def test_pending_rows_handles_none_data_array():
+    """v0.7.15 — when `edges_proposed` has no `pending` rows the SDK
+    returns `resp.result.data_array == None` (not `[]`), and
+    `resp.result` itself is truthy. The naive
+    `resp.result.data_array if resp.result else []` then assigns
+    `rows = None` and `len(rows)` raises TypeError. Guard the empty
+    case with a trailing `or []`."""
+    txt = NB.read_text()
+    # Reject the unsafe pattern entirely.
+    assert "resp.result.data_array if resp.result else []" not in txt, (
+        "unsafe guard back in place — None data_array would crash on empty result"
+    )
+    # Require the `... or []` shape (any spacing).
+    assert "or []" in txt

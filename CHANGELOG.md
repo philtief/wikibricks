@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.15] - 2026-05-28
+
+### Fixed (`promote_edges` task crashes on empty pending queue)
+
+- **`notebooks/promote_edges.py`** — when `edges_proposed` has no rows
+  in `status='pending'`, the SDK returns `resp.result` truthy but with
+  `resp.result.data_array == None`, so the `if resp.result else []`
+  guard assigned `rows = None` and the next `len(rows)` raised
+  `TypeError: object of type 'NoneType' has no len()`. Replaced with
+  `(resp.result.data_array if resp.result else None) or []` so empty
+  result sets short-circuit to `[]`. The post-v0.7.14 nightly was
+  green only because there were 2 pending edges to consume on its
+  first run; today's 06:00 UTC scheduled run hit the empty case and
+  failed. Regression test added.
+
 ## [0.7.14] - 2026-05-27
 
 ### Fixed (`wikibricks_curate`, `wikibricks_autoeval`, `wikibricks_deploy` jobs)

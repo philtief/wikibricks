@@ -58,7 +58,7 @@ LIMIT 1000
 resp = ws.statement_execution.execute_statement(
     warehouse_id=warehouse_id, statement=pending_sql, wait_timeout="30s"
 )
-rows = resp.result.data_array if resp.result else []
+rows = (resp.result.data_array if resp.result else None) or []
 print(f"pending edges: {len(rows)}")
 
 # COMMAND ----------
