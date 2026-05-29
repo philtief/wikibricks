@@ -2,6 +2,10 @@ resources:
   jobs:
     deploy_wiki_store:
       name: wikibricks_deploy
+      email_notifications:
+        on_failure:
+          - philipp.tiefenbacher@databricks.com
+        no_alert_for_skipped_runs: true
       tasks:
         - task_key: deploy
           notebook_task:

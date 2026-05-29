@@ -26,6 +26,10 @@ resources:
         quartz_cron_expression: "0 0 4 ? * *"
         timezone_id: UTC
         pause_status: UNPAUSED
+      email_notifications:
+        on_failure:
+          - philipp.tiefenbacher@databricks.com
+        no_alert_for_skipped_runs: true
       tasks:
         - task_key: curate
           notebook_task:
