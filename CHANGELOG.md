@@ -36,6 +36,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   task already route through `_exec` and are covered by the fix above;
   `promote_edges` already guarded `result` with `if r.result else []`.
 
+### Fixed (`wiki_search` crashed in the recorder MCP server)
+
+- **`pyproject.toml`** — add `igraph>=0.11,<2.0` to the `recorder` extra.
+  `WikiClient.search`'s RRF rerank imports `wikibricks.graph_logic`, which
+  requires igraph, but the recorder MCP server installs `wikibricks[recorder]`
+  (previously `mcp` only). Every `wiki_search` from the recorder therefore
+  crashed with `No module named 'igraph'` once it reached the rerank step.
+- **`src/wikibricks/client.py::_rerank_by_rrf`** — two robustness fixes so an
+  optional rerank never kills the whole search: (1) wrap the `graph_logic`
+  import in `try/except ImportError` and fall back to vector-search order when
+  the `[graph]` extra is absent; (2) guard the hub_score read with
+  `(... if resp.result else None) or []` — `.data_array` is None (not []) on a
+  zero-row result, which otherwise raised `TypeError: 'NoneType' object is not
+  iterable`. Verified end-to-end: `wikibricks[recorder]` now pulls igraph, and
+  a live HYBRID `wiki_search` against fevm-agent-marketplace returns hits
+  through the full rerank path.
+
 ## [0.7.15] - 2026-05-28
 
 ### Fixed (`promote_edges` task crashes on empty pending queue)

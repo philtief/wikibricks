@@ -17,6 +17,9 @@ dev = [
 ]
 recorder = [
     "mcp>=1.0",
+    # search()'s RRF rerank imports graph_logic, which requires igraph.
+    # Keep this pin in sync with the `graph` extra below.
+    "igraph>=0.11,<2.0",
 ]
 graph = [
     "igraph>=0.11,<2.0",

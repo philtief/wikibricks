@@ -564,7 +564,14 @@ class WikiClient:
         hub_score sit at the bottom of the PageRank ranking. Returns the
         same list of dicts re-ordered.
         """
-        from wikibricks.graph_logic import rrf_fuse
+        try:
+            from wikibricks.graph_logic import rrf_fuse
+        except ImportError:
+            # PageRank rerank is optional — it needs the `[graph]` extra
+            # (igraph), which the recorder MCP install (`wikibricks[recorder]`)
+            # omits. Fall back to the vector-search order rather than letting
+            # the ImportError fail the whole search.
+            return hits
 
         page_ids = [h["page_id"] for h in hits if h.get("page_id")]
         if not page_ids:
@@ -577,7 +584,10 @@ class WikiClient:
             f"FROM {PAGES_TABLE} "
             f"WHERE page_id IN ({ids_sql})"
         )
-        rows = resp.result.data_array if resp.result else []
+        # `.data_array` is None (not []) when the hub_score query returns zero
+        # rows — e.g. VS hits whose page_id isn't in pages yet. Guard it so the
+        # rerank degrades to vector-search order instead of crashing.
+        rows = (resp.result.data_array if resp.result else None) or []
         hub_by_id = {r[0]: float(r[1]) for r in rows}
         pr_ranking = sorted(page_ids, key=lambda pid: -hub_by_id.get(pid, 0.0))
 

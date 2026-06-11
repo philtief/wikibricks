@@ -900,3 +900,41 @@ class TestExecColdStartPolling:
         wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
         with pytest.raises(RuntimeError, match="SQL execution failed"):
             wiki._exec("SELECT 1")
+
+
+class TestRerankGracefulFallbackWithoutIgraph:
+    """_rerank_by_rrf must not crash when the optional `[graph]` extra (igraph)
+    is absent — which is exactly the recorder MCP install profile
+    (`wikibricks[recorder]`). It should fall back to the vector-search order
+    rather than letting the ImportError fail the whole wiki_search.
+    """
+
+    def test_returns_hits_unreranked_when_graph_logic_unavailable(self):
+        import sys
+        ws = MagicMock()
+        client = WikiClient(warehouse_id="w", workspace_client=ws)
+        hits = [{"page_id": "p1", "path": "a"}, {"page_id": "p2", "path": "b"}]
+        # Simulate `from wikibricks.graph_logic import rrf_fuse` raising
+        # ImportError (igraph not installed) by masking the module.
+        with patch.dict(sys.modules, {"wikibricks.graph_logic": None}):
+            out = client._rerank_by_rrf(hits)
+        assert out == hits  # unchanged order, no crash
+        ws.statement_execution.execute_statement.assert_not_called()  # bailed before SQL
+
+    def test_rerank_survives_null_data_array_from_hub_query(self):
+        """The hub_score query returns result.data_array=None (not []) on a
+        zero-row result — e.g. VS hits whose page_id isn't in pages yet.
+        _rerank_by_rrf must treat that as empty and still return all hits,
+        not crash with `'NoneType' object is not iterable`.
+        """
+        ws = MagicMock()
+        resp = MagicMock()
+        resp.status = StatementStatus(state=StatementState.SUCCEEDED, error=None)
+        resp.result.data_array = None  # zero-row result
+        ws.statement_execution.execute_statement.return_value = resp
+        client = WikiClient(warehouse_id="w", workspace_client=ws)
+        hits = [{"page_id": "p1", "path": "a"}, {"page_id": "p2", "path": "b"}]
+
+        out = client._rerank_by_rrf(hits)
+
+        assert {h["page_id"] for h in out} == {"p1", "p2"}  # all hits retained, no crash
