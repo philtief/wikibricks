@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import time
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
@@ -43,12 +44,32 @@ class WikiClient:
         self.warehouse_id = warehouse_id
 
     def _exec(self, sql: str):
-        """Execute SQL and return the response. Raises on failure."""
+        """Execute SQL and return the response. Raises on failure.
+
+        A cold serverless SQL warehouse (auto-stop) can take longer to start
+        than the inline ``wait_timeout``, in which case ``execute_statement``
+        returns with state PENDING/RUNNING and ``result=None``. Poll
+        ``get_statement`` until the statement reaches a terminal state before
+        inspecting it, so callers never crash on a missing ``result`` — the
+        cold-start bug that silently failed the nightly ``wikibricks_curate``
+        job for ~2 weeks of 04:00-UTC runs.
+        """
+        poll_interval_s, poll_timeout_s = 2.0, 300.0
         resp = self.ws.statement_execution.execute_statement(
             warehouse_id=self.warehouse_id,
             statement=sql.strip(),
-            wait_timeout="30s",
+            wait_timeout="50s",
         )
+        waited = 0.0
+        while resp.status.state in (StatementState.PENDING, StatementState.RUNNING):
+            if waited >= poll_timeout_s:
+                raise RuntimeError(
+                    f"SQL did not reach a terminal state within {poll_timeout_s:.0f}s "
+                    f"(last state: {resp.status.state})"
+                )
+            time.sleep(poll_interval_s)
+            waited += poll_interval_s
+            resp = self.ws.statement_execution.get_statement(resp.statement_id)
         if resp.status.state != StatementState.SUCCEEDED:
             error = resp.status.error
             raise RuntimeError(f"SQL execution failed: {error}")

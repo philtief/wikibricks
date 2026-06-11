@@ -1,6 +1,6 @@
 """Tests for WikiClient - the high-level wiki API."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from databricks.sdk.service.sql import StatementState, StatementStatus
@@ -849,3 +849,54 @@ class TestBulkProposeEdges:
         client = WikiClient(warehouse_id="w", workspace_client=ws)
         assert client.bulk_propose_edges([]) == 0
         ws.statement_execution.execute_statement.assert_not_called()
+
+
+class TestExecColdStartPolling:
+    """_exec must tolerate a cold serverless SQL warehouse.
+
+    When the warehouse is stopped (auto-stop), the first statement can take
+    longer to finish than the inline ``wait_timeout``, so ``execute_statement``
+    returns with state PENDING/RUNNING and ``result=None``. _exec must poll
+    ``get_statement`` to a terminal state instead of treating the
+    not-yet-finished response as a success — the cold-start bug that crashed
+    ``wikibricks_curate`` with ``'NoneType' object has no attribute
+    'data_array'`` on 13 consecutive 04:00-UTC runs.
+    """
+
+    @patch("wikibricks.client.time.sleep", return_value=None)
+    def test_polls_until_succeeded_on_cold_start(self, _sleep):
+        ws = MagicMock()
+        pending = MagicMock()
+        pending.status = StatementStatus(state=StatementState.PENDING, error=None)
+        pending.statement_id = "stmt-1"
+        running = MagicMock()
+        running.status = StatementStatus(state=StatementState.RUNNING, error=None)
+        running.statement_id = "stmt-1"
+        done = _mock_response([["p1"]], columns=["path"])
+        done.statement_id = "stmt-1"
+        ws.statement_execution.execute_statement.return_value = pending
+        ws.statement_execution.get_statement.side_effect = [running, done]
+
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        resp = wiki._exec("SELECT path FROM t")
+
+        assert resp.status.state == StatementState.SUCCEEDED
+        assert resp.result.data_array == [["p1"]]
+        assert ws.statement_execution.get_statement.call_count == 2
+        ws.statement_execution.get_statement.assert_called_with("stmt-1")
+
+    @patch("wikibricks.client.time.sleep", return_value=None)
+    def test_raises_clear_error_when_statement_fails_after_polling(self, _sleep):
+        ws = MagicMock()
+        pending = MagicMock()
+        pending.status = StatementStatus(state=StatementState.PENDING, error=None)
+        pending.statement_id = "stmt-2"
+        failed = MagicMock()
+        failed.status = StatementStatus(state=StatementState.FAILED, error="boom")
+        failed.statement_id = "stmt-2"
+        ws.statement_execution.execute_statement.return_value = pending
+        ws.statement_execution.get_statement.side_effect = [failed]
+
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        with pytest.raises(RuntimeError, match="SQL execution failed"):
+            wiki._exec("SELECT 1")

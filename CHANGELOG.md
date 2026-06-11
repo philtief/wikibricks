@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.16] - 2026-06-11
+
+### Fixed (`curate` task crashed on a cold serverless warehouse)
+
+- **`src/wikibricks/client.py::_exec`** — poll `get_statement` until the
+  statement reaches a terminal state before reading its result. A stopped
+  serverless SQL warehouse (5-minute auto-stop) can take longer to start than
+  the inline `wait_timeout`, so `execute_statement` returned with state
+  PENDING/RUNNING and `result=None`. The old code treated any non-`SUCCEEDED`
+  response as a hard failure, and the `wikibricks_curate` notebook's inline
+  copy crashed outright with `AttributeError: 'NoneType' object has no
+  attribute 'data_array'`. The scheduled 04:00-UTC `curate` run — which
+  always hits a cold warehouse on an overnight-idle personal wiki — failed on
+  13 consecutive nights (2026-05-30 → 2026-06-11). Inline `wait_timeout` also
+  raised 30s → 50s. Hardens the cold-start path for the sibling
+  `wikibricks_autoeval` / `wikibricks_deploy` jobs, which go through `_exec`
+  on their first query too.
+- **`notebooks/{wiki_curate,wiki_tag,wiki_segregate,wiki_graph_analytics}.py::run_sql`**
+  — each notebook carried its own copy-pasted `run_sql` that called
+  `statement_execution.execute_statement` directly (bypassing `_exec`) and
+  read `resp.result.data_array or []` with no guard. All four now delegate to
+  `WikiClient._exec`, so cold-start polling lives in one place and the tasks
+  stop diverging from the library contract. The `tag` / `segregate` /
+  `graph_analytics` tasks run concurrently after `curate`, so the same crash
+  also surfaced under warehouse contention (the `tag` task hit it on a verify
+  run and only passed on automatic retry). `promote_topics` and the `promote`
+  task already route through `_exec` and are covered by the fix above;
+  `promote_edges` already guarded `result` with `if r.result else []`.
+
 ## [0.7.15] - 2026-05-28
 
 ### Fixed (`promote_edges` task crashes on empty pending queue)
