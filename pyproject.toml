@@ -1,6 +1,6 @@
 [project]
 name = "wikibricks"
-version = "0.7.15"
+version = "0.7.16"
 description = "Delta + Vector Search wiki store for AI agents on Databricks"
 requires-python = ">=3.10"
 dependencies = [
@@ -17,6 +17,9 @@ dev = [
 ]
 recorder = [
     "mcp>=1.0",
+    # search()'s RRF rerank imports graph_logic, which requires igraph.
+    # Keep this pin in sync with the `graph` extra below.
+    "igraph>=0.11,<2.0",
 ]
 graph = [
     "igraph>=0.11,<2.0",

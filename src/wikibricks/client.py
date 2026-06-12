@@ -4,6 +4,7 @@ import json
 import math
 import os
 import re
+import time
 
 from databricks.sdk import WorkspaceClient
 from databricks.sdk.service.sql import StatementState
@@ -43,12 +44,32 @@ class WikiClient:
         self.warehouse_id = warehouse_id
 
     def _exec(self, sql: str):
-        """Execute SQL and return the response. Raises on failure."""
+        """Execute SQL and return the response. Raises on failure.
+
+        A cold serverless SQL warehouse (auto-stop) can take longer to start
+        than the inline ``wait_timeout``, in which case ``execute_statement``
+        returns with state PENDING/RUNNING and ``result=None``. Poll
+        ``get_statement`` until the statement reaches a terminal state before
+        inspecting it, so callers never crash on a missing ``result`` — the
+        cold-start bug that silently failed the nightly ``wikibricks_curate``
+        job for ~2 weeks of 04:00-UTC runs.
+        """
+        poll_interval_s, poll_timeout_s = 2.0, 300.0
         resp = self.ws.statement_execution.execute_statement(
             warehouse_id=self.warehouse_id,
             statement=sql.strip(),
-            wait_timeout="30s",
+            wait_timeout="50s",
         )
+        waited = 0.0
+        while resp.status.state in (StatementState.PENDING, StatementState.RUNNING):
+            if waited >= poll_timeout_s:
+                raise RuntimeError(
+                    f"SQL did not reach a terminal state within {poll_timeout_s:.0f}s "
+                    f"(last state: {resp.status.state})"
+                )
+            time.sleep(poll_interval_s)
+            waited += poll_interval_s
+            resp = self.ws.statement_execution.get_statement(resp.statement_id)
         if resp.status.state != StatementState.SUCCEEDED:
             error = resp.status.error
             raise RuntimeError(f"SQL execution failed: {error}")
@@ -543,7 +564,14 @@ class WikiClient:
         hub_score sit at the bottom of the PageRank ranking. Returns the
         same list of dicts re-ordered.
         """
-        from wikibricks.graph_logic import rrf_fuse
+        try:
+            from wikibricks.graph_logic import rrf_fuse
+        except ImportError:
+            # PageRank rerank is optional — it needs the `[graph]` extra
+            # (igraph), which the recorder MCP install (`wikibricks[recorder]`)
+            # omits. Fall back to the vector-search order rather than letting
+            # the ImportError fail the whole search.
+            return hits
 
         page_ids = [h["page_id"] for h in hits if h.get("page_id")]
         if not page_ids:
@@ -556,7 +584,10 @@ class WikiClient:
             f"FROM {PAGES_TABLE} "
             f"WHERE page_id IN ({ids_sql})"
         )
-        rows = resp.result.data_array if resp.result else []
+        # `.data_array` is None (not []) when the hub_score query returns zero
+        # rows — e.g. VS hits whose page_id isn't in pages yet. Guard it so the
+        # rerank degrades to vector-search order instead of crashing.
+        rows = (resp.result.data_array if resp.result else None) or []
         hub_by_id = {r[0]: float(r[1]) for r in rows}
         pr_ranking = sorted(page_ids, key=lambda pid: -hub_by_id.get(pid, 0.0))
 

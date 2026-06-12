@@ -72,12 +72,14 @@ wiki = WikiClient(warehouse_id=WAREHOUSE_ID, workspace_client=w)
 
 
 def run_sql(sql: str) -> list[dict]:
-    resp = w.statement_execution.execute_statement(
-        warehouse_id=WAREHOUSE_ID,
-        statement=sql,
-        wait_timeout="30s",
-    )
-    rows = resp.result.data_array or []
+    # Delegate to WikiClient._exec, which polls a cold/contended serverless
+    # warehouse to a terminal state before returning. The previous inline
+    # execute_statement(wait_timeout="30s") crashed with
+    # `'NoneType' object has no attribute 'data_array'` when the statement was
+    # still PENDING after the inline wait (result=None) — e.g. under warehouse
+    # contention while the curate job's tasks run concurrently.
+    resp = wiki._exec(sql)
+    rows = resp.result.data_array if resp.result else []
     if not rows:
         return []
     cols = [c.name for c in resp.manifest.schema.columns]

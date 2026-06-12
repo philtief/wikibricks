@@ -1,6 +1,6 @@
 """Tests for WikiClient - the high-level wiki API."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 from databricks.sdk.service.sql import StatementState, StatementStatus
@@ -849,3 +849,92 @@ class TestBulkProposeEdges:
         client = WikiClient(warehouse_id="w", workspace_client=ws)
         assert client.bulk_propose_edges([]) == 0
         ws.statement_execution.execute_statement.assert_not_called()
+
+
+class TestExecColdStartPolling:
+    """_exec must tolerate a cold serverless SQL warehouse.
+
+    When the warehouse is stopped (auto-stop), the first statement can take
+    longer to finish than the inline ``wait_timeout``, so ``execute_statement``
+    returns with state PENDING/RUNNING and ``result=None``. _exec must poll
+    ``get_statement`` to a terminal state instead of treating the
+    not-yet-finished response as a success — the cold-start bug that crashed
+    ``wikibricks_curate`` with ``'NoneType' object has no attribute
+    'data_array'`` on 13 consecutive 04:00-UTC runs.
+    """
+
+    @patch("wikibricks.client.time.sleep", return_value=None)
+    def test_polls_until_succeeded_on_cold_start(self, _sleep):
+        ws = MagicMock()
+        pending = MagicMock()
+        pending.status = StatementStatus(state=StatementState.PENDING, error=None)
+        pending.statement_id = "stmt-1"
+        running = MagicMock()
+        running.status = StatementStatus(state=StatementState.RUNNING, error=None)
+        running.statement_id = "stmt-1"
+        done = _mock_response([["p1"]], columns=["path"])
+        done.statement_id = "stmt-1"
+        ws.statement_execution.execute_statement.return_value = pending
+        ws.statement_execution.get_statement.side_effect = [running, done]
+
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        resp = wiki._exec("SELECT path FROM t")
+
+        assert resp.status.state == StatementState.SUCCEEDED
+        assert resp.result.data_array == [["p1"]]
+        assert ws.statement_execution.get_statement.call_count == 2
+        ws.statement_execution.get_statement.assert_called_with("stmt-1")
+
+    @patch("wikibricks.client.time.sleep", return_value=None)
+    def test_raises_clear_error_when_statement_fails_after_polling(self, _sleep):
+        ws = MagicMock()
+        pending = MagicMock()
+        pending.status = StatementStatus(state=StatementState.PENDING, error=None)
+        pending.statement_id = "stmt-2"
+        failed = MagicMock()
+        failed.status = StatementStatus(state=StatementState.FAILED, error="boom")
+        failed.statement_id = "stmt-2"
+        ws.statement_execution.execute_statement.return_value = pending
+        ws.statement_execution.get_statement.side_effect = [failed]
+
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        with pytest.raises(RuntimeError, match="SQL execution failed"):
+            wiki._exec("SELECT 1")
+
+
+class TestRerankGracefulFallbackWithoutIgraph:
+    """_rerank_by_rrf must not crash when the optional `[graph]` extra (igraph)
+    is absent — which is exactly the recorder MCP install profile
+    (`wikibricks[recorder]`). It should fall back to the vector-search order
+    rather than letting the ImportError fail the whole wiki_search.
+    """
+
+    def test_returns_hits_unreranked_when_graph_logic_unavailable(self):
+        import sys
+        ws = MagicMock()
+        client = WikiClient(warehouse_id="w", workspace_client=ws)
+        hits = [{"page_id": "p1", "path": "a"}, {"page_id": "p2", "path": "b"}]
+        # Simulate `from wikibricks.graph_logic import rrf_fuse` raising
+        # ImportError (igraph not installed) by masking the module.
+        with patch.dict(sys.modules, {"wikibricks.graph_logic": None}):
+            out = client._rerank_by_rrf(hits)
+        assert out == hits  # unchanged order, no crash
+        ws.statement_execution.execute_statement.assert_not_called()  # bailed before SQL
+
+    def test_rerank_survives_null_data_array_from_hub_query(self):
+        """The hub_score query returns result.data_array=None (not []) on a
+        zero-row result — e.g. VS hits whose page_id isn't in pages yet.
+        _rerank_by_rrf must treat that as empty and still return all hits,
+        not crash with `'NoneType' object is not iterable`.
+        """
+        ws = MagicMock()
+        resp = MagicMock()
+        resp.status = StatementStatus(state=StatementState.SUCCEEDED, error=None)
+        resp.result.data_array = None  # zero-row result
+        ws.statement_execution.execute_statement.return_value = resp
+        client = WikiClient(warehouse_id="w", workspace_client=ws)
+        hits = [{"page_id": "p1", "path": "a"}, {"page_id": "p2", "path": "b"}]
+
+        out = client._rerank_by_rrf(hits)
+
+        assert {h["page_id"] for h in out} == {"p1", "p2"}  # all hits retained, no crash

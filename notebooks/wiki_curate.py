@@ -87,12 +87,14 @@ wiki = WikiClient(warehouse_id=WAREHOUSE_ID, workspace_client=w)
 
 
 def run_sql(sql: str) -> list[dict]:
-    resp = w.statement_execution.execute_statement(
-        warehouse_id=WAREHOUSE_ID,
-        statement=sql,
-        wait_timeout="30s",
-    )
-    rows = resp.result.data_array or []
+    # Delegate to the library executor (WikiClient._exec), which polls a cold
+    # serverless warehouse to a terminal state before returning. The previous
+    # inline execute_statement(wait_timeout="30s") crashed with
+    # `AttributeError: 'NoneType' object has no attribute 'data_array'` whenever
+    # the 04:00-UTC run hit a stopped warehouse and the statement was still
+    # PENDING when the inline wait elapsed (result=None).
+    resp = wiki._exec(sql)
+    rows = resp.result.data_array if resp.result else []
     if not rows:
         return []
     cols = [c.name for c in resp.manifest.schema.columns]
