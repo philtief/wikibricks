@@ -13,10 +13,44 @@ _SYSTEM_PROMPT_PREFIXES = ("You are ", "Apply maximum ")
 _PROMPT_LINE_RE = re.compile(r"^### prompt @ .*?\n> (.+)$", re.MULTILINE)
 TITLE_MAX = 120
 
+# Ephemeral CWDs mark a programmatic Claude Code sub-invocation (another
+# agent / a skill / a memory-consolidation run using ``claude`` as a
+# subprocess) rather than real interactive work. This mirrors the write-time
+# skip signal in ``wikibricks_recorder.page_builder.is_ephemeral``. Anchored
+# to the ``- CWD:`` metadata line so an ephemeral path merely *mentioned* in
+# prose does not condemn a real session.
+_EPHEMERAL_CWD_RE = re.compile(
+    r"^- CWD:\s*(/tmp|/private/tmp|/var/tmp|/var/folders|/private/var/folders)(/|\s|$)",
+    re.MULTILINE,
+)
+
 
 def looks_like_system_prompt(text: str) -> bool:
     """True when ``text`` starts with a known skill / sub-agent prefix."""
     return bool(text) and text.strip().startswith(_SYSTEM_PROMPT_PREFIXES)
+
+
+def body_has_ephemeral_cwd(body: str | None) -> bool:
+    """True when a session page body records an ephemeral (``/tmp``-ish) CWD.
+
+    Reads the persisted ``- CWD: <path>`` metadata line. Real summarized
+    sessions store a dense summary + ToC with no metadata block, so they
+    return False — the safe default that keeps genuine work.
+    """
+    return bool(body) and _EPHEMERAL_CWD_RE.search(body) is not None
+
+
+def is_noise_page(title: str | None, body: str | None) -> bool:
+    """True when a persisted session page is recorder noise, safe to purge.
+
+    Two independent signals, either sufficient:
+    1. Body records an ephemeral CWD (programmatic /tmp sub-invocation).
+    2. Title is a raw system-prompt template (legacy title-based path).
+
+    A ``[stub]`` title alone is NOT sufficient — real sessions can fall back
+    to a stub title while carrying a genuine summary body.
+    """
+    return body_has_ephemeral_cwd(body) or looks_like_system_prompt(title or "")
 
 
 def extract_repaired_title(body: str) -> str | None:

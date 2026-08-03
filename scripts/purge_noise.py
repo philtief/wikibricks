@@ -1,13 +1,21 @@
 """Purge noise pages from the wiki — one-off cleanup script.
 
-For every concept session page whose title matches a known skill /
-sub-agent system-prompt template (see ``wikibricks.title_repair``),
-delete the page **and its chunk children** from the ``pages`` table.
+For every concept session page that is recorder noise — a programmatic
+``/tmp`` sub-invocation (memory-consolidation runs, MCP smoke tests, other
+agents driving ``claude`` as a subprocess) — delete the page **and its
+chunk children** from the ``pages`` table.
 
-A full-corpus scan confirmed these pages are 100% noise: every page with
-a system-prompt title also has system-prompt-only body content. The
-recorder filter shipped in 0.3.x prevents new noise; this script clears
-the backlog accrued before that fix landed.
+Noise is identified by ``wikibricks.title_repair.is_noise_page``: a page is
+noise when its body records an ephemeral CWD (``- CWD: /tmp…``, the same
+signal the recorder's ``page_builder.is_ephemeral`` skips on at write time)
+OR its title is a raw system-prompt template. A ``[stub]`` title alone is
+NOT sufficient — real summarized sessions can fall back to a stub title
+while carrying a genuine work summary, so the scan reads the page **body**,
+not just the title. (The prior title-only scan missed 23 ephemeral pages
+whose titles were ``[stub] Session …`` rather than ``You are …``.)
+
+The recorder filter shipped in 0.3.x (broadened through 0.7.3) prevents new
+noise; this script clears the backlog accrued before that fix landed.
 
 Audit trail: every deletion is logged to ``wiki_log`` with
 ``op_type='purge_noise'`` and the deleted path + original title. The
@@ -39,19 +47,26 @@ from databricks.sdk import WorkspaceClient
 
 from wikibricks.client import WikiClient
 from wikibricks.ops import PAGES_TABLE
-from wikibricks.title_repair import looks_like_system_prompt
+from wikibricks.title_repair import is_noise_page
 
 
 def find_candidates(wiki: WikiClient, limit: int = 0) -> list[dict]:
-    """Return concept session pages whose title is a system-prompt template."""
-    pages = wiki.list_pages(path_prefix="sessions/")
+    """Return parent session pages that are recorder noise.
+
+    Reads path + title + body directly (``list_pages`` returns no body and
+    hides ``ephemeral:stub``-tagged pages by default — the very pages we
+    need to see). Classification is body-aware via ``is_noise_page``.
+    """
+    resp = wiki._exec(
+        f"SELECT path, title, content_text FROM {PAGES_TABLE} "
+        f"WHERE path LIKE 'sessions/%' AND path NOT LIKE '%/chunks/%'"
+    )
+    rows = resp.result.data_array if resp.result else []
     out: list[dict] = []
-    for entry in pages:
-        if "/chunks/" in entry["path"]:
+    for path, title, content_text in rows or []:
+        if not is_noise_page(title, content_text):
             continue
-        if not looks_like_system_prompt(entry.get("title", "")):
-            continue
-        out.append(entry)
+        out.append({"path": path, "title": title or ""})
         if limit and len(out) >= limit:
             break
     return out
@@ -98,19 +113,24 @@ def main() -> int:
             print("Aborted.")
             return 0
 
-    # Bulk DELETE by title prefix. Chunk titles inherit the parent's title
-    # ("You are summarizing... - <chunk first line>"), so the same LIKE catches
-    # both parents and their chunks in one statement. Two prefix patterns =
-    # one DELETE with an OR. Avoids the per-row 30s timeout.
+    # DELETE by exact candidate path (and each parent's chunk children).
+    # Deleting by title prefix is unsafe now that candidates include
+    # "[stub] Session …" pages — a prefix broad enough to catch them would
+    # also catch real work. Match the parents by their exact paths plus a
+    # per-parent "<path>/chunks/%" LIKE for children, all in one statement.
     print("\nIssuing bulk DELETE...", flush=True)
-    wiki._exec(
-        f"DELETE FROM {PAGES_TABLE} "
-        f"WHERE path LIKE 'sessions/%' "
-        f"  AND (title LIKE 'You are %' OR title LIKE 'Apply maximum %')"
+    paths = [c["path"] for c in candidates]
+    in_list = ", ".join(f"'{wiki._escape(p)}'" for p in paths)
+    child_likes = " OR ".join(
+        f"path LIKE '{wiki._escape(p)}/chunks/%'" for p in paths
     )
+    where = f"path IN ({in_list})"
+    if child_likes:
+        where += f" OR {child_likes}"
+    wiki._exec(f"DELETE FROM {PAGES_TABLE} WHERE {where}")
     wiki._log(op_type="purge_noise", path=None,
-              details=f"Bulk purge: {len(candidates)} parent pages by title prefix")
-    print(f"Deleted noise pages (estimate: {len(candidates)} parents + ~5x chunks).", flush=True)
+              details=f"Purged {len(candidates)} noise parent pages (+chunk children) by path")
+    print(f"Deleted {len(candidates)} parent pages and their chunk children.", flush=True)
     print("Syncing Vector Search index...", flush=True)
     wiki.sync_index()
     print("Healing broken edges...", flush=True)
