@@ -258,6 +258,7 @@ framework to give an agent direct promote-to-memory capability.
 | `promote_reject` | Judge score below threshold — legitimate low quality |
 | `promote_parse_fail` | Judge returned non-numeric text — prompt drift |
 | `vs_sync` / `vs_sync_fail` | `sync_index()` result |
+| `vs_reconcile` | `reconcile_vs_source()` dropped N orphaned `pages_vs_source` rows whose page was deleted from `pages` (prevents search ghosts after bulk deletes). v0.7.17+. |
 | `verify_fix` | `fix_broken_links` healed an edge |
 | `curate_run` | End-of-run summary from the curate notebook |
 | `cited` | A prior session cited this page via a `[wb:<path>]` marker — drives the citation-aware search reranker |

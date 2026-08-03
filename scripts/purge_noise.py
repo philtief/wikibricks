@@ -131,6 +131,12 @@ def main() -> int:
     wiki._log(op_type="purge_noise", path=None,
               details=f"Purged {len(candidates)} noise parent pages (+chunk children) by path")
     print(f"Deleted {len(candidates)} parent pages and their chunk children.", flush=True)
+    # Evict orphaned VS-source rows before syncing. Without this the deleted
+    # pages linger in pages_vs_source and keep surfacing in search() as ghosts
+    # (the DELTA_SYNC index reads pages_vs_source, not pages).
+    print("Reconciling VS-source table...", flush=True)
+    removed = wiki.reconcile_vs_source()
+    print(f"Removed {removed} orphaned VS-source rows.", flush=True)
     print("Syncing Vector Search index...", flush=True)
     wiki.sync_index()
     print("Healing broken edges...", flush=True)

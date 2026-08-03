@@ -381,6 +381,33 @@ class WikiClient:
             f"WHEN NOT MATCHED THEN INSERT *"
         )
 
+    def reconcile_vs_source(self) -> int:
+        """Drop VS-source rows whose page no longer exists in ``pages``.
+
+        ``_sync_vs_source`` upserts on *write* but there is no delete cascade,
+        so deleting from ``pages`` (e.g. ``scripts/purge_noise.py``) orphans
+        the mirrored row in ``pages_vs_source``. Because the DELTA_SYNC index
+        points at ``pages_vs_source``, those orphans keep surfacing in
+        ``search()`` as ghosts long after the page is gone. Call this after any
+        bulk delete, then ``sync_index()``, to evict them. Returns the number
+        of orphaned rows removed.
+        """
+        before = self._exec(
+            f"SELECT count(*) FROM {PAGES_VS_SOURCE_TABLE}"
+        ).result.data_array[0][0]
+        self._exec(
+            f"DELETE FROM {PAGES_VS_SOURCE_TABLE} AS v "
+            f"WHERE NOT EXISTS "
+            f"(SELECT 1 FROM {PAGES_TABLE} p WHERE p.path = v.path)"
+        )
+        after = self._exec(
+            f"SELECT count(*) FROM {PAGES_VS_SOURCE_TABLE}"
+        ).result.data_array[0][0]
+        removed = int(before) - int(after)
+        if removed:
+            self._log("vs_reconcile", details=f"removed {removed} orphaned vs_source rows")
+        return removed
+
     def sync_index(self) -> None:
         """Trigger the DELTA_SYNC VS index so recent writes become searchable.
 

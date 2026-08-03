@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (`purge_noise` missed ephemeral-CWD pages and left search ghosts)
+
+- **`scripts/purge_noise.py` + `src/wikibricks/title_repair.py`** — the
+  noise scan matched only system-prompt *titles* (`looks_like_system_prompt`
+  over `list_pages`), so it missed recorder-noise pages whose titles were
+  `[stub] Session …` rather than `You are …`. `list_pages` also hides
+  `ephemeral:stub`-tagged pages by default, so a live scan found 0 despite 23
+  noise pages being present. New `body_has_ephemeral_cwd()` reads the
+  persisted `- CWD:` metadata line (mirroring `page_builder.is_ephemeral`,
+  the write-time skip signal) and `is_noise_page(title, body)` combines it
+  with the legacy title check. A `[stub]` title alone is **not** sufficient —
+  real summarized sessions fall back to stub titles while carrying genuine
+  work bodies, so the scan reads the page body, not just the title. The
+  purge now deletes by exact path (+ per-parent chunk children) instead of an
+  unsafe title-prefix `LIKE`.
+- **`src/wikibricks/client.py::reconcile_vs_source`** — deleting from `pages`
+  orphaned the mirrored row in `pages_vs_source` because `_sync_vs_source`
+  upserts on write with no delete cascade. Since the DELTA_SYNC index reads
+  `pages_vs_source`, those orphans kept surfacing in `search()` as ghosts
+  long after the page was gone. `purge_noise` now calls
+  `reconcile_vs_source()` (drops orphaned rows, logs `vs_reconcile`) before
+  `sync_index()`. A one-time reconcile of the personal wiki evicted 1663
+  orphaned rows (1660 noise-titled).
+
 ## [0.7.16] - 2026-06-11
 
 ### Fixed (`curate` task crashed on a cold serverless warehouse)

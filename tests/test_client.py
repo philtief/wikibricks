@@ -938,3 +938,46 @@ class TestRerankGracefulFallbackWithoutIgraph:
         out = client._rerank_by_rrf(hits)
 
         assert {h["page_id"] for h in out} == {"p1", "p2"}  # all hits retained, no crash
+
+
+class TestReconcileVsSource:
+    def test_deletes_orphans_and_returns_count(self):
+        ws = MagicMock()
+        # before=3675, DELETE (no result), after=2012  -> removed 1663
+        ws.statement_execution.execute_statement.side_effect = [
+            _mock_response([[3675]]),   # SELECT count before
+            _mock_response([]),         # DELETE
+            _mock_response([[2012]]),   # SELECT count after
+            _mock_response([]),         # _log
+        ]
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        removed = wiki.reconcile_vs_source()
+        assert removed == 1663
+
+    def test_delete_targets_orphans_via_not_exists(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.side_effect = [
+            _mock_response([[10]]),
+            _mock_response([]),
+            _mock_response([[7]]),
+            _mock_response([]),
+        ]
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        wiki.reconcile_vs_source()
+        delete_sql = ws.statement_execution.execute_statement.call_args_list[1].kwargs["statement"]
+        assert "DELETE FROM" in delete_sql
+        assert "pages_vs_source" in delete_sql
+        assert "NOT EXISTS" in delete_sql
+
+    def test_no_log_when_zero_removed(self):
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.side_effect = [
+            _mock_response([[100]]),
+            _mock_response([]),
+            _mock_response([[100]]),
+        ]
+        wiki = WikiClient(warehouse_id="wh-123", workspace_client=ws)
+        removed = wiki.reconcile_vs_source()
+        assert removed == 0
+        # only 3 calls (before, delete, after) — no _log when nothing removed
+        assert ws.statement_execution.execute_statement.call_count == 3
