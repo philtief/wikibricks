@@ -981,3 +981,50 @@ class TestReconcileVsSource:
         assert removed == 0
         # only 3 calls (before, delete, after) — no _log when nothing removed
         assert ws.statement_execution.execute_statement.call_count == 3
+
+
+class TestExecWithRetry:
+    def _err(self, msg):
+        from databricks.sdk.service.sql import (
+            ServiceError,
+            StatementState,
+            StatementStatus,
+        )
+        r = MagicMock()
+        r.status = StatementStatus(
+            state=StatementState.FAILED, error=ServiceError(message=msg)
+        )
+        return r
+
+    def test_retries_on_concurrent_append_then_succeeds(self, monkeypatch):
+        monkeypatch.setattr("wikibricks.client.time.sleep", lambda *_: None)
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.side_effect = [
+            self._err("DELTA_CONCURRENT_APPEND Transaction conflict detected"),
+            _mock_response([]),  # 2nd attempt succeeds
+        ]
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        wiki._exec_with_retry("MERGE INTO x ...")
+        assert ws.statement_execution.execute_statement.call_count == 2
+
+    def test_does_not_retry_non_conflict_error(self, monkeypatch):
+        monkeypatch.setattr("wikibricks.client.time.sleep", lambda *_: None)
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.side_effect = [
+            self._err("SYNTAX_ERROR near 'MRGE'"),
+        ]
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        with pytest.raises(RuntimeError):
+            wiki._exec_with_retry("MRGE INTO x ...")
+        assert ws.statement_execution.execute_statement.call_count == 1
+
+    def test_gives_up_after_max_attempts(self, monkeypatch):
+        monkeypatch.setattr("wikibricks.client.time.sleep", lambda *_: None)
+        ws = MagicMock()
+        ws.statement_execution.execute_statement.side_effect = [
+            self._err("DELTA_CONCURRENT_APPEND conflict") for _ in range(10)
+        ]
+        wiki = WikiClient(warehouse_id="wh", workspace_client=ws)
+        with pytest.raises(RuntimeError):
+            wiki._exec_with_retry("MERGE INTO x ...", max_attempts=3)
+        assert ws.statement_execution.execute_statement.call_count == 3

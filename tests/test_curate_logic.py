@@ -9,6 +9,7 @@ from unittest.mock import MagicMock
 
 from wikibricks.curate_logic import (
     BODY_OVERSIZE_THRESHOLD,
+    assess_index_drift,
     build_curate_summary,
     build_health_summary,
     classify_page_health,
@@ -16,6 +17,42 @@ from wikibricks.curate_logic import (
     partition_by_confidence,
     run_connect_phase,
 )
+
+
+class TestAssessIndexDrift:
+    def test_healthy_when_counts_match(self):
+        d = assess_index_drift(pages=2019, vs_source=2019, indexed=2019)
+        assert d["drifted"] is False
+        assert d["severity"] == "ok"
+
+    def test_within_tolerance_is_not_drift(self):
+        # Small lag between source and index is normal for a TRIGGERED index.
+        d = assess_index_drift(pages=2020, vs_source=2019, indexed=2018, tolerance=5)
+        assert d["drifted"] is False
+
+    def test_orphans_flagged_as_drift(self):
+        # vs_source larger than pages => orphaned rows (deleted pages linger).
+        d = assess_index_drift(pages=2000, vs_source=3675, indexed=3400)
+        assert d["drifted"] is True
+        assert d["vs_source_orphans"] == 1675
+        assert d["severity"] == "orphans"
+
+    def test_frozen_index_flagged_as_drift(self):
+        # Index far from source => DLT pipeline likely frozen/failed.
+        d = assess_index_drift(pages=2020, vs_source=2020, indexed=3400)
+        assert d["drifted"] is True
+        assert d["severity"] == "index_stale"
+        assert d["index_gap"] == 1380
+
+    def test_orphans_take_precedence_over_index_gap(self):
+        d = assess_index_drift(pages=2000, vs_source=3675, indexed=3400)
+        assert d["severity"] == "orphans"
+
+    def test_indexed_none_skips_index_check(self):
+        # get_index may not report a row count; don't false-alarm on that.
+        d = assess_index_drift(pages=2019, vs_source=2019, indexed=None)
+        assert d["drifted"] is False
+        assert d["severity"] == "ok"
 
 
 class TestPartitionByConfidence:

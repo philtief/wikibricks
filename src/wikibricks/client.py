@@ -75,6 +75,27 @@ class WikiClient:
             raise RuntimeError(f"SQL execution failed: {error}")
         return resp
 
+    def _exec_with_retry(self, sql: str, *, max_attempts: int = 5):
+        """``_exec`` with backoff on Delta write-write concurrency conflicts.
+
+        Concurrent writers to the same table (e.g. parallel Claude sessions
+        flushing the recorder while a maintenance MERGE runs) raise
+        ``DELTA_CONCURRENT_APPEND`` / ``CONCURRENT_*`` — a transient, retryable
+        condition, unlike a syntax or permission error. Only conflict errors
+        are retried; everything else propagates immediately. Use for MERGE /
+        DELETE on hot tables (``_sync_vs_source``, ``reconcile_vs_source``);
+        reads should not retry on conflict.
+        """
+        for attempt in range(1, max_attempts + 1):
+            try:
+                return self._exec(sql)
+            except RuntimeError as e:
+                msg = str(e).upper()
+                is_conflict = "CONCURRENT" in msg or "CONFLICT" in msg
+                if not is_conflict or attempt == max_attempts:
+                    raise
+                time.sleep(min(2.0 * attempt, 10.0))
+
     def _escape(self, value: str) -> str:
         """Escape backslashes and single quotes for Databricks SQL string literals."""
         return value.replace("\\", "\\\\").replace("'", "\\'")
@@ -372,7 +393,7 @@ class WikiClient:
         We maintain a parallel table without the VARIANT `content` column that
         the index points at.
         """
-        self._exec(
+        self._exec_with_retry(
             f"MERGE INTO {PAGES_VS_SOURCE_TABLE} AS target "
             f"USING (SELECT page_id, path, title, page_type, content_text, tags, version "
             f"FROM {PAGES_TABLE} WHERE path = '{path}') AS source "
@@ -395,7 +416,7 @@ class WikiClient:
         before = self._exec(
             f"SELECT count(*) FROM {PAGES_VS_SOURCE_TABLE}"
         ).result.data_array[0][0]
-        self._exec(
+        self._exec_with_retry(
             f"DELETE FROM {PAGES_VS_SOURCE_TABLE} AS v "
             f"WHERE NOT EXISTS "
             f"(SELECT 1 FROM {PAGES_TABLE} p WHERE p.path = v.path)"
@@ -421,6 +442,22 @@ class WikiClient:
             self._log("vs_sync", details=VS_INDEX)
         except Exception as e:
             self._log("vs_sync_fail", details=f"{type(e).__name__}: {e}")
+
+    def index_row_count(self) -> int | None:
+        """Return the VS index's ``indexed_row_count``, or None if unavailable.
+
+        Used by the curate job's drift check to compare against ``pages`` /
+        ``pages_vs_source`` and detect a frozen/lagging DELTA_SYNC pipeline.
+        Best-effort: any SDK error returns None so the caller skips the index
+        arm of the check rather than crashing the run.
+        """
+        try:
+            idx = self.ws.vector_search_indexes.get_index(index_name=VS_INDEX)
+            status = idx.as_dict().get("status", {})
+            rows = status.get("indexed_row_count")
+            return int(rows) if rows is not None else None
+        except Exception:
+            return None
 
     def list_pages(
         self,

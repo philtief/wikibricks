@@ -52,6 +52,8 @@ def _make_spec_wiki() -> MagicMock:
     wiki.promote_answer.return_value = "promoted/foo"
     wiki.history.return_value = []
     wiki.sync_index.return_value = None
+    wiki.reconcile_vs_source.return_value = 0
+    wiki.index_row_count.return_value = 0
     # `_log` is private but both notebooks call it; spec_set allows because it
     # exists on the class.
     return wiki

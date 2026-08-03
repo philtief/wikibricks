@@ -98,6 +98,47 @@ def find_duplicate_paths(pages: Iterable[dict]) -> list[dict]:
     ]
 
 
+def assess_index_drift(
+    *,
+    pages: int,
+    vs_source: int,
+    indexed: int | None,
+    tolerance: int = 5,
+) -> dict:
+    """Compare row counts across pages / pages_vs_source / VS index.
+
+    Two failure modes this catches:
+    - **orphans**: ``vs_source`` exceeds ``pages`` — deleted pages linger in the
+      VS-source mirror (no delete cascade) and keep surfacing in search as
+      ghosts. Fix: ``WikiClient.reconcile_vs_source()``.
+    - **index_stale**: the VS ``indexed`` row count diverges from ``vs_source``
+      beyond ``tolerance`` — the DELTA_SYNC pipeline is lagging or frozen (e.g.
+      a truncated checkpoint). Fix: investigate / drop + recreate the index.
+
+    ``indexed=None`` (get_index didn't report a count) skips the index check
+    rather than false-alarming. Returns a dict with ``drifted`` (bool),
+    ``severity`` (``ok`` / ``orphans`` / ``index_stale``), and the raw gaps.
+    Orphans take precedence — they are the actionable, self-healable case.
+    """
+    orphans = max(0, vs_source - pages)
+    index_gap = abs(indexed - vs_source) if indexed is not None else 0
+    if orphans > tolerance:
+        severity = "orphans"
+    elif indexed is not None and index_gap > tolerance:
+        severity = "index_stale"
+    else:
+        severity = "ok"
+    return {
+        "drifted": severity != "ok",
+        "severity": severity,
+        "pages": pages,
+        "vs_source": vs_source,
+        "indexed": indexed,
+        "vs_source_orphans": orphans,
+        "index_gap": index_gap,
+    }
+
+
 def build_health_summary(
     *,
     pages_checked: int,

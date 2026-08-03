@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (curate job self-heals VS drift + alerts on a frozen index)
+
+- **`notebooks/wiki_curate.py` Phase 3b** — runs `reconcile_vs_source()` every
+  night so pages deleted by *any* path (not just `purge_noise`) can't linger in
+  `pages_vs_source` as search ghosts, then compares pages / pages_vs_source /
+  VS-index row counts via `curate_logic.assess_index_drift`. Logs `index_drift`
+  (`severity=orphans` self-heals next run; `severity=index_stale` = frozen
+  DELTA_SYNC pipeline, needs a human). Closes the gap where the index sat frozen
+  on a truncated checkpoint for weeks with no alert.
+- **`WikiClient.index_row_count()`** — best-effort read of the VS index's
+  `indexed_row_count` (None on any SDK error) for the drift check.
+- **`curate_logic.assess_index_drift(pages, vs_source, indexed, tolerance=5)`**
+  — pure, unit-tested drift classifier.
+
+### Fixed (concurrent writers no longer fail VS-source maintenance)
+
+- **`WikiClient._exec_with_retry`** — retries `DELTA_CONCURRENT_APPEND` /
+  concurrency-conflict errors with backoff (non-conflict errors propagate
+  immediately). `_sync_vs_source` and `reconcile_vs_source` now use it, so
+  parallel Claude sessions flushing the recorder during a maintenance MERGE
+  no longer crash the write.
+
 ### Fixed (`purge_noise` missed ephemeral-CWD pages and left search ghosts)
 
 - **`scripts/purge_noise.py` + `src/wikibricks/title_repair.py`** — the

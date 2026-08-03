@@ -48,6 +48,7 @@ from databricks.sdk import WorkspaceClient
 
 from wikibricks import WikiClient
 from wikibricks.curate_logic import (
+    assess_index_drift,
     build_curate_summary,
     build_health_summary,
     classify_page_health,
@@ -57,6 +58,7 @@ from wikibricks.curate_logic import (
 from wikibricks.ops import (
     LOG_TABLE,
     PAGES_TABLE,
+    PAGES_VS_SOURCE_TABLE,
     broken_links_sql,
     duplicate_paths_sql,
     orphan_pages_sql,
@@ -215,6 +217,44 @@ if REPAIR_BROKEN_LINKS:
     print(f"repair: deleted {deleted} broken-link rows")
 else:
     print("repair: skipped (repair_broken_links=false)")
+
+# COMMAND ----------
+
+# MAGIC %md ## Phase 3b: VS-source reconcile + index drift check
+# MAGIC
+# MAGIC Deleting from `pages` orphans the mirrored row in `pages_vs_source` (no
+# MAGIC delete cascade), and the DELTA_SYNC index reads that mirror — so deleted
+# MAGIC pages keep surfacing in `search()` as ghosts. Reconcile every run so
+# MAGIC drift self-heals regardless of which delete path ran. Then compare row
+# MAGIC counts across pages / vs_source / index to catch a frozen pipeline (the
+# MAGIC failure that went unnoticed for weeks: a truncated-checkpoint DLT stall).
+
+# COMMAND ----------
+
+reconciled = wiki.reconcile_vs_source()
+if reconciled:
+    wiki.sync_index()  # push the eviction to the index
+print(f"reconcile: removed {reconciled} orphaned vs_source rows")
+
+def _count(sql: str) -> int:
+    rows = run_sql(sql)
+    return int(rows[0]["c"]) if rows else 0
+
+
+pages_count = _count(f"SELECT count(*) AS c FROM {PAGES_TABLE}")
+vs_count = _count(f"SELECT count(*) AS c FROM {PAGES_VS_SOURCE_TABLE}")
+drift = assess_index_drift(
+    pages=pages_count,
+    vs_source=vs_count,
+    indexed=wiki.index_row_count(),
+)
+print(f"drift: {json.dumps(drift)}")
+if drift["drifted"]:
+    # Alert via wiki_log — queryable and picked up by on_failure email if the
+    # operator promotes it. severity=orphans self-heals next run; index_stale
+    # needs a human (investigate / drop+recreate the DELTA_SYNC index).
+    wiki._log("index_drift", details=json.dumps(drift))  # noqa: SLF001
+    print(f"drift: ALERT severity={drift['severity']} — logged to wiki_log")
 
 # COMMAND ----------
 

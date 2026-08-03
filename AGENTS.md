@@ -259,6 +259,7 @@ framework to give an agent direct promote-to-memory capability.
 | `promote_parse_fail` | Judge returned non-numeric text — prompt drift |
 | `vs_sync` / `vs_sync_fail` | `sync_index()` result |
 | `vs_reconcile` | `reconcile_vs_source()` dropped N orphaned `pages_vs_source` rows whose page was deleted from `pages` (prevents search ghosts after bulk deletes). v0.7.17+. |
+| `index_drift` | Curate job's drift check found pages / pages_vs_source / VS-index row counts diverged beyond tolerance. `severity=orphans` self-heals next run; `severity=index_stale` needs a human (frozen DELTA_SYNC pipeline — investigate / drop+recreate). v0.7.17+. |
 | `verify_fix` | `fix_broken_links` healed an edge |
 | `curate_run` | End-of-run summary from the curate notebook |
 | `cited` | A prior session cited this page via a `[wb:<path>]` marker — drives the citation-aware search reranker |
