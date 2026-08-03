@@ -51,15 +51,21 @@ from wikibricks.title_repair import is_noise_page
 
 
 def find_candidates(wiki: WikiClient, limit: int = 0) -> list[dict]:
-    """Return parent session pages that are recorder noise.
+    """Return parent pages that are recorder noise.
 
-    Reads path + title + body directly (``list_pages`` returns no body and
-    hides ``ephemeral:stub``-tagged pages by default — the very pages we
-    need to see). Classification is body-aware via ``is_noise_page``.
+    Scans both ``sessions/`` (recorder-written) and ``promoted/`` (the
+    nightly promote job can cluster old noise into a canonical synthesis
+    page before the source sessions are purged). Reads path + title + body
+    directly — ``list_pages`` returns no body and hides ``ephemeral:stub``-
+    tagged pages by default, the very pages we need to see. Classification is
+    body-aware via ``is_noise_page`` (chunk children are excluded here and
+    deleted only as children of a noise *parent*, so a real parent's chunks
+    are never touched).
     """
     resp = wiki._exec(
         f"SELECT path, title, content_text FROM {PAGES_TABLE} "
-        f"WHERE path LIKE 'sessions/%' AND path NOT LIKE '%/chunks/%'"
+        f"WHERE (path LIKE 'sessions/%' OR path LIKE 'promoted/%') "
+        f"  AND path NOT LIKE '%/chunks/%'"
     )
     rows = resp.result.data_array if resp.result else []
     out: list[dict] = []

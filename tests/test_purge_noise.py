@@ -11,12 +11,19 @@ is a genuine summary.
 
 from __future__ import annotations
 
+import sys
+from pathlib import Path
+from unittest.mock import MagicMock
+
 import pytest
 
 from wikibricks.title_repair import (
     body_has_ephemeral_cwd,
     is_noise_page,
 )
+
+sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
+import purge_noise  # noqa: E402
 
 
 def _body(cwd: str, events: int = 1) -> str:
@@ -106,3 +113,44 @@ def test_is_noise_page_false_for_real_summarized_stub():
 def test_is_noise_page_false_for_real_work_title_and_body():
     body = _body("/Users/philipp.tiefenbacher/code/wikibricks", events=42)
     assert is_noise_page("Fix the Lakebase connection pool bug", body) is False
+
+
+class TestFindCandidates:
+    def _wiki_with_rows(self, rows):
+        wiki = MagicMock()
+        resp = MagicMock()
+        resp.result.data_array = rows
+        wiki._exec.return_value = resp
+        return wiki
+
+    def test_scan_covers_sessions_and_promoted(self):
+        wiki = self._wiki_with_rows([])
+        purge_noise.find_candidates(wiki)
+        sql = wiki._exec.call_args.args[0]
+        assert "sessions/%" in sql
+        assert "promoted/%" in sql
+        # never scans chunk children as candidates
+        assert "NOT LIKE '%/chunks/%'" in sql
+
+    def test_flags_promoted_noise_and_keeps_real(self):
+        eph_body = "# Session x\n- CWD: /private/tmp\n- Events: 1\n"
+        rows = [
+            ["promoted/you-are-summarizing-a-claude-code-session",
+             "You are summarizing a Claude Code session for a daily memory log.", eph_body],
+            ["sessions/u/2026/05/16/real",
+             "A Claude Code session drafting AGCS Genie comms",
+             "A Claude Code session focused on drafting communications for AGCS Genie."],
+        ]
+        wiki = self._wiki_with_rows(rows)
+        out = purge_noise.find_candidates(wiki)
+        paths = {c["path"] for c in out}
+        assert "promoted/you-are-summarizing-a-claude-code-session" in paths
+        assert "sessions/u/2026/05/16/real" not in paths
+
+    def test_limit_caps_results(self):
+        rows = [
+            [f"promoted/noise-{i}", "You are a memory consolidation agent.", ""]
+            for i in range(5)
+        ]
+        wiki = self._wiki_with_rows(rows)
+        assert len(purge_noise.find_candidates(wiki, limit=2)) == 2
