@@ -37,6 +37,7 @@ import sys
 import time
 from typing import Any
 
+from wikibricks.title_repair import strip_boilerplate_prefix
 from wikibricks_recorder.page_builder import _is_boilerplate  # type: ignore[attr-defined]
 
 
@@ -174,7 +175,7 @@ def main() -> int:
         LIMIT {args.limit}
     """)
 
-    print(f"Found {len(rows)} candidate pages with boilerplate-leak titles")
+    print(f"Found {len(rows)} candidate parent pages with boilerplate-leak titles")
     changes: list[tuple[str, str, str]] = []  # (path, old, new)
     for _pid, path, old_title, body_json in rows:
         body = _parse_body_field(body_json)
@@ -183,7 +184,26 @@ def main() -> int:
         if new_title != old_title:
             changes.append((path, old_title or "", new_title))
 
-    print(f"Will re-title {len(changes)} pages (skipped {len(rows) - len(changes)} unchanged)")
+    # Chunk children: segregate builds their titles as "<parent> - <chunk>".
+    # When the parent was leaked boilerplate, the real chunk title is the
+    # suffix after the first " - " — recoverable by string surgery, no body
+    # parse. The parents-only query above never touches these.
+    chunk_rows = run_sql(f"""
+        SELECT path, title
+        FROM {table}
+        WHERE path LIKE 'sessions/%/chunks/%'
+          AND (lower(trim(BOTH '> ' FROM title)) LIKE 'you are %'
+               OR lower(trim(BOTH '> ' FROM title)) LIKE 'apply maximum %')
+        LIMIT {args.limit}
+    """)
+    for path, old_title in chunk_rows:
+        new_title = strip_boilerplate_prefix(old_title)
+        if new_title and new_title != old_title:
+            changes.append((path, old_title or "", new_title))
+
+    print(f"Found {len(chunk_rows)} candidate chunk pages with boilerplate-leak titles")
+    print(f"Will re-title {len(changes)} pages "
+          f"({len(rows) + len(chunk_rows)} candidates scanned)")
     for path, old, new in changes[:10]:
         print(f"  {path}")
         print(f"      old: {old[:80]!r}")

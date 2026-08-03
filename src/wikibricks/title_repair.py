@@ -53,6 +53,25 @@ def is_noise_page(title: str | None, body: str | None) -> bool:
     return body_has_ephemeral_cwd(body) or looks_like_system_prompt(title or "")
 
 
+def strip_boilerplate_prefix(title: str | None) -> str | None:
+    """Recover a chunk title whose boilerplate parent prefix leaked in.
+
+    ``segregate`` builds chunk titles as ``"<parent> - <chunk>"`` (see
+    ``segregate_logic.child_title``). When the parent title was leaked
+    system-prompt boilerplate, the real chunk title is the text after the
+    first ``" - "``. Returns that suffix, or None when the prefix is not
+    boilerplate, there is no separator, or the suffix is empty (nothing to
+    recover — leave the title untouched).
+    """
+    if not title or " - " not in title:
+        return None
+    prefix, suffix = title.split(" - ", 1)
+    if not looks_like_system_prompt(prefix):
+        return None
+    suffix = suffix.strip()
+    return suffix[:TITLE_MAX] if suffix else None
+
+
 def extract_repaired_title(body: str) -> str | None:
     """Walk a session page body and return the first prompt that is not a
     system-prompt template, truncated to ``TITLE_MAX`` chars. Returns None

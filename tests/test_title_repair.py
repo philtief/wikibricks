@@ -7,7 +7,47 @@ import pytest
 from wikibricks.title_repair import (
     extract_repaired_title,
     looks_like_system_prompt,
+    strip_boilerplate_prefix,
 )
+
+
+def test_strip_boilerplate_prefix_recovers_chunk_title():
+    # Segregate builds chunk titles as "<parent> - <chunk>". When the parent
+    # was leaked boilerplate, the real chunk title sits after the first " - ".
+    t = ("You are summarizing a Claude Code session for a daily memory log. "
+         "- Analyzing promote task configuration and traces table")
+    assert strip_boilerplate_prefix(t) == (
+        "Analyzing promote task configuration and traces table"
+    )
+
+
+def test_strip_boilerplate_prefix_handles_apply_maximum():
+    t = "Apply maximum compression. Rules: - Drafting the Solvd brief"
+    assert strip_boilerplate_prefix(t) == "Drafting the Solvd brief"
+
+
+def test_strip_boilerplate_prefix_none_when_prefix_not_boilerplate():
+    # A real title that merely contains " - " must be left alone.
+    assert strip_boilerplate_prefix("Fix the Lakebase bug - part 2") is None
+
+
+def test_strip_boilerplate_prefix_none_without_separator():
+    assert strip_boilerplate_prefix("You are summarizing a session") is None
+
+
+def test_strip_boilerplate_prefix_none_on_empty_suffix():
+    assert strip_boilerplate_prefix("You are summarizing. - ") is None
+
+
+def test_strip_boilerplate_prefix_none_on_empty():
+    assert strip_boilerplate_prefix("") is None
+    assert strip_boilerplate_prefix(None) is None
+
+
+def test_strip_boilerplate_prefix_splits_on_first_separator_only():
+    # A chunk title that itself contains " - " keeps its later dashes.
+    t = "You are summarizing a session. - Track A - design phase notes"
+    assert strip_boilerplate_prefix(t) == "Track A - design phase notes"
 
 
 @pytest.mark.parametrize("text,expected", [
