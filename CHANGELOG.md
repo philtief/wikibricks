@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (Omnigent session sync — memory for the Omnigent harness)
+
+- **`src/wikibricks_recorder/omnigent_sync.py` + `scripts/omnigent_sync_cli.py`**
+  — pull Omnigent's own local conversation store (`~/.omnigent/chat.db`) into
+  WikiBricks, the harness-agnostic counterpart to the Claude Code recorder
+  plugin. Omnigent is **not modified**: the CLI reads `chat.db` strictly
+  read-only (`mode=ro&immutable=1`) and writes each real conversation via the
+  existing `WikiClient.write_page`. Rationale: Omnigent exposes no
+  session-lifecycle hook and its scheduled-task MCP endpoint is not served by
+  every daemon build (the store is a remote managed server), so a local reader
+  is the portable trigger (run manually, or schedule via cron/launchd).
+  - Pure transform (`build_state`, `is_syncable`, `conversation_page`) reuses
+    `page_builder` for title / content / ephemeral-skip, so titles and bodies
+    match the recorder's conventions. Sub-agent / native-UI child conversations
+    (`general-purpose:*`, `*-native-ui`, `debby:` …) and single-prompt utility
+    runs are filtered out.
+  - Pages land under a distinct `omnigent-sessions/<user>/YYYY/MM/DD/<conv-id>`
+    prefix (never collides with the recorder's `sessions/` or the purge/backfill
+    tooling), tagged `harness:omnigent` + `agent:<name>`. Conversation id is the
+    path leaf, so re-sync is idempotent (MERGE-by-path overwrites).
+  - Verified live: a 188-conversation store yields 123 syncable pages; a bounded
+    11-page write round-trips with clean 4-element tags and 0 duplicates.
+
 ### Added (curate job self-heals VS drift + alerts on a frozen index)
 
 - **`notebooks/wiki_curate.py` Phase 3b** — runs `reconcile_vs_source()` every
