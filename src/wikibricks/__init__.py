@@ -1,4 +1,4 @@
-"""WikiBricks: Delta + Vector Search wiki store for AI agents on Databricks."""
+"""WikiBricks: local PostgreSQL memory with optional remote archival."""
 
 from wikibricks.agent_tools import make_agent_tools
 from wikibricks.client import WikiClient

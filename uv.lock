@@ -2151,6 +2151,7 @@ name = "wikibricks"
 version = "0.7.16"
 source = { editable = "." }
 dependencies = [
+    { name = "mcp" },
     { name = "psycopg", extra = ["binary"] },
 ]
 
@@ -2171,7 +2172,6 @@ graph = [
 ]
 recorder = [
     { name = "igraph" },
-    { name = "mcp" },
 ]
 
 [package.metadata]
@@ -2180,7 +2180,7 @@ requires-dist = [
     { name = "databricks-sdk", marker = "extra == 'dev'", specifier = ">=0.44.0" },
     { name = "igraph", marker = "extra == 'graph'", specifier = ">=0.11,<2.0" },
     { name = "igraph", marker = "extra == 'recorder'", specifier = ">=0.11,<2.0" },
-    { name = "mcp", marker = "extra == 'recorder'", specifier = ">=1.0" },
+    { name = "mcp", specifier = ">=1.0" },
     { name = "openai", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
