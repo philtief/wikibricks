@@ -30,10 +30,11 @@ graph = [
 ]
 
 [project.scripts]
-wiki-init = "wikibricks_recorder.init_cli:main"
+wikibricks = "wikibricks.cli:main"
+wiki-init = "wikibricks.cli:init_main"
 wiki-target = "wikibricks_recorder.target_cli:main"
 wikibricks-mcp = "wikibricks.mcp_server:main"
-wikibricks-recorder-hook = "wikibricks_recorder.hooks:main"
+wikibricks-recorder-hook = "wikibricks_recorder.local_hooks:main"
 
 [build-system]
 requires = ["hatchling"]

@@ -593,6 +593,22 @@ class PostgresStore:
                 ).fetchone()[0]
             )
 
+    def get_sync_cursor(self, target: str) -> dict[str, Any]:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT cursor FROM sync_state WHERE target = %s", (target,)
+            ).fetchone()
+        return dict(row[0]) if row else {}
+
+    def set_sync_cursor(self, target: str, cursor: dict[str, Any]) -> None:
+        with self.connection() as conn, conn.transaction():
+            conn.execute(
+                "INSERT INTO sync_state (target, cursor) VALUES (%s, %s) "
+                "ON CONFLICT (target) DO UPDATE "
+                "SET cursor = excluded.cursor, updated_at = now()",
+                (target, Jsonb(cursor)),
+            )
+
     def log(
         self,
         op_type: str,

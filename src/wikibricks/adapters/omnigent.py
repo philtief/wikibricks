@@ -3,10 +3,15 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 
 from wikibricks.models import SessionEvent, SessionRecord
+
+_SUBAGENT_TITLE_PREFIXES = ("general-purpose:", "polly:", "debby:")
+_SUBAGENT_TITLE_SUFFIXES = ("-native-ui",)
 
 
 def _timestamp(value: int | float | str | None) -> str | None:
@@ -87,3 +92,77 @@ def conversation_to_session(conversation: dict[str, Any], *, user_id: str) -> Se
             "archived": bool(conversation.get("archived")),
         },
     )
+
+
+def is_syncable_conversation(conversation: dict[str, Any]) -> bool:
+    if conversation.get("archived"):
+        return False
+    title = str(conversation.get("title") or "").strip()
+    if title.startswith(_SUBAGENT_TITLE_PREFIXES) or title.endswith(_SUBAGENT_TITLE_SUFFIXES):
+        return False
+    record = conversation_to_session(conversation, user_id="filter")
+    return any(event.kind == "user" and event.content.strip() for event in record.events)
+
+
+def load_conversations(
+    db_path: Path,
+    *,
+    cursor: tuple[int, str] | None = None,
+    since_epoch: int | None = None,
+    limit: int = 0,
+) -> list[dict[str, Any]]:
+    """Read Omnigent's SQLite store without acquiring write access."""
+    connection = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    connection.row_factory = sqlite3.Row
+    try:
+        where = ["c.archived = 0"]
+        params: list[Any] = []
+        if since_epoch is not None:
+            where.append("c.updated_at >= ?")
+            params.append(since_epoch)
+        if cursor is not None:
+            where.append(
+                "(c.updated_at > ? OR (c.updated_at = ? AND lower(hex(c.id)) > ?))"
+            )
+            params.extend([cursor[0], cursor[0], cursor[1]])
+        query = (
+            "SELECT lower(hex(c.id)) AS cid, c.title, c.created_at, c.updated_at, "
+            "c.workspace_id, a.name AS agent_name "
+            "FROM conversations c "
+            "LEFT JOIN agents a ON a.id = c.agent_id AND a.workspace_id = c.workspace_id "
+            f"WHERE {' AND '.join(where)} "
+            "ORDER BY c.updated_at ASC, cid ASC"
+        )
+        if limit:
+            query += f" LIMIT {int(limit)}"
+        rows = connection.execute(query, params).fetchall()
+        conversations: list[dict[str, Any]] = []
+        for row in rows:
+            item_rows = connection.execute(
+                "SELECT type, data FROM conversation_items "
+                "WHERE conversation_id = ? AND workspace_id = ? ORDER BY position ASC",
+                (bytes.fromhex(row["cid"]), row["workspace_id"]),
+            ).fetchall()
+            items: list[tuple[int, dict[str, Any]]] = []
+            for item in item_rows:
+                try:
+                    data = json.loads(item["data"])
+                except (json.JSONDecodeError, TypeError, ValueError):
+                    continue
+                if isinstance(data, dict):
+                    items.append((int(item["type"]), data))
+            conversations.append(
+                {
+                    "conversation_id": row["cid"],
+                    "title": row["title"],
+                    "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                    "agent_name": row["agent_name"],
+                    "workspace": None,
+                    "archived": False,
+                    "items": items,
+                }
+            )
+        return conversations
+    finally:
+        connection.close()
