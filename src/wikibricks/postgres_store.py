@@ -1,0 +1,594 @@
+"""Transactional PostgreSQL storage for local-first WikiBricks."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+import os
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+from uuid import UUID, uuid4, uuid5
+
+import psycopg
+from psycopg import Connection
+from psycopg.types.json import Jsonb
+
+from wikibricks.models import SessionEvent, SessionRecord
+from wikibricks.session_ingest import (
+    session_content_hash,
+    session_identity,
+    session_page_path,
+    session_tags,
+)
+
+MAX_SEARCH_CHUNK_BYTES = 64 * 1024
+_MIGRATION_LOCK_KEY = "wikibricks:schema-migrations"
+
+
+@dataclass(frozen=True, slots=True)
+class IngestResult:
+    created_events: int
+    updated_events: int
+    unchanged_events: int
+
+
+def _canonical_hash(value: Any) -> str:
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def iter_search_chunks(text: str) -> Iterator[tuple[int, int, str]]:
+    """Yield character offsets and text under the UTF-8 byte ceiling."""
+    start = 0
+    length = len(text)
+    while start < length:
+        end = min(start + MAX_SEARCH_CHUNK_BYTES, length)
+        candidate = text[start:end]
+        if len(candidate.encode("utf-8")) > MAX_SEARCH_CHUNK_BYTES:
+            low, high = start + 1, end
+            while low < high:
+                middle = (low + high + 1) // 2
+                if len(text[start:middle].encode("utf-8")) <= MAX_SEARCH_CHUNK_BYTES:
+                    low = middle
+                else:
+                    high = middle - 1
+            end = low
+        if end < length:
+            paragraph = text.rfind("\n\n", start, end)
+            if paragraph > start:
+                end = paragraph + 2
+        if end <= start:
+            end = start + 1
+        yield start, end, text[start:end]
+        start = end
+    if not text:
+        yield 0, 0, ""
+
+
+class PostgresStore:
+    def __init__(
+        self,
+        database_url: str | None = None,
+        *,
+        failpoint: Callable[[str], None] | None = None,
+    ) -> None:
+        self.database_url = database_url or os.environ.get(
+            "WIKIBRICKS_DATABASE_URL", "postgresql:///wikibricks"
+        )
+        self._failpoint = failpoint or (lambda _stage: None)
+
+    @contextmanager
+    def connection(self) -> Iterator[Connection]:
+        with psycopg.connect(self.database_url) as conn:
+            yield conn
+
+    def migrate(self) -> None:
+        migration_dir = Path(__file__).with_name("sql") / "migrations"
+        migrations = sorted(migration_dir.glob("*.sql"))
+        if not migrations:
+            raise RuntimeError("WikiBricks PostgreSQL migrations are missing")
+        with self.connection() as conn, conn.transaction():
+            conn.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (_MIGRATION_LOCK_KEY,))
+            conn.execute(
+                "CREATE TABLE IF NOT EXISTS schema_migrations ("
+                "name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())"
+            )
+            applied = {
+                row[0]
+                for row in conn.execute("SELECT name FROM schema_migrations").fetchall()
+            }
+            for migration in migrations:
+                if migration.name in applied:
+                    continue
+                conn.execute(migration.read_text())
+                conn.execute(
+                    "INSERT INTO schema_migrations (name) VALUES (%s)",
+                    (migration.name,),
+                )
+
+    def clear_all(self) -> None:
+        tables = (
+            "archive_pages, sync_state, sync_outbox, session_search_chunks, "
+            "session_event_versions, session_events, sessions, operations, sources, "
+            "links, page_search_chunks, page_versions, pages"
+        )
+        with self.connection() as conn, conn.transaction():
+            conn.execute(f"TRUNCATE {tables} RESTART IDENTITY CASCADE")
+
+    def _insert_search_chunks(
+        self,
+        conn: Connection,
+        table: str,
+        version_id: UUID,
+        text: str,
+    ) -> None:
+        statement = (
+            f"INSERT INTO {table} "
+            "(version_id, chunk_index, start_offset, end_offset, search_vector) "
+            "VALUES (%s, %s, %s, %s, to_tsvector('simple', %s))"
+        )
+        for index, (start, end, chunk) in enumerate(iter_search_chunks(text)):
+            conn.execute(statement, (version_id, index, start, end, chunk))
+
+    def write_page(
+        self,
+        path: str,
+        title: str,
+        content_json: str | dict[str, Any],
+        page_type: str = "concept",
+        created_by: str = "agent",
+        tags: list[str] | None = None,
+        source_ids: list[str] | None = None,
+        parent_id: str | None = None,
+        chunk_index: int | None = None,
+        content_text_override: str | None = None,
+    ) -> str:
+        if not path or "/" not in path:
+            raise ValueError("wiki page path must contain a slash")
+        content = json.loads(content_json) if isinstance(content_json, str) else content_json
+        if not isinstance(content, dict):
+            raise TypeError("page content must be a JSON object")
+        content_text = content_text_override
+        if content_text is None:
+            content_text = " ".join(
+                str(content.get(key) or "") for key in ("summary", "body")
+            ).strip()
+        page_hash = _canonical_hash(
+            {
+                "title": title,
+                "page_type": page_type,
+                "content": content,
+                "content_text": content_text,
+                "tags": tags or [],
+                "source_ids": source_ids,
+                "parent_id": parent_id,
+                "chunk_index": chunk_index,
+            }
+        )
+        with self.connection() as conn, conn.transaction():
+            existing = conn.execute(
+                "SELECT p.page_id, v.version, v.content_hash, v.tags "
+                "FROM pages p LEFT JOIN page_versions v ON v.version_id = p.current_version_id "
+                "WHERE p.path = %s FOR UPDATE OF p",
+                (path,),
+            ).fetchone()
+            if existing and existing[2] == page_hash:
+                return f"Wiki page unchanged: {path}"
+            if existing:
+                page_id, current_version, _old_hash, old_tags = existing
+                version = int(current_version) + 1
+                preserved = [tag for tag in (old_tags or []) if tag.startswith("llm:")]
+                final_tags = list(dict.fromkeys([*(tags or []), *preserved]))
+            else:
+                page_id = uuid4()
+                version = 1
+                final_tags = tags or []
+                conn.execute(
+                    "INSERT INTO pages (page_id, path) VALUES (%s, %s)",
+                    (page_id, path),
+                )
+            version_id = uuid4()
+            conn.execute(
+                "INSERT INTO page_versions "
+                "(version_id, page_id, version, title, page_type, content, content_text, "
+                "tags, source_ids, parent_id, chunk_index, created_by, content_hash) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                (
+                    version_id,
+                    page_id,
+                    version,
+                    title,
+                    page_type,
+                    Jsonb(content),
+                    content_text,
+                    final_tags,
+                    source_ids,
+                    UUID(parent_id) if parent_id else None,
+                    chunk_index,
+                    created_by,
+                    page_hash,
+                ),
+            )
+            conn.execute(
+                "UPDATE pages SET current_version_id = %s, updated_at = now() WHERE page_id = %s",
+                (version_id, page_id),
+            )
+            self._insert_search_chunks(conn, "page_search_chunks", version_id, content_text)
+            conn.execute(
+                "INSERT INTO operations (operation_id, op_type, path) VALUES (%s, 'write', %s)",
+                (uuid4(), path),
+            )
+            conn.execute(
+                "INSERT INTO sync_outbox "
+                "(event_id, entity_kind, entity_id, version_id, payload_hash) "
+                "VALUES (%s, 'page_version', %s, %s, %s)",
+                (uuid4(), page_id, version_id, page_hash),
+            )
+            self._failpoint("before_commit")
+        return f"Wrote wiki page: {path}"
+
+    @staticmethod
+    def _page_row(row: tuple[Any, ...]) -> dict[str, Any]:
+        return {
+            "page_id": str(row[0]),
+            "path": row[1],
+            "title": row[2],
+            "page_type": row[3],
+            "content": row[4],
+            "content_text": row[5],
+            "tags": list(row[6] or []),
+            "created_by": row[7],
+            "created_at": row[8],
+            "updated_at": row[9],
+            "version": row[10],
+        }
+
+    def read_page(self, path: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT p.page_id, p.path, v.title, v.page_type, v.content, v.content_text, "
+                "v.tags, v.created_by, p.created_at, p.updated_at, v.version "
+                "FROM pages p JOIN page_versions v ON v.version_id = p.current_version_id "
+                "WHERE p.path = %s",
+                (path,),
+            ).fetchone()
+            if row:
+                return self._page_row(row)
+            session = conn.execute(
+                "SELECT session_id, page_path, title, user_id, agent, started_at, updated_at, metadata "
+                "FROM sessions WHERE page_path = %s",
+                (path,),
+            ).fetchone()
+            if not session:
+                return None
+            event_rows = self._read_session_event_rows(conn, session[0])
+        events = [self._event_from_row(row) for row in event_rows]
+        body = "\n\n".join(f"[{event.kind}]\n{event.content}" for event in events)
+        return {
+            "page_id": str(session[0]),
+            "path": session[1],
+            "title": session[2],
+            "page_type": "session",
+            "content": {"summary": session[2], "body": body},
+            "content_text": body,
+            "tags": session_tags(
+                SessionRecord(
+                    harness=path.split("-sessions/", 1)[0] if "-sessions/" in path else "claude-code",
+                    external_id=str(session[0]),
+                    user_id=session[3],
+                    agent=session[4],
+                    events=[],
+                    metadata=session[7],
+                )
+            ),
+            "created_at": session[5],
+            "updated_at": session[6],
+            "version": 1,
+            "events": [event.to_dict() for event in events],
+        }
+
+    def list_pages(self, path_prefix: str | None = None) -> list[dict[str, Any]]:
+        like = f"{path_prefix}%" if path_prefix else "%"
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT p.path, v.title, v.page_type, v.version "
+                "FROM pages p JOIN page_versions v ON v.version_id = p.current_version_id "
+                "WHERE p.path LIKE %s "
+                "UNION ALL "
+                "SELECT page_path, title, 'session', 1 FROM sessions WHERE page_path LIKE %s "
+                "ORDER BY 1",
+                (like, like),
+            ).fetchall()
+        return [
+            {"path": row[0], "title": row[1], "page_type": row[2], "version": row[3]}
+            for row in rows
+        ]
+
+    def history(self, path: str) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT p.page_id, p.path, v.title, v.page_type, v.content, v.content_text, "
+                "v.tags, v.created_by, p.created_at, p.updated_at, v.version "
+                "FROM pages p JOIN page_versions v ON v.page_id = p.page_id "
+                "WHERE p.path = %s ORDER BY v.version DESC",
+                (path,),
+            ).fetchall()
+        return [self._page_row(row) for row in rows]
+
+    def search(self, query: str, *, num_results: int = 5) -> list[dict[str, Any]]:
+        if not query.strip():
+            return []
+        pattern = f"%{query}%"
+        sql = """
+            WITH q AS (SELECT websearch_to_tsquery('simple', %s) AS value),
+            page_hits AS (
+                SELECT p.page_id AS id, p.path, v.title, v.page_type, v.content_text, v.tags,
+                       v.version,
+                       GREATEST(
+                           CASE WHEN p.path = %s THEN 10.0 ELSE 0.0 END,
+                           similarity(p.path, %s) * 3.0,
+                           similarity(v.title, %s) * 2.0,
+                           COALESCE(max(ts_rank_cd(c.search_vector, q.value)), 0.0)
+                       ) AS score
+                FROM pages p
+                JOIN page_versions v ON v.version_id = p.current_version_id
+                LEFT JOIN page_search_chunks c ON c.version_id = v.version_id
+                CROSS JOIN q
+                WHERE p.path ILIKE %s OR v.title ILIKE %s OR c.search_vector @@ q.value
+                GROUP BY p.page_id, p.path, v.title, v.page_type, v.content_text, v.tags, v.version
+            ),
+            session_hits AS (
+                SELECT s.session_id AS id, s.page_path AS path, s.title,
+                       'session'::text AS page_type, ''::text AS content_text,
+                       ARRAY['session', 'harness:' || s.harness]::text[] AS tags,
+                       1 AS version,
+                       GREATEST(
+                           CASE WHEN s.page_path = %s THEN 10.0 ELSE 0.0 END,
+                           similarity(s.page_path, %s) * 3.0,
+                           similarity(s.title, %s) * 2.0,
+                           COALESCE(max(ts_rank_cd(c.search_vector, q.value)), 0.0)
+                       ) AS score
+                FROM sessions s
+                JOIN session_events e ON e.session_id = s.session_id AND e.active
+                JOIN session_event_versions v ON v.version_id = e.current_version_id
+                LEFT JOIN session_search_chunks c ON c.version_id = v.version_id
+                CROSS JOIN q
+                WHERE s.page_path ILIKE %s OR s.title ILIKE %s OR c.search_vector @@ q.value
+                GROUP BY s.session_id, s.page_path, s.title, s.harness
+            )
+            SELECT * FROM (SELECT * FROM page_hits UNION ALL SELECT * FROM session_hits) hits
+            ORDER BY score DESC, path
+            LIMIT %s
+        """
+        params = (
+            query,
+            query,
+            query,
+            query,
+            pattern,
+            pattern,
+            query,
+            query,
+            query,
+            pattern,
+            pattern,
+            num_results,
+        )
+        with self.connection() as conn:
+            rows = conn.execute(sql, params).fetchall()
+        return [
+            {
+                "page_id": str(row[0]),
+                "path": row[1],
+                "title": row[2],
+                "page_type": row[3],
+                "content_text": row[4],
+                "tags": list(row[5] or []),
+                "version": row[6],
+                "score": float(row[7]),
+            }
+            for row in rows
+        ]
+
+    @staticmethod
+    def _session_title(record: SessionRecord) -> str:
+        configured = record.metadata.get("title")
+        if configured:
+            return str(configured)[:120]
+        for event in record.events:
+            if event.kind == "user" and event.content.strip():
+                return event.content.strip().splitlines()[0][:120]
+        return f"Session {record.external_id[:8]}"
+
+    @staticmethod
+    def _event_hash(event: SessionEvent) -> str:
+        return _canonical_hash(event.to_dict())
+
+    def ingest_session(self, record: SessionRecord) -> IngestResult:
+        stable_id = session_identity(record)
+        record_hash = session_content_hash(record)
+        created = updated = unchanged = 0
+        with self.connection() as conn, conn.transaction():
+            existing_session = conn.execute(
+                "SELECT session_id, current_hash FROM sessions "
+                "WHERE harness = %s AND external_id = %s FOR UPDATE",
+                (record.harness, record.external_id),
+            ).fetchone()
+            if existing_session and existing_session[1] == record_hash:
+                return IngestResult(0, 0, len(record.events))
+            if existing_session:
+                stable_id = existing_session[0]
+                conn.execute(
+                    "UPDATE sessions SET user_id = %s, agent = %s, workspace = %s, "
+                    "started_at = %s, source_updated_at = %s, page_path = %s, title = %s, "
+                    "metadata = %s, current_hash = %s, updated_at = now() WHERE session_id = %s",
+                    (
+                        record.user_id,
+                        record.agent,
+                        record.workspace,
+                        record.started_at,
+                        record.updated_at,
+                        session_page_path(record),
+                        self._session_title(record),
+                        Jsonb(record.metadata),
+                        record_hash,
+                        stable_id,
+                    ),
+                )
+            else:
+                conn.execute(
+                    "INSERT INTO sessions "
+                    "(session_id, harness, external_id, user_id, agent, workspace, started_at, "
+                    "source_updated_at, page_path, title, metadata, current_hash) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        stable_id,
+                        record.harness,
+                        record.external_id,
+                        record.user_id,
+                        record.agent,
+                        record.workspace,
+                        record.started_at,
+                        record.updated_at,
+                        session_page_path(record),
+                        self._session_title(record),
+                        Jsonb(record.metadata),
+                        record_hash,
+                    ),
+                )
+            active_ids: list[str] = []
+            for position, event in enumerate(record.events):
+                active_ids.append(event.external_id)
+                event_id = uuid5(stable_id, event.external_id)
+                event_hash = self._event_hash(event)
+                existing_event = conn.execute(
+                    "SELECT e.event_id, v.version, v.content_hash "
+                    "FROM session_events e "
+                    "LEFT JOIN session_event_versions v ON v.version_id = e.current_version_id "
+                    "WHERE e.session_id = %s AND e.external_id = %s FOR UPDATE OF e",
+                    (stable_id, event.external_id),
+                ).fetchone()
+                if existing_event and existing_event[2] == event_hash:
+                    conn.execute(
+                        "UPDATE session_events SET position = %s, active = true WHERE event_id = %s",
+                        (position, existing_event[0]),
+                    )
+                    unchanged += 1
+                    continue
+                if existing_event:
+                    event_id = existing_event[0]
+                    version = int(existing_event[1]) + 1
+                    updated += 1
+                else:
+                    version = 1
+                    created += 1
+                    conn.execute(
+                        "INSERT INTO session_events (event_id, session_id, external_id, position) "
+                        "VALUES (%s, %s, %s, %s)",
+                        (event_id, stable_id, event.external_id, position),
+                    )
+                version_id = uuid4()
+                conn.execute(
+                    "INSERT INTO session_event_versions "
+                    "(version_id, event_id, version, kind, content, metadata, source_created_at, content_hash) "
+                    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                    (
+                        version_id,
+                        event_id,
+                        version,
+                        event.kind,
+                        event.content,
+                        Jsonb(event.metadata),
+                        event.created_at,
+                        event_hash,
+                    ),
+                )
+                conn.execute(
+                    "UPDATE session_events SET position = %s, current_version_id = %s, active = true "
+                    "WHERE event_id = %s",
+                    (position, version_id, event_id),
+                )
+                self._insert_search_chunks(
+                    conn,
+                    "session_search_chunks",
+                    version_id,
+                    event.content,
+                )
+                conn.execute(
+                    "INSERT INTO sync_outbox "
+                    "(event_id, entity_kind, entity_id, version_id, payload_hash) "
+                    "VALUES (%s, 'session_event_version', %s, %s, %s)",
+                    (uuid4(), event_id, version_id, event_hash),
+                )
+            if active_ids:
+                conn.execute(
+                    "UPDATE session_events SET active = false "
+                    "WHERE session_id = %s AND NOT (external_id = ANY(%s))",
+                    (stable_id, active_ids),
+                )
+            else:
+                conn.execute(
+                    "UPDATE session_events SET active = false WHERE session_id = %s",
+                    (stable_id,),
+                )
+            self._failpoint("before_commit")
+        return IngestResult(created, updated, unchanged)
+
+    @staticmethod
+    def _read_session_event_rows(conn: Connection, session_id: UUID) -> list[tuple[Any, ...]]:
+        return conn.execute(
+            "SELECT e.external_id, v.kind, v.content, v.source_created_at, v.metadata "
+            "FROM session_events e "
+            "JOIN session_event_versions v ON v.version_id = e.current_version_id "
+            "WHERE e.session_id = %s AND e.active ORDER BY e.position",
+            (session_id,),
+        ).fetchall()
+
+    @staticmethod
+    def _event_from_row(row: tuple[Any, ...]) -> SessionEvent:
+        return SessionEvent(
+            external_id=row[0],
+            kind=row[1],
+            content=row[2],
+            created_at=row[3].isoformat() if row[3] else None,
+            metadata=row[4],
+        )
+
+    def read_session_events(self, harness: str, external_id: str) -> list[SessionEvent]:
+        with self.connection() as conn:
+            session = conn.execute(
+                "SELECT session_id FROM sessions WHERE harness = %s AND external_id = %s",
+                (harness, external_id),
+            ).fetchone()
+            if not session:
+                return []
+            rows = self._read_session_event_rows(conn, session[0])
+        return [self._event_from_row(row) for row in rows]
+
+    def session_event_versions(self, harness: str, session_external_id: str, event_external_id: str) -> int:
+        with self.connection() as conn:
+            return int(
+                conn.execute(
+                    "SELECT count(*) FROM session_event_versions v "
+                    "JOIN session_events e ON e.event_id = v.event_id "
+                    "JOIN sessions s ON s.session_id = e.session_id "
+                    "WHERE s.harness = %s AND s.external_id = %s AND e.external_id = %s",
+                    (harness, session_external_id, event_external_id),
+                ).fetchone()[0]
+            )
+
+    def outbox_count(self) -> int:
+        with self.connection() as conn:
+            return int(
+                conn.execute(
+                    "SELECT count(*) FROM sync_outbox WHERE acknowledged_at IS NULL"
+                ).fetchone()[0]
+            )
