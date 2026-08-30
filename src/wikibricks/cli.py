@@ -109,6 +109,20 @@ def build_parser() -> argparse.ArgumentParser:
     search.add_argument("-k", type=int, default=5)
     search.set_defaults(handler=_command_search)
 
+    check = commands.add_parser("check", help="Validate local database invariants")
+    check.set_defaults(handler=_command_check)
+
+    backup = commands.add_parser("backup", help="Create a pg_dump backup")
+    backup.add_argument("output", type=Path)
+    backup.set_defaults(handler=_command_backup)
+
+    restore = commands.add_parser("restore", help="Restore into a new database")
+    restore.add_argument("source", type=Path)
+    restore.set_defaults(handler=_command_restore)
+
+    vacuum = commands.add_parser("vacuum", help="Vacuum and analyze local memory")
+    vacuum.set_defaults(handler=_command_vacuum)
+
     importer = commands.add_parser("import", help="Import harness sessions")
     formats = importer.add_subparsers(dest="format", required=True)
     omnigent = formats.add_parser("omnigent")
@@ -124,7 +138,10 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _command_init(args: argparse.Namespace) -> int:
-    PostgresStore(args.database_url).migrate()
+    from wikibricks.maintenance import initialize_database
+
+    database_url = args.database_url or PostgresStore().database_url
+    initialize_database(database_url)
     print("WikiBricks PostgreSQL schema is ready.")
     return 0
 
@@ -133,6 +150,42 @@ def _command_search(args: argparse.Namespace) -> int:
     store = PostgresStore(args.database_url)
     store.migrate()
     _print_json(store.search(args.query, num_results=args.k))
+    return 0
+
+
+def _command_check(args: argparse.Namespace) -> int:
+    from wikibricks.maintenance import check_database
+
+    database_url = args.database_url or PostgresStore().database_url
+    result = check_database(database_url)
+    _print_json(result)
+    return 0 if result["ok"] else 1
+
+
+def _command_backup(args: argparse.Namespace) -> int:
+    from wikibricks.maintenance import backup_database
+
+    database_url = args.database_url or PostgresStore().database_url
+    backup_database(database_url, args.output)
+    print(args.output)
+    return 0
+
+
+def _command_restore(args: argparse.Namespace) -> int:
+    from wikibricks.maintenance import restore_database
+
+    database_url = args.database_url or PostgresStore().database_url
+    restore_database(args.source, database_url)
+    print("WikiBricks backup restored and ready.")
+    return 0
+
+
+def _command_vacuum(args: argparse.Namespace) -> int:
+    from wikibricks.maintenance import vacuum_database
+
+    database_url = args.database_url or PostgresStore().database_url
+    vacuum_database(database_url)
+    print("WikiBricks PostgreSQL vacuum complete.")
     return 0
 
 
@@ -161,7 +214,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def init_main() -> int:
-    return main(["init", *sys.argv[1:]])
+    return main([*sys.argv[1:], "init"])
 
 
 if __name__ == "__main__":
