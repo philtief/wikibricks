@@ -1,13 +1,14 @@
-"""WikiClient: high-level API for reading and writing wiki pages on Databricks."""
+"""WikiClient facade: local PostgreSQL by default, explicit Databricks compatibility."""
 
 import json
 import math
 import os
 import re
 import time
+from typing import TYPE_CHECKING
 
-from databricks.sdk import WorkspaceClient
-from databricks.sdk.service.sql import StatementState
+if TYPE_CHECKING:
+    from databricks.sdk import WorkspaceClient
 
 from wikibricks import ops
 from wikibricks.ops import (
@@ -27,20 +28,44 @@ from wikibricks.ops import (
 
 
 class WikiClient:
-    """Databricks-native wiki client for AI agents.
+    """Local wiki client unless an explicit SQL warehouse is supplied.
 
     Usage::
 
         from wikibricks import WikiClient
 
-        wiki = WikiClient(warehouse_id="abc123")
+        wiki = WikiClient()
         wiki.write_page("topics/my-topic", "My Topic", content_json)
         page = wiki.read_page("topics/my-topic")
         results = wiki.search("search query")
     """
 
-    def __init__(self, warehouse_id: str, workspace_client: WorkspaceClient | None = None):
-        self.ws = workspace_client or WorkspaceClient()
+    def __new__(
+        cls,
+        warehouse_id: str | None = None,
+        workspace_client: "WorkspaceClient | None" = None,
+        database_url: str | None = None,
+    ):
+        if cls is WikiClient and warehouse_id is None and workspace_client is None:
+            from wikibricks.local_client import LocalWikiClient
+
+            return LocalWikiClient(database_url)
+        return super().__new__(cls)
+
+    def __init__(
+        self,
+        warehouse_id: str | None = None,
+        workspace_client: "WorkspaceClient | None" = None,
+        database_url: str | None = None,
+    ):
+        del database_url
+        if warehouse_id is None:
+            raise ValueError("warehouse_id is required for the Databricks compatibility client")
+        if workspace_client is None:
+            from databricks.sdk import WorkspaceClient
+
+            workspace_client = WorkspaceClient()
+        self.ws = workspace_client
         self.warehouse_id = warehouse_id
 
     def _exec(self, sql: str):
@@ -54,6 +79,8 @@ class WikiClient:
         cold-start bug that silently failed the nightly ``wikibricks_curate``
         job for ~2 weeks of 04:00-UTC runs.
         """
+        from databricks.sdk.service.sql import StatementState
+
         poll_interval_s, poll_timeout_s = 2.0, 300.0
         resp = self.ws.statement_execution.execute_statement(
             warehouse_id=self.warehouse_id,

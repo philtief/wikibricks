@@ -4,13 +4,6 @@ import json
 import os
 from pathlib import Path
 
-from databricks.sdk.service.vectorsearch import (
-    DeltaSyncVectorIndexSpecRequest,
-    EmbeddingSourceColumn,
-    PipelineType,
-    VectorIndexType,
-)
-
 CATALOG = os.environ.get("WIKIBRICKS_CATALOG", "main")
 SCHEMA = os.environ.get("WIKIBRICKS_SCHEMA", "wiki")
 PAGES_TABLE = f"{CATALOG}.{SCHEMA}.pages"
@@ -306,6 +299,13 @@ def propose_edges_sql_statements(rows: list[dict]) -> str:
 
 def create_vs_index_spec():
     """Return kwargs for ``w.vector_search_indexes.create_index()``."""
+    from databricks.sdk.service.vectorsearch import (
+        DeltaSyncVectorIndexSpecRequest,
+        EmbeddingSourceColumn,
+        PipelineType,
+        VectorIndexType,
+    )
+
     return {
         "name": VS_INDEX,
         "endpoint_name": VS_ENDPOINT,

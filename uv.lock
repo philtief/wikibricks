@@ -2151,12 +2151,15 @@ name = "wikibricks"
 version = "0.7.16"
 source = { editable = "." }
 dependencies = [
-    { name = "databricks-sdk" },
     { name = "psycopg", extra = ["binary"] },
 ]
 
 [package.optional-dependencies]
+databricks = [
+    { name = "databricks-sdk" },
+]
 dev = [
+    { name = "databricks-sdk" },
     { name = "openai" },
     { name = "pytest" },
     { name = "pyyaml" },
@@ -2173,7 +2176,8 @@ recorder = [
 
 [package.metadata]
 requires-dist = [
-    { name = "databricks-sdk", specifier = ">=0.44.0" },
+    { name = "databricks-sdk", marker = "extra == 'databricks'", specifier = ">=0.44.0" },
+    { name = "databricks-sdk", marker = "extra == 'dev'", specifier = ">=0.44.0" },
     { name = "igraph", marker = "extra == 'graph'", specifier = ">=0.11,<2.0" },
     { name = "igraph", marker = "extra == 'recorder'", specifier = ">=0.11,<2.0" },
     { name = "mcp", marker = "extra == 'recorder'", specifier = ">=1.0" },
@@ -2184,4 +2188,4 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15" },
     { name = "streamlit", marker = "extra == 'dev'", specifier = ">=1.37" },
 ]
-provides-extras = ["dev", "recorder", "graph"]
+provides-extras = ["dev", "databricks", "recorder", "graph"]

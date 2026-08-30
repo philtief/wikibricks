@@ -20,7 +20,11 @@ Usage::
 from wikibricks.client import WikiClient
 
 
-def make_agent_tools(warehouse_id: str, workspace_client=None) -> dict:
+def make_agent_tools(
+    warehouse_id: str | None = None,
+    workspace_client=None,
+    database_url: str | None = None,
+) -> dict:
     """Return a dict of write-capable agent tools bound to a WikiClient.
 
     Each value is a plain Python callable whose docstring describes the
@@ -34,7 +38,11 @@ def make_agent_tools(warehouse_id: str, workspace_client=None) -> dict:
     Returns:
         ``{"wiki_write_page": callable, "wiki_promote_answer": callable}``.
     """
-    client = WikiClient(warehouse_id=warehouse_id, workspace_client=workspace_client)
+    client = WikiClient(
+        warehouse_id=warehouse_id,
+        workspace_client=workspace_client,
+        database_url=database_url,
+    )
 
     def wiki_write_page(
         path: str,

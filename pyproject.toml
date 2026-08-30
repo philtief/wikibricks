@@ -4,17 +4,20 @@ version = "0.7.16"
 description = "Delta + Vector Search wiki store for AI agents on Databricks"
 requires-python = ">=3.10"
 dependencies = [
-    "databricks-sdk>=0.44.0",
     "psycopg[binary]>=3.2",
 ]
 
 [project.optional-dependencies]
 dev = [
+    "databricks-sdk>=0.44.0",
     "pytest>=8.0",
     "ruff>=0.15",
     "streamlit>=1.37",
     "openai>=1.0",
     "pyyaml>=6.0",
+]
+databricks = [
+    "databricks-sdk>=0.44.0",
 ]
 recorder = [
     "mcp>=1.0",
