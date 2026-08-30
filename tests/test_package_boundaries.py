@@ -35,6 +35,7 @@ import wikibricks
 import wikibricks.client
 import wikibricks.ops
 import wikibricks.postgres_store
+import wikibricks_databricks.lakebase_sync
 print('ok')
 """
     result = subprocess.run(

@@ -134,6 +134,18 @@ def build_parser() -> argparse.ArgumentParser:
     jsonl = formats.add_parser("jsonl")
     jsonl.add_argument("source", type=Path)
     jsonl.set_defaults(handler=_command_import_jsonl)
+
+    sync = commands.add_parser("sync", help="Explicit remote archival")
+    sync_targets = sync.add_subparsers(dest="sync_target", required=True)
+    lakebase = sync_targets.add_parser("lakebase")
+    lakebase.add_argument("--profile", required=True)
+    lakebase.add_argument("--project", required=True)
+    lakebase.add_argument("--branch", default="production")
+    lakebase.add_argument("--endpoint", default="primary")
+    lakebase.add_argument("--database", default="wikibricks")
+    lakebase.add_argument("--limit", type=int, default=1000)
+    lakebase.add_argument("--pull-curated", action="store_true")
+    lakebase.set_defaults(handler=_command_sync_lakebase)
     return parser
 
 
@@ -206,6 +218,31 @@ def _command_import_jsonl(args: argparse.Namespace) -> int:
     result = import_jsonl(database_url=args.database_url, source=args.source)
     _print_json(result)
     return 1 if result["errors"] else 0
+
+
+def _command_sync_lakebase(args: argparse.Namespace) -> int:
+    from wikibricks_databricks.lakebase_sync import (
+        LakebaseTarget,
+        pull_curated_snapshot,
+        sync_to_archive,
+    )
+
+    local = PostgresStore(args.database_url)
+    local.migrate()
+    target = LakebaseTarget(
+        project=args.project,
+        branch=args.branch,
+        endpoint=args.endpoint,
+        database=args.database,
+        profile=args.profile,
+    )
+    remote_url = target.fresh_database_url()
+    result = sync_to_archive(local, remote_url, limit=args.limit)
+    if args.pull_curated:
+        remote_url = target.fresh_database_url()
+        result["curated_pages_imported"] = pull_curated_snapshot(local, remote_url)
+    _print_json(result)
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:

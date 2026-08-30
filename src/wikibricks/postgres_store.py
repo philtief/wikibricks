@@ -116,6 +116,7 @@ class PostgresStore:
 
     def clear_all(self) -> None:
         tables = (
+            "archive_batch_events, archive_events, archive_batches, curated_pages, "
             "archive_pages, sync_state, sync_outbox, session_search_chunks, "
             "session_event_versions, session_events, sessions, operations, sources, "
             "links, page_search_chunks, page_versions, pages"
@@ -267,9 +268,29 @@ class PostgresStore:
                 "FROM sessions WHERE page_path = %s",
                 (path,),
             ).fetchone()
-            if not session:
-                return None
-            event_rows = self._read_session_event_rows(conn, session[0])
+            if session:
+                event_rows = self._read_session_event_rows(conn, session[0])
+            else:
+                archive = conn.execute(
+                    "SELECT path, title, content, content_text, tags, snapshot_version, imported_at "
+                    "FROM archive_pages WHERE path = %s",
+                    (path,),
+                ).fetchone()
+                if not archive:
+                    return None
+                return {
+                    "page_id": None,
+                    "path": archive[0],
+                    "title": archive[1],
+                    "page_type": "archive",
+                    "content": archive[2],
+                    "content_text": archive[3],
+                    "tags": list(archive[4] or []),
+                    "created_at": archive[6],
+                    "updated_at": archive[6],
+                    "version": archive[5],
+                    "read_only": True,
+                }
         events = [self._event_from_row(row) for row in event_rows]
         body = "\n\n".join(f"[{event.kind}]\n{event.content}" for event in events)
         return {
@@ -304,8 +325,10 @@ class PostgresStore:
                 "WHERE p.path LIKE %s "
                 "UNION ALL "
                 "SELECT page_path, title, 'session', 1 FROM sessions WHERE page_path LIKE %s "
+                "UNION ALL "
+                "SELECT path, title, 'archive', snapshot_version FROM archive_pages WHERE path LIKE %s "
                 "ORDER BY 1",
-                (like, like),
+                (like, like, like),
             ).fetchall()
         return [
             {"path": row[0], "title": row[1], "page_type": row[2], "version": row[3]}
@@ -363,13 +386,37 @@ class PostgresStore:
                 CROSS JOIN q
                 WHERE s.page_path ILIKE %s OR s.title ILIKE %s OR c.search_vector @@ q.value
                 GROUP BY s.session_id, s.page_path, s.title, s.harness
+            ),
+            archive_hits AS (
+                SELECT NULL::uuid AS id, a.path, a.title, 'archive'::text AS page_type,
+                       a.content_text, a.tags, a.snapshot_version AS version,
+                       GREATEST(
+                           CASE WHEN a.path = %s THEN 9.0 ELSE 0.0 END,
+                           similarity(a.path, %s) * 2.5,
+                           similarity(a.title, %s) * 1.5,
+                           CASE WHEN to_tsvector('simple', a.content_text) @@ q.value
+                                THEN ts_rank_cd(to_tsvector('simple', a.content_text), q.value) - 0.25
+                                ELSE 0.0 END
+                       ) AS score
+                FROM archive_pages a CROSS JOIN q
+                WHERE a.path ILIKE %s OR a.title ILIKE %s
+                   OR to_tsvector('simple', a.content_text) @@ q.value
             )
-            SELECT * FROM (SELECT * FROM page_hits UNION ALL SELECT * FROM session_hits) hits
+            SELECT * FROM (
+                SELECT * FROM page_hits
+                UNION ALL SELECT * FROM session_hits
+                UNION ALL SELECT * FROM archive_hits
+            ) hits
             ORDER BY score DESC, path
             LIMIT %s
         """
         params = (
             query,
+            query,
+            query,
+            query,
+            pattern,
+            pattern,
             query,
             query,
             query,
@@ -386,7 +433,7 @@ class PostgresStore:
             rows = conn.execute(sql, params).fetchall()
         return [
             {
-                "page_id": str(row[0]),
+                "page_id": str(row[0]) if row[0] is not None else None,
                 "path": row[1],
                 "title": row[2],
                 "page_type": row[3],
@@ -608,6 +655,58 @@ class PostgresStore:
                 "SET cursor = excluded.cursor, updated_at = now()",
                 (target, Jsonb(cursor)),
             )
+
+    def pending_outbox(self, limit: int = 1000) -> list[dict[str, Any]]:
+        with self.connection() as conn:
+            first = conn.execute(
+                "SELECT batch_id FROM sync_outbox WHERE acknowledged_at IS NULL "
+                "ORDER BY sequence LIMIT 1"
+            ).fetchone()
+            if not first:
+                return []
+            if first[0]:
+                rows = conn.execute(
+                    "SELECT sequence, event_id, entity_kind, entity_id, version_id, "
+                    "payload_hash, batch_id FROM sync_outbox "
+                    "WHERE acknowledged_at IS NULL AND batch_id = %s ORDER BY sequence",
+                    (first[0],),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT sequence, event_id, entity_kind, entity_id, version_id, "
+                    "payload_hash, batch_id FROM sync_outbox "
+                    "WHERE acknowledged_at IS NULL AND batch_id IS NULL "
+                    "ORDER BY sequence LIMIT %s",
+                    (limit,),
+                ).fetchall()
+        keys = (
+            "sequence",
+            "event_id",
+            "entity_kind",
+            "entity_id",
+            "version_id",
+            "payload_hash",
+            "batch_id",
+        )
+        return [dict(zip(keys, row)) for row in rows]
+
+    def assign_outbox_batch(self, sequences: list[int], batch_id: UUID) -> None:
+        with self.connection() as conn, conn.transaction():
+            conn.execute(
+                "UPDATE sync_outbox SET batch_id = %s "
+                "WHERE sequence = ANY(%s) AND acknowledged_at IS NULL "
+                "AND (batch_id IS NULL OR batch_id = %s)",
+                (batch_id, sequences, batch_id),
+            )
+
+    def acknowledge_outbox_batch(self, batch_id: UUID) -> int:
+        with self.connection() as conn, conn.transaction():
+            result = conn.execute(
+                "UPDATE sync_outbox SET acknowledged_at = now() "
+                "WHERE batch_id = %s AND acknowledged_at IS NULL",
+                (batch_id,),
+            )
+        return result.rowcount
 
     def log(
         self,

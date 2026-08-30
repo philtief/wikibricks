@@ -25,6 +25,10 @@ _FINGERPRINT_TABLES = (
     "sync_outbox",
     "sync_state",
     "archive_pages",
+    "archive_batches",
+    "archive_events",
+    "archive_batch_events",
+    "curated_pages",
 )
 
 
