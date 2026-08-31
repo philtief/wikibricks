@@ -65,7 +65,7 @@ def test_config_environment_values_and_cli_defaults(tmp_path: Path):
     assert (
         parser.parse_args(["curate"]).prune_archived_sessions_after_days == 30
     )
-    assert parser.parse_args(
+    lakebase = parser.parse_args(
         [
             "sync",
             "lakebase",
@@ -73,7 +73,11 @@ def test_config_environment_values_and_cli_defaults(tmp_path: Path):
             "p",
             "--project",
             "project",
+            "--drain",
         ]
-    ).limit == 40
+    )
+    assert lakebase.limit == 40
+    assert lakebase.drain is True
+    assert lakebase.max_batches == 100
     assert parser.parse_args(["sync", "plan", "00000000-0000-0000-0000-000000000001"]).policy == "all"
     assert isinstance(config, WikiBricksConfig)

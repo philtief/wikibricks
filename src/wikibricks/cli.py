@@ -165,6 +165,17 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
     lakebase.add_argument("--endpoint", default="primary")
     lakebase.add_argument("--database", default="wikibricks")
     lakebase.add_argument("--limit", type=int, default=config.sync_batch_size)
+    lakebase.add_argument(
+        "--drain",
+        action="store_true",
+        help="Push consecutive batches until empty or --max-batches is reached",
+    )
+    lakebase.add_argument(
+        "--max-batches",
+        type=int,
+        default=100,
+        help="Maximum batches pushed by --drain (default: 100)",
+    )
     lakebase.add_argument("--pull-curated", action="store_true")
     lakebase.add_argument(
         "--pull-patches",
@@ -309,7 +320,13 @@ def _command_sync_lakebase(args: argparse.Namespace) -> int:
         profile=args.profile,
     )
     remote_url = target.fresh_database_url()
-    result = sync_to_archive(local, remote_url, limit=args.limit)
+    result = sync_to_archive(
+        local,
+        remote_url,
+        limit=args.limit,
+        drain=args.drain,
+        max_batches=args.max_batches,
+    )
     if args.pull_curated:
         remote_url = target.fresh_database_url()
         result["curated_pages_imported"] = pull_curated_snapshot(local, remote_url)

@@ -14,11 +14,12 @@ from psycopg.types.json import Jsonb
 
 from wikibricks.postgres_store import PostgresStore
 
-SYNC_SCHEMA_VERSION = 1
+SYNC_SCHEMA_VERSION = 2
 
 
 @dataclass(frozen=True, slots=True)
 class ArchiveEvent:
+    replica_id: UUID
     sequence: int
     event_id: UUID
     entity_kind: str
@@ -83,7 +84,12 @@ def _canonical_json(value: Any) -> str:
     )
 
 
-def _resolve_event(store: PostgresStore, row: dict[str, Any]) -> ArchiveEvent:
+def _resolve_event(
+    store: PostgresStore,
+    row: dict[str, Any],
+    *,
+    replica_id: UUID,
+) -> ArchiveEvent:
     with store.connection() as conn:
         if row["entity_kind"] == "page_version":
             payload_row = conn.execute(
@@ -160,6 +166,7 @@ def _resolve_event(store: PostgresStore, row: dict[str, Any]) -> ArchiveEvent:
         else:
             raise ValueError(f"unsupported outbox entity kind: {row['entity_kind']}")
     return ArchiveEvent(
+        replica_id=replica_id,
         sequence=int(row["sequence"]),
         event_id=UUID(str(row["event_id"])),
         entity_kind=row["entity_kind"],
@@ -171,12 +178,20 @@ def _resolve_event(store: PostgresStore, row: dict[str, Any]) -> ArchiveEvent:
 
 
 def build_batch(store: PostgresStore, *, limit: int = 1000) -> SyncBatch | None:
+    if limit < 1:
+        raise ValueError("archive batch limit must be positive")
+    from wikibricks.curation import get_or_create_replica_id
+
     pending = store.pending_outbox(limit)
     if not pending:
         return None
-    events = tuple(_resolve_event(store, row) for row in pending)
+    replica_id = get_or_create_replica_id(store)
+    events = tuple(
+        _resolve_event(store, row, replica_id=replica_id) for row in pending
+    )
     digest_input = [
         {
+            "replica_id": str(event.replica_id),
             "sequence": event.sequence,
             "event_id": str(event.event_id),
             "entity_kind": event.entity_kind,
@@ -188,13 +203,17 @@ def build_batch(store: PostgresStore, *, limit: int = 1000) -> SyncBatch | None:
         for event in events
     ]
     digest = hashlib.sha256(_canonical_json(digest_input).encode("utf-8")).hexdigest()
-    batch_id = uuid5(NAMESPACE_URL, f"wikibricks:archive-batch:{digest}")
+    batch_id = uuid5(
+        NAMESPACE_URL,
+        f"wikibricks:archive-batch:{replica_id}:{digest}",
+    )
     existing_batch_ids = {row["batch_id"] for row in pending if row["batch_id"]}
     if existing_batch_ids and existing_batch_ids != {batch_id}:
         raise RuntimeError("pending outbox batch identity does not match its content digest")
     store.assign_outbox_batch([event.sequence for event in events], batch_id)
     manifest = {
         "batch_id": str(batch_id),
+        "replica_id": str(replica_id),
         "schema_version": SYNC_SCHEMA_VERSION,
         "event_count": len(events),
         "first_sequence": events[0].sequence,
@@ -210,35 +229,39 @@ def _push_batch(batch: SyncBatch, remote_url: str) -> dict[str, Any]:
     batch_id = UUID(batch.manifest["batch_id"])
     with remote.connection() as conn, conn.transaction():
         existing = conn.execute(
-            "SELECT schema_version, event_count, first_sequence, last_sequence, digest "
+            "SELECT replica_id, schema_version, event_count, first_sequence, "
+            "last_sequence, digest "
             "FROM archive_batches WHERE batch_id = %s",
             (batch_id,),
         ).fetchone()
         if existing:
             stored = {
                 "batch_id": str(batch_id),
-                "schema_version": existing[0],
-                "event_count": existing[1],
-                "first_sequence": existing[2],
-                "last_sequence": existing[3],
-                "digest": existing[4],
+                "replica_id": str(existing[0]),
+                "schema_version": existing[1],
+                "event_count": existing[2],
+                "first_sequence": existing[3],
+                "last_sequence": existing[4],
+                "digest": existing[5],
             }
             if stored != batch.manifest:
                 raise RuntimeError("remote batch manifest hash conflict")
             return stored
         conn.execute(
             "CREATE TEMP TABLE wb_archive_stage "
-            "(event_id uuid, local_sequence bigint, entity_kind text, entity_id uuid, "
-            "version_id uuid, payload_hash text, payload jsonb) ON COMMIT DROP"
+            "(replica_id uuid, event_id uuid, local_sequence bigint, entity_kind text, "
+            "entity_id uuid, version_id uuid, payload_hash text, payload jsonb) "
+            "ON COMMIT DROP"
         )
         with conn.cursor().copy(
             "COPY wb_archive_stage "
-            "(event_id, local_sequence, entity_kind, entity_id, version_id, payload_hash, payload) "
-            "FROM STDIN"
+            "(replica_id, event_id, local_sequence, entity_kind, entity_id, version_id, "
+            "payload_hash, payload) FROM STDIN"
         ) as copy:
             for event in batch.events:
                 copy.write_row(
                     (
+                        event.replica_id,
                         event.event_id,
                         event.sequence,
                         event.entity_kind,
@@ -250,22 +273,24 @@ def _push_batch(batch: SyncBatch, remote_url: str) -> dict[str, Any]:
                 )
         conflict = conn.execute(
             "SELECT s.event_id FROM wb_archive_stage s JOIN archive_events a USING (event_id) "
-            "WHERE s.payload_hash <> a.payload_hash LIMIT 1"
+            "WHERE s.payload_hash <> a.payload_hash OR s.replica_id <> a.replica_id LIMIT 1"
         ).fetchone()
         if conflict:
             raise RuntimeError(f"remote archive event hash conflict: {conflict[0]}")
         conn.execute(
             "INSERT INTO archive_events "
-            "(event_id, local_sequence, entity_kind, entity_id, version_id, payload_hash, payload) "
-            "SELECT event_id, local_sequence, entity_kind, entity_id, version_id, payload_hash, payload "
-            "FROM wb_archive_stage ON CONFLICT (event_id) DO NOTHING"
+            "(replica_id, event_id, local_sequence, entity_kind, entity_id, version_id, "
+            "payload_hash, payload) SELECT replica_id, event_id, local_sequence, entity_kind, "
+            "entity_id, version_id, payload_hash, payload FROM wb_archive_stage "
+            "ON CONFLICT (event_id) DO NOTHING"
         )
         conn.execute(
             "INSERT INTO archive_batches "
-            "(batch_id, schema_version, event_count, first_sequence, last_sequence, digest) "
-            "VALUES (%s, %s, %s, %s, %s, %s)",
+            "(batch_id, replica_id, schema_version, event_count, first_sequence, "
+            "last_sequence, digest) VALUES (%s, %s, %s, %s, %s, %s, %s)",
             (
                 batch_id,
+                UUID(batch.manifest["replica_id"]),
                 batch.manifest["schema_version"],
                 batch.manifest["event_count"],
                 batch.manifest["first_sequence"],
@@ -286,8 +311,34 @@ def sync_to_archive(
     remote_url: str,
     *,
     limit: int = 1000,
+    drain: bool = False,
+    max_batches: int = 100,
     failpoint: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
+    if drain:
+        if max_batches < 1:
+            raise ValueError("maximum archive batches must be positive")
+        batches = 0
+        acknowledged = 0
+        for _ in range(max_batches):
+            result = sync_to_archive(
+                local,
+                remote_url,
+                limit=limit,
+                failpoint=failpoint,
+            )
+            if result["status"] == "idle":
+                break
+            batches += 1
+            acknowledged += int(result["acknowledged"])
+        remaining = local.outbox_count()
+        status = "partial" if remaining else ("drained" if batches else "idle")
+        return {
+            "status": status,
+            "batches": batches,
+            "acknowledged": acknowledged,
+            "remaining": remaining,
+        }
     batch = build_batch(local, limit=limit)
     if batch is None:
         return {"status": "idle", "acknowledged": 0}

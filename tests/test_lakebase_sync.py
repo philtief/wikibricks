@@ -4,6 +4,7 @@ import pytest
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.types.json import Jsonb
 
+from wikibricks.curation import get_or_create_replica_id
 from wikibricks.maintenance import initialize_database
 from wikibricks.models import SessionEvent, SessionRecord
 from wikibricks.postgres_store import PostgresStore
@@ -66,17 +67,20 @@ def test_batch_manifest_is_deterministic_and_references_immutable_rows(
 ):
     store = PostgresStore(postgres_url)
     _seed_local(store)
+    replica_id = get_or_create_replica_id(store)
 
     first = build_batch(store, limit=100)
     second = build_batch(store, limit=100)
 
     assert first.manifest == second.manifest
+    assert first.manifest["replica_id"] == str(replica_id)
     assert first.manifest["event_count"] == 2
     assert len(first.manifest["digest"]) == 64
     assert {event.entity_kind for event in first.events} == {
         "page_version",
         "session_event_version",
     }
+    assert {event.replica_id for event in first.events} == {replica_id}
     assert all("payload" not in row for row in store.pending_outbox())
 
 
@@ -107,6 +111,63 @@ def test_retry_after_remote_commit_is_idempotent_and_acknowledges_locally(
     with remote.connection() as conn:
         assert conn.execute("SELECT count(*) FROM archive_batches").fetchone()[0] == 1
         assert conn.execute("SELECT count(*) FROM archive_events").fetchone()[0] == 2
+        batch_replica = conn.execute(
+            "SELECT replica_id FROM archive_batches"
+        ).fetchone()[0]
+        event_replicas = {
+            row[0] for row in conn.execute("SELECT replica_id FROM archive_events")
+        }
+    assert batch_replica == get_or_create_replica_id(local)
+    assert event_replicas == {batch_replica}
+
+
+def test_drain_stops_at_the_batch_bound_and_can_resume(
+    postgres_url: str,
+    archive_url: str,
+):
+    local = PostgresStore(postgres_url)
+    remote = PostgresStore(archive_url)
+    local.migrate()
+    local.clear_all()
+    remote.migrate()
+    remote.clear_all()
+    for number in range(5):
+        local.write_page(
+            f"topics/drain-{number}",
+            f"Drain {number}",
+            {"summary": "bounded drain", "body": str(number)},
+        )
+
+    partial = sync_to_archive(
+        local,
+        archive_url,
+        limit=2,
+        drain=True,
+        max_batches=2,
+    )
+    resumed = sync_to_archive(
+        local,
+        archive_url,
+        limit=2,
+        drain=True,
+        max_batches=2,
+    )
+
+    assert partial == {
+        "status": "partial",
+        "batches": 2,
+        "acknowledged": 4,
+        "remaining": 1,
+    }
+    assert resumed == {
+        "status": "drained",
+        "batches": 1,
+        "acknowledged": 1,
+        "remaining": 0,
+    }
+    with remote.connection() as conn:
+        assert conn.execute("SELECT count(*) FROM archive_batches").fetchone()[0] == 3
+        assert conn.execute("SELECT count(*) FROM archive_events").fetchone()[0] == 5
 
 
 def test_curated_snapshot_is_versioned_and_never_overwrites_local_pages(
