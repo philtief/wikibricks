@@ -547,7 +547,7 @@ def _apply_patch(
             kwargs["expected_base_content_hash"] = (
                 None if operation == "create_page" else patch["base_content_hash"]
             )
-        _message, version_id = store._write_page_in_connection(
+        _message, version_id = store.pages.write_in_connection(
             conn,
             patch["path"],
             proposal["title"],

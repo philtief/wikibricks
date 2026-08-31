@@ -46,6 +46,14 @@ def test_migrations_are_repeatable_and_create_required_indexes(postgres_url: str
     assert migration_count == 3
 
 
+def test_store_exposes_focused_repositories(store: PostgresStore):
+    assert store.pages.store is store
+    assert store.sessions.store is store
+    assert store.search_index.store is store
+    assert store.outbox.store is store
+    assert store.graph.store is store
+
+
 def test_page_write_is_transactional_and_keeps_immutable_history(store: PostgresStore):
     assert store.write_page("topics/postgres", "Postgres", {"summary": "one", "body": "alpha"})
     assert store.write_page("topics/postgres", "Postgres 2", {"summary": "two", "body": "beta"})

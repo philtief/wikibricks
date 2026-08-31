@@ -13,6 +13,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from wikibricks.client import WikiClient
 from wikibricks.postgres_store import PostgresStore
+from wikibricks.storage.content import insert_search_chunks
 
 _FINGERPRINT_TABLES = (
     "pages",
@@ -121,7 +122,7 @@ def curate_database(
             "WHERE c.version_id = v.version_id)"
         ).fetchall()
         for version_id, content_text in page_rows:
-            store._insert_search_chunks(  # noqa: SLF001
+            insert_search_chunks(
                 conn, "page_search_chunks", version_id, content_text
             )
             repaired_pages += 1
@@ -134,7 +135,7 @@ def curate_database(
             "WHERE c.version_id = v.version_id)"
         ).fetchall()
         for version_id, content in session_rows:
-            store._insert_search_chunks(  # noqa: SLF001
+            insert_search_chunks(
                 conn, "session_search_chunks", version_id, content
             )
             repaired_sessions += 1
