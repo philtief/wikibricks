@@ -32,6 +32,13 @@ def test_base_package_excludes_incompatible_mcp_major_version():
     assert "mcp>=1.0,<2" in dependencies
 
 
+def test_base_package_pins_the_serverless_postgres_driver():
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        dependencies = tomllib.load(handle)["project"]["dependencies"]
+
+    assert "psycopg[binary]==3.2.13" in dependencies
+
+
 def test_base_modules_import_when_databricks_is_blocked():
     code = """
 import importlib.abc

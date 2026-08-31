@@ -5,7 +5,7 @@ description = "Local PostgreSQL memory for AI agents with optional Lakebase arch
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0,<2",
-    "psycopg[binary]>=3.2",
+    "psycopg[binary]==3.2.13",
     "PyYAML>=6.0",
 ]
 
