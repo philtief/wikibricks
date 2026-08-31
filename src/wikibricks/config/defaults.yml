@@ -1,0 +1,11 @@
+version: 1
+database:
+  url: postgresql:///wikibricks
+search:
+  default_results: 5
+  maximum_results: 20
+maintenance:
+  prune_archived_sessions_after_days: null
+sync:
+  batch_size: 1000
+  apply_policy: safe

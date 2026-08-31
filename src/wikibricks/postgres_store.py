@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -106,9 +105,11 @@ class PostgresStore:
         *,
         failpoint: Callable[[str], None] | None = None,
     ) -> None:
-        self.database_url = database_url or os.environ.get(
-            "WIKIBRICKS_DATABASE_URL", "postgresql:///wikibricks"
-        )
+        if database_url is None:
+            from wikibricks.config import load_config
+
+            database_url = load_config().database_url
+        self.database_url = database_url
         self._failpoint = failpoint or (lambda _stage: None)
 
     @contextmanager

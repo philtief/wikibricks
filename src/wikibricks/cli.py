@@ -7,7 +7,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from wikibricks.adapters.jsonl import iter_jsonl_sessions
@@ -17,6 +17,9 @@ from wikibricks.adapters.omnigent import (
     load_conversations,
 )
 from wikibricks.postgres_store import PostgresStore
+
+if TYPE_CHECKING:
+    from wikibricks.config import WikiBricksConfig
 
 DEFAULT_OMNIGENT_DB = Path.home() / ".omnigent" / "chat.db"
 
@@ -97,7 +100,11 @@ def _print_json(value: Any) -> None:
     print(json.dumps(value, default=str, indent=2))
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentParser:
+    if config is None:
+        from wikibricks.config import load_config
+
+        config = load_config()
     parser = argparse.ArgumentParser(prog="wikibricks")
     parser.add_argument("--database-url", help="PostgreSQL connection URL")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -107,7 +114,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     search = commands.add_parser("search", help="Search local memory")
     search.add_argument("query")
-    search.add_argument("-k", type=int, default=5)
+    search.add_argument("-k", type=int, default=config.search_default_results)
     search.set_defaults(handler=_command_search)
 
     check = commands.add_parser("check", help="Validate local database invariants")
@@ -117,6 +124,7 @@ def build_parser() -> argparse.ArgumentParser:
     curate.add_argument(
         "--prune-archived-sessions-after-days",
         type=int,
+        default=config.prune_archived_sessions_after_days,
         help="Delete old sessions only when every event version is archived",
     )
     curate.set_defaults(handler=_command_curate)
@@ -152,7 +160,7 @@ def build_parser() -> argparse.ArgumentParser:
     lakebase.add_argument("--branch", default="production")
     lakebase.add_argument("--endpoint", default="primary")
     lakebase.add_argument("--database", default="wikibricks")
-    lakebase.add_argument("--limit", type=int, default=1000)
+    lakebase.add_argument("--limit", type=int, default=config.sync_batch_size)
     lakebase.add_argument("--pull-curated", action="store_true")
     lakebase.add_argument(
         "--pull-patches",
@@ -166,12 +174,20 @@ def build_parser() -> argparse.ArgumentParser:
 
     plan = sync_targets.add_parser("plan", help="Plan a downloaded curation run locally")
     plan.add_argument("run_id", type=UUID)
-    plan.add_argument("--policy", choices=("safe", "all"), default="safe")
+    plan.add_argument(
+        "--policy",
+        choices=("safe", "all"),
+        default=config.sync_apply_policy,
+    )
     plan.set_defaults(handler=_command_sync_plan)
 
     apply = sync_targets.add_parser("apply", help="Apply a downloaded curation run locally")
     apply.add_argument("run_id", type=UUID)
-    apply.add_argument("--policy", choices=("safe", "all"), default="safe")
+    apply.add_argument(
+        "--policy",
+        choices=("safe", "all"),
+        default=config.sync_apply_policy,
+    )
     apply.set_defaults(handler=_command_sync_apply)
 
     conflicts = sync_targets.add_parser("conflicts", help="List unresolved local curation conflicts")
@@ -349,7 +365,9 @@ def _command_sync_resolve(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = build_parser().parse_args(argv)
+    from wikibricks.config import load_config
+
+    args = build_parser(load_config()).parse_args(argv)
     return int(args.handler(args))
 
 
