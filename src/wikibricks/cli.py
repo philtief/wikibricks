@@ -289,7 +289,7 @@ def _command_import_jsonl(args: argparse.Namespace) -> int:
 
 
 def _command_sync_lakebase(args: argparse.Namespace) -> int:
-    from wikibricks_databricks.lakebase_sync import (
+    from wikibricks.remote.lakebase import (
         LakebaseTarget,
         pull_curated_snapshot,
         pull_curation_patches,

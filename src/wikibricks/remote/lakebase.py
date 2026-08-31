@@ -348,7 +348,7 @@ def pull_curated_snapshot(local: PostgresStore, remote_url: str) -> int:
 
 def pull_curation_patches(local: PostgresStore, remote_url: str) -> dict[str, int]:
     """Copy immutable patch manifests into the local inbox without applying them."""
-    from wikibricks.curation_sync import get_or_create_replica_id, pull_manifests
+    from wikibricks.curation import get_or_create_replica_id, pull_manifests
 
     remote = PostgresStore(remote_url)
     replica_id = get_or_create_replica_id(local)

@@ -20,7 +20,7 @@ from wikibricks.curation_sync import (
 )
 from wikibricks.maintenance import curate_database, initialize_database
 from wikibricks.postgres_store import PostgresStore
-from wikibricks_databricks.lakebase_sync import pull_curation_patches, sync_to_archive
+from wikibricks.remote.lakebase import pull_curation_patches, sync_to_archive
 
 
 def _database_url(base_url: str, database: str) -> str:

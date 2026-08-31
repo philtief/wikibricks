@@ -7,7 +7,7 @@ from psycopg.types.json import Jsonb
 from wikibricks.maintenance import initialize_database
 from wikibricks.models import SessionEvent, SessionRecord
 from wikibricks.postgres_store import PostgresStore
-from wikibricks_databricks.lakebase_sync import (
+from wikibricks.remote.lakebase import (
     LakebaseTarget,
     build_batch,
     pull_curated_snapshot,
@@ -19,6 +19,20 @@ def _database_url(base_url: str, database: str) -> str:
     params = conninfo_to_dict(base_url)
     params["dbname"] = database
     return make_conninfo(**params)
+
+
+def test_lakebase_adapter_is_optional_and_lazy():
+    from wikibricks.remote.lakebase import LakebaseTarget
+
+    target = LakebaseTarget(
+        "project",
+        "production",
+        "primary",
+        "wikibricks",
+        "profile",
+    )
+
+    assert target.database == "wikibricks"
 
 
 @pytest.fixture(scope="module")

@@ -48,7 +48,7 @@ import wikibricks
 import wikibricks.client
 import wikibricks.curation_sync
 import wikibricks.postgres_store
-import wikibricks_databricks.lakebase_sync
+import wikibricks.remote.lakebase
 print('ok')
 """
     result = subprocess.run(
