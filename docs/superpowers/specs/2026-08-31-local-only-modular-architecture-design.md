@@ -252,9 +252,25 @@ Characterization tests will protect the current local results before modules
 move. Each implementation slice will use a failing test, the smallest code
 change, and a focused passing test before the full gate runs.
 
+The current 997-test suite is not a product requirement. More than 700 tests
+belong to the SQL Warehouse client, generated SQL, Databricks Apps and
+notebooks, remote recorder, model-assisted maintenance, or their mocks. Those
+tests will be deleted with the code they cover.
+
+The retained suite will favor observable contracts over method-by-method
+coverage. Parameterized cases will replace repeated tests when the setup and
+assertion are the same. Tests that inspect notebook source, generated SQL
+strings, mock call plumbing, constants, forwarding methods, or removed public
+symbols will not move to the local-only suite.
+
+The expected result is roughly 150 to 200 tests, based on the current test
+inventory. This range is a planning estimate, not a release gate. Every test
+must name a user-visible regression, data invariant, or boundary failure that
+it detects. Test count and line coverage are not success metrics.
+
 The final local gate will verify:
 
-- every retained local public method and CLI command
+- each retained local API and CLI contract, without testing trivial forwarding
 - page and session immutability, outbox atomicity, and 25 MB event round trips
 - deterministic search and bounded UTF-8 chunks
 - curation hashes, idempotency, exact-base conflicts, cleanup groups, receipts,
