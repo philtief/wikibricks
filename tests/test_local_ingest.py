@@ -33,7 +33,7 @@ def _omnigent_db(path: Path) -> str:
     rows = [
         (1, {"role": "user", "content": [{"text": "Use PostgreSQL locally"}]}),
         (2, {"name": "shell", "arguments": {"cmd": "psql --version"}, "call_id": "c1"}),
-        (3, {"output": "psql 16", "call_id": "c1"}),
+        (3, {"output": "psql 16\x00ready", "call_id": "c1"}),
         (1, {"role": "assistant", "content": "Done"}),
     ]
     for position, (item_type, data) in enumerate(rows):
@@ -75,6 +75,7 @@ def test_omnigent_import_is_read_only_resumable_and_keeps_codex_metadata(
         "tool_result",
         "assistant",
     ]
+    assert page["events"][2]["content"] == "psql 16\ufffdready"
     with sqlite3.connect(chat_db) as connection:
         assert connection.execute("SELECT count(*) FROM conversations").fetchone()[0] == 1
 

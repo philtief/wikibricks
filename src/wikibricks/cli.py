@@ -62,8 +62,12 @@ def import_omnigent(
                 int(conversation.get("updated_at") or 0),
                 str(conversation["conversation_id"]),
             )
-        except Exception:
+        except Exception as exc:
             result["errors"] += 1
+            print(
+                f"conversation {conversation.get('conversation_id', '?')}: {exc}",
+                file=sys.stderr,
+            )
             break
     if last_cursor is not None:
         store.set_sync_cursor(
@@ -270,16 +274,15 @@ def _command_vacuum(args: argparse.Namespace) -> int:
 
 
 def _command_import_omnigent(args: argparse.Namespace) -> int:
-    _print_json(
-        import_omnigent(
-            database_url=args.database_url,
-            db_path=args.db,
-            user_id=args.user_id,
-            since_days=args.since_days,
-            limit=args.limit,
-        )
+    result = import_omnigent(
+        database_url=args.database_url,
+        db_path=args.db,
+        user_id=args.user_id,
+        since_days=args.since_days,
+        limit=args.limit,
     )
-    return 0
+    _print_json(result)
+    return 1 if result["errors"] else 0
 
 
 def _command_import_jsonl(args: argparse.Namespace) -> int:

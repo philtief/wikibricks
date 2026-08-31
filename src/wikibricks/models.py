@@ -29,6 +29,7 @@ class SessionEvent:
             raise ValueError(f"unsupported session event kind: {self.kind}")
         if not isinstance(self.content, str):
             raise TypeError("session event content must be a string")
+        object.__setattr__(self, "content", self.content.replace("\x00", "\ufffd"))
         if not isinstance(self.metadata, dict):
             raise TypeError("session event metadata must be an object")
 
