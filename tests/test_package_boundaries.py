@@ -40,6 +40,7 @@ class BlockDatabricks(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, BlockDatabricks())
 import wikibricks
 import wikibricks.client
+import wikibricks.curation_sync
 import wikibricks.ops
 import wikibricks.postgres_store
 import wikibricks_databricks.lakebase_sync

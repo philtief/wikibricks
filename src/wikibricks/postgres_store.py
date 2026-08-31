@@ -213,6 +213,7 @@ class PostgresStore:
         content_text_override: str | None = None,
         expected_base_content_hash: str | None | object = _NO_PRECONDITION,
         curation_patch_id: UUID | None = None,
+        preserve_llm_tags: bool = True,
     ) -> tuple[str, UUID | None]:
         if not path or "/" not in path:
             raise ValueError("wiki page path must contain a slash")
@@ -255,7 +256,11 @@ class PostgresStore:
         if existing:
             page_id, current_version, _old_hash, old_tags, _status = existing
             version = int(current_version) + 1
-            preserved = [tag for tag in (old_tags or []) if tag.startswith("llm:")]
+            preserved = (
+                [tag for tag in (old_tags or []) if tag.startswith("llm:")]
+                if preserve_llm_tags
+                else []
+            )
             final_tags = list(dict.fromkeys([*(tags or []), *preserved]))
         else:
             page_id = uuid4()

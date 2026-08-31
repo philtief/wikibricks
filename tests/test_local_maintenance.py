@@ -4,6 +4,12 @@ from pathlib import Path
 
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
+from wikibricks.curation_sync import (
+    build_manifest,
+    create_patch,
+    get_or_create_replica_id,
+    publish_manifest,
+)
 from wikibricks.maintenance import (
     backup_database,
     check_database,
@@ -46,6 +52,30 @@ def test_backup_restore_preserves_all_local_content(
         "Backup",
         {"summary": "durable", "body": "restore me"},
     )
+    patch = create_patch(
+        operation="create_page",
+        path="topics/restored-patch",
+        proposal={
+            "title": "Restored patch",
+            "page_type": "concept",
+            "content": {"summary": "Restored patch", "body": "pending"},
+            "content_text": "Restored patch pending",
+            "tags": [],
+            "source_ids": ["session:backup"],
+            "parent_id": None,
+            "chunk_index": None,
+        },
+        evidence_ids=["session:backup"],
+        reason="Verify pending curation state survives restore.",
+    )
+    publish_manifest(
+        store,
+        build_manifest(
+            replica_id=get_or_create_replica_id(store),
+            input_watermark=1,
+            patches=[patch],
+        ),
+    )
     before = database_fingerprint(postgres_url)
     backup = tmp_path / "wikibricks.dump"
 
@@ -56,6 +86,8 @@ def test_backup_restore_preserves_all_local_content(
 
     assert backup.stat().st_size > 0
     assert after == before
+    assert after["curation_runs"]["count"] == 1
+    assert after["curation_patches"]["count"] == 1
     assert PostgresStore(restored_url).read_page("topics/backup")["content"]["body"] == "restore me"
 
 

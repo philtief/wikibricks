@@ -128,6 +128,37 @@ def test_remote_update_becomes_a_versioned_local_write_and_is_idempotent(
     assert receipt_events == 1
 
 
+def test_applied_page_hash_matches_the_exact_remote_proposal(
+    postgres_url: str,
+    curation_remote_url: str,
+):
+    local = PostgresStore(postgres_url)
+    remote = PostgresStore(curation_remote_url)
+    _reset(local, remote)
+    local.write_page(
+        "topics/exact-proposal",
+        "Exact proposal",
+        {"summary": "Exact proposal", "body": "base"},
+        tags=["llm:old-model"],
+    )
+    base = local.current_page_state("topics/exact-proposal")
+    patch = create_patch(
+        operation="update_page",
+        path="topics/exact-proposal",
+        proposal=_proposal("Exact proposal", "curated", tags=["curated"]),
+        base_version_id=base["version_id"],
+        base_content_hash=base["content_hash"],
+        evidence_ids=["session:test"],
+        reason="Replace the full page state.",
+    )
+    manifest = _publish_and_pull(local, remote, [patch])
+
+    assert apply_run(local, UUID(manifest["run_id"]))["counts"] == {"applied": 1}
+    current = local.current_page_state("topics/exact-proposal")
+    assert current["tags"] == ["curated"]
+    assert current["content_hash"] == patch["proposed_hash"]
+
+
 def test_divergent_local_edit_creates_a_three_way_conflict_and_keep_local_receipt(
     postgres_url: str,
     curation_remote_url: str,
@@ -406,6 +437,20 @@ def test_manifest_hash_detects_tampering(postgres_url: str):
 
     with pytest.raises(ValueError, match="manifest hash"):
         publish_manifest(store, manifest)
+
+
+def test_cleanup_operations_cannot_bypass_high_risk_review():
+    with pytest.raises(ValueError, match="high risk"):
+        create_patch(
+            operation="supersede_page",
+            path="topics/duplicate",
+            proposal={"target_path": "topics/canonical"},
+            base_version_id=uuid4(),
+            base_content_hash="a" * 64,
+            evidence_ids=["topics/duplicate"],
+            reason="Attempt unsafe cleanup.",
+            risk_class="low",
+        )
 
 
 def test_applied_patch_receipt_returns_through_the_normal_archive_outbox(

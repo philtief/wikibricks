@@ -24,6 +24,7 @@ _OPERATIONS = {
     "add_alias",
     "supersede_page",
 }
+_CLEANUP_OPERATIONS = {"retarget_links", "add_alias", "supersede_page"}
 _RISK_CLASSES = {"low", "medium", "high"}
 _PAGE_FIELDS = {
     "title",
@@ -97,6 +98,8 @@ def create_patch(
         raise ValueError("patch position cannot be negative")
     if risk_class not in _RISK_CLASSES:
         raise ValueError(f"unsupported risk class: {risk_class}")
+    if operation in _CLEANUP_OPERATIONS and risk_class != "high":
+        raise ValueError(f"{operation} must be classified as high risk")
     if not evidence_ids or any(not value for value in evidence_ids):
         raise ValueError("curation patch requires evidence IDs")
     if not reason.strip():
@@ -136,6 +139,8 @@ def _validate_patch(patch: dict[str, Any]) -> None:
         raise ValueError("patch position cannot be negative")
     if patch["risk_class"] not in _RISK_CLASSES:
         raise ValueError(f"unsupported risk class: {patch['risk_class']}")
+    if operation in _CLEANUP_OPERATIONS and patch["risk_class"] != "high":
+        raise ValueError(f"{operation} must be classified as high risk")
     if not patch["evidence_ids"] or not str(patch["reason"]).strip():
         raise ValueError("curation patch requires evidence and a reason")
     base_id = patch.get("base_version_id")
@@ -555,6 +560,7 @@ def _apply_patch(
             chunk_index=proposal["chunk_index"],
             content_text_override=proposal["content_text"],
             curation_patch_id=patch_id,
+            preserve_llm_tags=False,
             **kwargs,
         )
         return version_id
