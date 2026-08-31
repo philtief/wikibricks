@@ -1,14 +1,13 @@
 {
   "name": "wikibricks-recorder",
-  "description": "Records every Claude Code session as one WikiBricks page (catalog/schema/warehouse you control), and exposes the wiki to the agent via 5 stdio MCP tools so it can search and read prior sessions.",
-  "version": "0.7.16",
+  "description": "Records Claude Code sessions in local PostgreSQL and exposes five local WikiBricks tools over stdio MCP.",
+  "version": "0.8.0",
   "homepage": "https://github.com/philtief/wikibricks-dev",
   "repository": "https://github.com/philtief/wikibricks-dev.git",
   "license": "Apache-2.0",
   "keywords": [
-    "databricks",
-    "unity-catalog",
-    "vector-search",
+    "postgresql",
+    "local-first",
     "memory",
     "agent",
     "mcp",

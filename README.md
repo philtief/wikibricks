@@ -1,203 +1,296 @@
 # WikiBricks
 
-**A wiki for your AI agent, on Databricks.** Delta + Vector Search +
-Unity Catalog, exposed as native MCP tools. Your agent gets a
-persistent, versioned, typed-link knowledge store that **grows from its
-own sessions** — and you can search and read those sessions back from
-your next conversation.
+WikiBricks is local PostgreSQL memory for AI agents. Recording, search, reads,
+writes, history, and MCP tools run without Databricks credentials or network
+access. Lakebase is an optional archive that WikiBricks contacts only when you
+run an explicit sync command.
 
-Two pieces, both optional, designed to be used together:
+The local database is the source of truth:
 
-- **The wiki store** — a Databricks Asset Bundle that deploys the
-  schema, tables, Vector Search index, UC functions, and a daily
-  maintenance job. One `databricks bundle deploy`, then any agent that
-  speaks MCP can read and write it.
-- **The recorder** — an optional Claude Code plugin that records every
-  session as one wiki page and exposes 5 MCP tools to the agent so it
-  can search prior sessions. This is the easy on-ramp: 5 minutes to
-  install, immediately useful.
+```text
+Claude Code hooks     Omnigent chat.db     Other harnesses
+        |                    |               JSONL v1
+        +--------------------+-------------------+
+                             |
+                     normalized sessions
+                             |
+                             v
+                  local PostgreSQL + GIN
+                             |
+                   local stdio MCP server
+                             |
+                  explicit archive sync
+                             v
+                  Lakebase (optional)
+```
 
-> **Grounding idea:** Andrej Karpathy's
-> [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-> — instead of re-retrieving raw documents at every query, the agent
-> incrementally compiles a structured, interlinked wiki it maintains
-> itself. Knowledge **compounds** instead of getting re-derived. See
-> also [Context and Memory for Agents on
-> Databricks](https://medium.com/@philipp.tiefenbacher_42173/context-and-memory-for-agents-on-databricks-f3c945cd8681)
-> for the design rationale.
+The core has no model dependency. Your agent decides what to search, read, and
+promote. The design follows Andrej Karpathy's
+[LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
 
-## 5-minute install: the personal recorder
+## Local setup
 
-The fastest way to see what WikiBricks is: install the recorder plugin
-and let it record one Claude Code session.
-
-### 1. Deploy the wiki store (one-time, ~3 minutes)
+WikiBricks supports PostgreSQL 16 and 17. On macOS, Homebrew can install and
+start PostgreSQL:
 
 ```bash
-git clone https://github.com/philtief/wikibricks-dev.git
-cd wikibricks-dev
-cp databricks.override.example.yml databricks.override.yml
-# edit: host, profile, catalog, schema, warehouse_id
-
-databricks bundle deploy --target dev
-databricks bundle run deploy_wiki_store --target dev
+brew install postgresql@17
+brew services start postgresql@17
 ```
 
-Idempotent. Creates the schema, Delta tables, Vector Search index, 8
-UC functions, and the daily curate Lakeflow Job.
-
-### 2. Install the plugin (~1 minute)
-
-In any Claude Code session:
-
-```
-/plugin marketplace add https://github.com/philtief/wikibricks-dev.git
-/plugin install wikibricks-recorder@wikibricks
-```
-
-Then once per machine:
+Clone WikiBricks and install it as a local tool:
 
 ```bash
-uvx --from "git+https://github.com/philtief/wikibricks-dev.git@v0.3.0" \
-    wiki-init personal      # | team-create | team-join
+git clone https://github.com/philtief/wikibricks.git
+cd wikibricks
+uv tool install --force .
+
+export WIKIBRICKS_DATABASE_URL=postgresql:///wikibricks
+wikibricks init
+wikibricks check
 ```
 
-That's it. Open a new Claude Code session and the recorder writes one
-page per session into `sessions/<user>/YYYY/MM/DD/<sid>`. Five MCP
-tools (`wiki_search`, `wiki_read_full`, `wiki_index`, `wiki_write_page`,
-`wiki_promote_answer`) appear automatically so the agent can search and
-read your prior sessions. Plugin details:
-[`plugin/README.md`](plugin/README.md).
+The default URL is `postgresql:///wikibricks`, which uses the local Unix
+socket and operating-system user. Set `WIKIBRICKS_DATABASE_URL` for another
+user, socket, port, or database. `wikibricks init` creates the database when
+it does not exist and applies forward-only migrations.
 
-## Why a wiki, not a log
-
-Agents forget. Context windows are not memory, pasted docs are not
-memory, embeddings alone are not memory. What you actually want:
-
-- **pages** with stable paths and titles
-- **typed links** between them (not a generic `related_to` bag)
-- **history** — who wrote what, when, and what changed
-- **search** by meaning or keyword
-- **growth** — the store gets *better* as the agent answers more
-  questions
-
-WikiBricks delivers all five on managed Databricks services. No bespoke
-vector DB, no separate MCP server, no model dependency inside the
-library core — the agent calling the wiki is the only LLM in the loop.
-
-## The maintenance loop
-
-Every deployment ships one Lakeflow Job (`wikibricks_curate`) that runs
-daily, with three tasks. The first is the contract; the other two are
-opt-in.
-
-1. **`curate`** *(LLM-free)*. Proposes new typed edges via Vector Search
-   nearest-neighbor + exact-title matching, tagged with `confidence` +
-   `origin`. Auto-commits anything above
-   `auto_commit_threshold=0.85`; leaves the rest for the agent. Runs
-   lint (orphans, stale pages, duplicates, broken links), deterministic
-   link repair, and flags pages `oversize` / `empty` / `ok`.
-2. **`segregate`** *(LLM-driven, opt-in)*. Picks up oversize pages,
-   splits each into a parent (summary + ToC) plus N chunk children.
-   Reassembly via `fn_wiki_read_full(parent_path)`. Drop the task to
-   run fully LLM-free.
-3. **`promote`** *(LLM-driven, opt-in)*. Mines agent session traces,
-   clusters recurring questions, synthesizes one canonical answer per
-   cluster, scores it with an LLM judge, and writes passing clusters
-   to `promoted/<slug>` with `cites` edges back to source pages. This
-   is what makes the wiki *grow* from agent traces.
-
-Every write, promote, and index sync appends to `wiki_log` so operators
-can watch the pipeline. `scripts/diagnose_traces.py --window-days 7`
-summarizes trace volume, cluster eligibility, and recent events.
-
-## Library API
+Write and find a page from Python:
 
 ```python
 from wikibricks import WikiClient
 
-wiki = WikiClient(warehouse_id="abc123")
+wiki = WikiClient()
+wiki.write_page(
+    "topics/local-memory",
+    "Local memory",
+    {"summary": "PostgreSQL is the source of truth.", "body": "Full notes."},
+    tags=["architecture"],
+)
 
-wiki.write_page("topics/vector-search", title="Vector Search",
-                content={"summary": "...", "body": "..."}, tags=["retrieval"])
-
-# Agent-in-the-loop: WikiBricks proposes, agent decides.
-candidates = wiki.propose_edges("topics/vector-search", min_similarity=0.70)
-wiki.commit_edges([c for c in candidates if my_agent_approves(c)])
-
-wiki.search("what index modes exist", mode="HYBRID")    # HYBRID / ANN / FULL_TEXT
-wiki.graph_neighbors("topics/vector-search", depth=2)
-wiki.history("topics/vector-search")
-
-# Promote a Q&A pair into a canonical synthesis page (cites every source).
-wiki.promote_answer(query="...", answer="...",
-                    source_pages=[wiki.read_page("topics/vector-search")])
+print(wiki.search("source of truth"))
+print(wiki.read_page("topics/local-memory"))
 ```
 
-Full surface: [`src/wikibricks/client.py`](src/wikibricks/client.py).
-For agent runtimes that can't speak Python directly, use
-`make_agent_tools(...)` to get tool-callable equivalents of the write
-methods.
+## Connect an agent through MCP
 
-## MCP tools
+`wikibricks-mcp` is a local stdio server. It exposes five tools:
 
-Eight UC functions auto-exposed via Databricks managed MCP at
-`https://<workspace>/api/2.0/mcp/functions/<catalog>/<schema>` (OAuth,
-`unity-catalog` scope, UC permissions enforced):
+- `wiki_search`
+- `wiki_read_full`
+- `wiki_index`
+- `wiki_write_page`
+- `wiki_promote_answer`
 
-| Tool | Description |
-|---|---|
-| `fn_wiki_search(question, num_results)` | HYBRID Vector Search over `pages` |
-| `fn_wiki_read(page_path)` | Read a page by path |
-| `fn_wiki_read_full(parent_path)` | Read parent + chunk children |
-| `fn_wiki_history(page_path)` | Full version history |
-| `fn_wiki_log(num_entries)` | Recent operation log |
-| `fn_wiki_index()` | Page catalog |
-| `fn_wiki_schema()` | Conventions (page types, link types, tags) |
-| `fn_wiki_write_help()` | How to write good wiki pages |
+During MCP initialization, the server also sends the agent the WikiBricks
+schema. It tells the agent to treat sessions as raw evidence and to maintain
+linked topic, entity, comparison, and synthesis pages. This keeps the
+Karpathy-style compounding workflow independent of the agent harness.
+`wiki_index` lists curated pages. `wiki_search` can also return raw sessions as
+evidence.
 
-Pass `--var="enabled_uc_functions=fn_wiki_search,fn_wiki_read_full,..."`
-to `bundle deploy` to expose a subset — useful for read-only agents or
-weaker models that get distracted by long tool lists.
+Codex can register it directly:
 
-DML (writes) is exposed separately via `make_agent_tools(...)` — UC
-SQL functions can't perform writes.
+```bash
+codex mcp add wikibricks \
+  --env WIKIBRICKS_DATABASE_URL=postgresql:///wikibricks \
+  -- wikibricks-mcp
+```
 
-## Evaluation
+Claude Code uses the same server:
 
-- **HotpotQA retrieval pilot** — 500 queries, HYBRID recall@10 ≈ **89%**
-  on a 66,569-page corpus. See
-  [`docs/hotpotqa_evaluation.md`](docs/hotpotqa_evaluation.md).
-- **2WikiMultiHopQA (official v1.1)** — 350-query ablation. Best
-  variant (Sonnet 4.6 + HYBRID + K=10) reaches Joint F1 **21.2** — on
-  par with the 2020 paper's open-retrieval baseline. Modern
-  task-tuned SOTA is 50–65 and outside WikiBricks' scope. See
-  [`docs/twowiki_evaluation.md`](docs/twowiki_evaluation.md).
+```bash
+claude mcp add --scope user \
+  -e WIKIBRICKS_DATABASE_URL=postgresql:///wikibricks \
+  wikibricks -- wikibricks-mcp
+```
+
+For Omnigent or another MCP client, configure a stdio server with command
+`wikibricks-mcp` and pass `WIKIBRICKS_DATABASE_URL` in its environment. The
+server has no Claude, Codex, Omnigent, or Databricks assumptions.
+
+## Record sessions
+
+MCP gives an agent access to memory. A source adapter records the agent's
+sessions.
+
+### Omnigent and Codex
+
+Omnigent stores conversations in `~/.omnigent/chat.db`. WikiBricks opens that
+file in read-only mode and keeps a resumable cursor:
+
+```bash
+wikibricks import omnigent --user-id "$USER"
+```
+
+Use `--since-days` or `--limit` for a bounded first import. The adapter keeps
+the Omnigent agent name. A Codex conversation receives the
+`agent:codex-native-ui` tag.
+
+The import is safe to rerun. An unchanged conversation is not imported twice.
+If an event changes at the source, WikiBricks writes a new immutable event
+version.
+
+### Claude Code
+
+The optional Claude Code adapter records lifecycle, prompt, tool-call, and
+tool-result events. It writes only to local PostgreSQL. See
+[`plugin/README.md`](plugin/README.md) for the plugin and manual hook setup.
+
+### Other harnesses
+
+Any harness can emit one JSON object per line. The current schema version is
+1:
+
+```json
+{"schema_version":1,"session":{"harness":"my-harness","external_id":"session-42","user_id":"philipp","agent":"my-agent","workspace":"/work/project","started_at":"2026-08-31T08:00:00Z","updated_at":"2026-08-31T08:05:00Z","events":[{"external_id":"0","kind":"user","content":"Remember this"},{"external_id":"1","kind":"assistant","content":"Stored"}],"metadata":{}}}
+```
+
+Import it with:
+
+```bash
+wikibricks import jsonl examples/session-v1.jsonl
+```
+
+Supported event kinds are `user`, `assistant`, `tool_call`, `tool_result`,
+`error`, and `lifecycle`. Unsupported schema versions fail with a clear error.
+
+## PostgreSQL storage for long sessions
+
+PostgreSQL native `text` stores page and session content. PostgreSQL moves
+large values to [TOAST](https://www.postgresql.org/docs/current/storage-toast.html)
+automatically, so WikiBricks does not need a custom large-text extension. Each
+session is a sequence of immutable event versions. Appending an event does not
+rewrite the full transcript.
+
+WikiBricks requires
+[`pg_trgm`](https://www.postgresql.org/docs/current/pgtrgm.html) for path and
+title matching. Full-text search uses built-in
+[`tsvector`](https://www.postgresql.org/docs/current/datatype-textsearch.html)
+values and GIN indexes. It indexes long events in 64 KiB UTF-8 chunks, then
+reconstructs reads from the unchanged source text. This avoids the size limit
+of a single `tsvector`. A 25 MB tool result is part of the storage test suite.
+
+The base package does not install `pgvector` or an embedding model. Local
+search requires no embedding service. Semantic search can remain an optional
+feature later.
+
+## Local maintenance
+
+```bash
+wikibricks check
+wikibricks curate
+wikibricks search "index failure" -k 10
+wikibricks backup backups/wikibricks.dump
+wikibricks vacuum
+```
+
+Restore requires a connection URL whose target database does not exist:
+
+```bash
+wikibricks --database-url postgresql:///wikibricks_restored \
+  restore backups/wikibricks.dump
+```
+
+`wikibricks check` reports broken version pointers and the number of pending
+archive events. Local reads and writes do not wait for those events to sync.
+
+`wikibricks curate` is the local deterministic loop. It repairs missing search
+documents, materializes `_meta/index`, and reports exact duplicate and orphan
+pages for the active agent to review. It does not need a model or network
+connection. Run it after a large ingest or once a day. Raw sessions remain
+searchable evidence, but they do not enter the curated `_meta/index` page.
+
+The active harness performs semantic curation during normal work. Its MCP
+instructions tell it to search before it writes, update existing pages, preserve
+provenance, and record contradictions. The local deterministic pass then
+checks structure and search metadata. Monthly remote maintenance can compare
+longer history and propose deduplication or contradiction patches. Local code
+will accept a future patch only when its base content hash still matches.
+
+After a verified archive sync and backup, an explicit retention policy can
+remove old raw sessions while keeping curated wiki pages local:
+
+```bash
+wikibricks curate --prune-archived-sessions-after-days 90
+```
+
+The command removes a session only when every event version has a committed
+remote acknowledgement. Unarchived sessions remain local regardless of age.
+
+## Optional Lakebase archive
+
+Install the optional Databricks dependency only on a machine that performs
+archive sync:
+
+```bash
+uv tool install --force ".[databricks]"
+```
+
+Then run the sync explicitly:
+
+```bash
+wikibricks sync lakebase \
+  --profile <databricks-profile> \
+  --project <lakebase-project> \
+  --branch production \
+  --endpoint primary \
+  --database wikibricks
+```
+
+The command obtains a short-lived Lakebase credential from the selected
+Databricks profile. It copies a bounded outbox batch into a staging table,
+commits by immutable event ID and hash, and acknowledges local rows only after
+the remote commit. A retry after a lost connection does not duplicate data.
+
+Use `--pull-curated` to import a newer remote `curated_pages` snapshot into the
+local archive cache. A remote page never overwrites a locally changed page.
+
+The local 0.8.0 release includes the archive protocol and local PostgreSQL
+contract tests. [Lakebase Change Data
+Feed](https://docs.databricks.com/aws/en/oltp/projects/quickstart-lakebase-cdf),
+Delta curation, the read-only synced table, and migration of the current
+remote wiki are the next remote phase. They remain undeployed until the local
+gate is approved. Electric is also deferred because its
+[released write path](https://electric-sql.com/docs/guides/writes) does not yet
+provide the offline upstream-write and conflict contract that WikiBricks
+needs.
+
+The remote phase will replace the read-only snapshot cache as the final
+curation interface with versioned patch sets. Each patch will include its base
+content hash. Local curation will apply unchanged bases and queue local edit
+conflicts for review.
+
+## Legacy Databricks compatibility
+
+The existing Delta, Vector Search, Unity Catalog, jobs, and app assets remain
+in this development repository for migration and compatibility. They are not
+used by `WikiClient()` or `wikibricks-mcp`.
+
+Install `wikibricks[databricks]` and pass a `warehouse_id` explicitly to use
+the legacy client:
+
+```python
+from wikibricks import WikiClient
+
+remote_wiki = WikiClient(warehouse_id="<sql-warehouse-id>")
+```
+
+No call falls back to Databricks when local PostgreSQL is unavailable.
 
 ## Development
 
 ```bash
-uv sync                              # core library
-uv sync --extra recorder             # also install the recorder package
-uv run pytest                        # 879 tests, no workspace needed
+uv sync --extra dev
+uv run pytest                        # 983 tests
 uv run ruff check src tests scripts
-uv build                             # → dist/wikibricks-0.7.13-py3-none-any.whl
+uv build                             # dist/wikibricks-0.8.0-py3-none-any.whl
+UV_OFFLINE=1 uv run pytest
 ```
 
-For the recorder, see [`plugin/README.md`](plugin/README.md). For
-deeper deploy customization (custom seed corpora, app env vars, ad-hoc
-overrides), see [`docs/`](docs/) and the bundle config in
-[`databricks.yml`](databricks.yml). Coding agents should read
-[`AGENTS.md`](AGENTS.md) for repo conventions, hard rules, release
-checklist, and the dev → public sync checklist.
-
-## What this is not
-
-- Not a multi-hop QA system — the agent does the reasoning.
-- Not a vector DB product — the index is Databricks Vector Search.
-- Not a SaaS — a Databricks Asset Bundle that deploys into your workspace.
-- Not scratch memory — per-session conversation state belongs elsewhere.
+The overnight-dev pre-commit hook runs the lint and test commands before each
+commit. Coding agents must also follow [`AGENTS.md`](AGENTS.md).
 
 ## License
 
-Apache 2.0 — see [`LICENSE`](LICENSE).
+Apache 2.0. See [`LICENSE`](LICENSE).

@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+from pathlib import Path
 from typing import Any
+
+
+def get_server_instructions() -> str:
+    """Return the harness-neutral workflow that makes memory a maintained wiki."""
+    return Path(__file__).with_name("WIKIBRICKS.MD").read_text(encoding="utf-8")
 
 
 def get_tool_schemas() -> list[dict[str, Any]]:
@@ -101,7 +107,11 @@ def _build_tools() -> dict[str, Any]:
     return {
         "wiki_search": lambda query, k=5: client.search(query, num_results=k),
         "wiki_read_full": client.read_page,
-        "wiki_index": lambda prefix=None: client.list_pages(path_prefix=prefix),
+        "wiki_index": lambda prefix=None: [
+            page
+            for page in client.list_pages(path_prefix=prefix)
+            if page["page_type"] not in {"session", "archive"}
+        ],
         "wiki_write_page": write_tools["wiki_write_page"],
         "wiki_promote_answer": write_tools["wiki_promote_answer"],
     }
@@ -141,7 +151,7 @@ async def _serve() -> None:
     from mcp.server.stdio import stdio_server
     from mcp.types import TextContent, Tool
 
-    server: Server = Server("wikibricks")
+    server: Server = Server("wikibricks", instructions=get_server_instructions())
 
     @server.list_tools()
     async def list_tools() -> list[Tool]:

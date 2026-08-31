@@ -153,7 +153,12 @@ class LocalWikiClient:
         return self.store.graph_neighbors(path, depth=depth, link_types=link_types)
 
     def materialize_index(self) -> str:
-        pages = self.list_pages()
+        pages = [
+            page
+            for page in self.list_pages()
+            if page["path"] != "_meta/index"
+            and page["page_type"] not in {"session", "archive"}
+        ]
         body = "\n".join(f"- [{page['title']}]({page['path']})" for page in pages)
         self.write_page(
             "_meta/index",

@@ -112,6 +112,14 @@ def build_parser() -> argparse.ArgumentParser:
     check = commands.add_parser("check", help="Validate local database invariants")
     check.set_defaults(handler=_command_check)
 
+    curate = commands.add_parser("curate", help="Run deterministic local curation")
+    curate.add_argument(
+        "--prune-archived-sessions-after-days",
+        type=int,
+        help="Delete old sessions only when every event version is archived",
+    )
+    curate.set_defaults(handler=_command_curate)
+
     backup = commands.add_parser("backup", help="Create a pg_dump backup")
     backup.add_argument("output", type=Path)
     backup.set_defaults(handler=_command_backup)
@@ -172,6 +180,18 @@ def _command_check(args: argparse.Namespace) -> int:
     result = check_database(database_url)
     _print_json(result)
     return 0 if result["ok"] else 1
+
+
+def _command_curate(args: argparse.Namespace) -> int:
+    from wikibricks.maintenance import curate_database
+
+    database_url = args.database_url or PostgresStore().database_url
+    result = curate_database(
+        database_url,
+        prune_archived_sessions_after_days=args.prune_archived_sessions_after_days,
+    )
+    _print_json(result)
+    return 0
 
 
 def _command_backup(args: argparse.Namespace) -> int:

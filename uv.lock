@@ -2148,7 +2148,7 @@ wheels = [
 
 [[package]]
 name = "wikibricks"
-version = "0.7.16"
+version = "0.8.0"
 source = { editable = "." }
 dependencies = [
     { name = "mcp" },
@@ -2161,6 +2161,7 @@ databricks = [
 ]
 dev = [
     { name = "databricks-sdk" },
+    { name = "igraph" },
     { name = "openai" },
     { name = "pytest" },
     { name = "pyyaml" },
@@ -2178,9 +2179,10 @@ recorder = [
 requires-dist = [
     { name = "databricks-sdk", marker = "extra == 'databricks'", specifier = ">=0.44.0" },
     { name = "databricks-sdk", marker = "extra == 'dev'", specifier = ">=0.44.0" },
+    { name = "igraph", marker = "extra == 'dev'", specifier = ">=0.11,<2.0" },
     { name = "igraph", marker = "extra == 'graph'", specifier = ">=0.11,<2.0" },
     { name = "igraph", marker = "extra == 'recorder'", specifier = ">=0.11,<2.0" },
-    { name = "mcp", specifier = ">=1.0" },
+    { name = "mcp", specifier = ">=1.0,<2" },
     { name = "openai", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },

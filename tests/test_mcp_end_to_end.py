@@ -9,7 +9,8 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from wikibricks.mcp_server import get_tool_schemas
+from wikibricks.mcp_server import get_server_instructions, get_tool_schemas
+from wikibricks.models import SessionEvent, SessionRecord
 from wikibricks.postgres_store import PostgresStore
 
 EXPECTED_TOOLS = {
@@ -36,6 +37,24 @@ def test_tool_contract_is_harness_and_backend_neutral():
     assert "vector search" not in descriptions
 
 
+def test_server_instructions_preserve_the_compounding_wiki_workflow():
+    instructions = get_server_instructions().lower()
+
+    for concept in (
+        "raw sources",
+        "wiki pages",
+        "incrementally",
+        "ingest",
+        "query",
+        "lint",
+        "cross-reference",
+    ):
+        assert concept in instructions
+    assert "recording a session does not" in instructions
+    assert "claude" not in instructions
+    assert "databricks" not in instructions
+
+
 def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
     postgres_url: str,
     tmp_path: Path,
@@ -43,6 +62,14 @@ def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
     store = PostgresStore(postgres_url)
     store.migrate()
     store.clear_all()
+    store.ingest_session(
+        SessionRecord(
+            harness="test-harness",
+            external_id="raw-evidence",
+            user_id="u",
+            events=[SessionEvent("0", "user", "raw evidence marker")],
+        )
+    )
     guard = tmp_path / "sitecustomize.py"
     guard.write_text(
         "import socket\n"
@@ -71,7 +98,8 @@ def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
         )
         async with stdio_client(server) as (read_stream, write_stream):
             async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
+                initialized = await session.initialize()
+                assert "persistent, compounding artifact" in initialized.instructions
                 listed = await session.list_tools()
                 assert {tool.name for tool in listed.tools} == EXPECTED_TOOLS
 
@@ -92,6 +120,11 @@ def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
                     await session.call_tool("wiki_search", {"query": "offline memory", "k": 5})
                 )
                 assert searched[0]["path"] == "topics/mcp-local"
+
+                evidence = _result_json(
+                    await session.call_tool("wiki_search", {"query": "raw evidence marker"})
+                )
+                assert evidence[0]["page_type"] == "session"
 
                 read = _result_json(
                     await session.call_tool("wiki_read_full", {"path": "topics/mcp-local"})

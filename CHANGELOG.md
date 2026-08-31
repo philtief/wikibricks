@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-31
+
+### Changed
+
+- `WikiClient()` now uses local PostgreSQL. The legacy Databricks client runs
+  only when a caller passes a SQL warehouse ID.
+- `wikibricks-mcp` is a harness-neutral local stdio server. Its five tools do
+  not require network access or Databricks configuration.
+- Session storage uses ordered immutable event versions instead of one growing
+  transcript row.
+- Databricks SDK moved from the base package to the `databricks` and `dev`
+  extras.
+
+### Added
+
+- PostgreSQL migrations for pages, history, typed links, sources, operations,
+  sessions, chunked full-text search, sync state, and an archive outbox.
+- Claude Code, Omnigent, and versioned JSONL adapters for the shared session
+  contract. Omnigent imports keep the bound agent, including Codex.
+- Local commands for initialization, search, checks, backup, restore, vacuum,
+  deterministic curation, archive-gated retention, and resumable imports.
+- Explicit Lakebase archive sync with deterministic manifests, PostgreSQL
+  `COPY`, idempotent commits, and acknowledgement after the remote commit.
+- Read-only curated snapshot pulls that preserve locally changed pages.
+- Storage tests for a 25 MB tool result, concurrent writers, real stdio MCP,
+  offline imports, backup and restore, and interrupted archive retries.
+
+### Removed
+
+- Databricks, a SQL warehouse, Unity Catalog, and Vector Search from the normal
+  recording, retrieval, and MCP path.
+
+### Fixed
+
+- The base package now excludes MCP 2.x, whose server API is incompatible with
+  the current stdio implementation.
+- The MCP and materialized wiki indexes exclude raw session and archive pages.
+  Search and direct reads still expose this evidence.
+
 ### Added (Omnigent session sync — memory for the Omnigent harness)
 
 - **`src/wikibricks_recorder/omnigent_sync.py` + `scripts/omnigent_sync_cli.py`**
@@ -1339,7 +1378,11 @@ Databricks.
   `2wikimultihop_evaluate_v1.py`; vendored assets are gitignored and fetched
   on demand by `scripts/fetch_twowiki.py`.
 
-[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.7.13...HEAD
+[Unreleased]: https://github.com/philtief/wikibricks/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/philtief/wikibricks/compare/v0.7.16...v0.8.0
+[0.7.16]: https://github.com/philtief/wikibricks/compare/v0.7.15...v0.7.16
+[0.7.15]: https://github.com/philtief/wikibricks/compare/v0.7.14...v0.7.15
+[0.7.14]: https://github.com/philtief/wikibricks/compare/v0.7.13...v0.7.14
 [0.7.13]: https://github.com/philtief/wikibricks/compare/v0.7.12...v0.7.13
 [0.7.12]: https://github.com/philtief/wikibricks/compare/v0.7.11...v0.7.12
 [0.7.11]: https://github.com/philtief/wikibricks/compare/v0.7.10...v0.7.11

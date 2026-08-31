@@ -19,6 +19,13 @@ def test_databricks_sdk_is_optional_not_a_base_dependency():
     )
 
 
+def test_base_package_excludes_incompatible_mcp_major_version():
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        dependencies = tomllib.load(handle)["project"]["dependencies"]
+
+    assert "mcp>=1.0,<2" in dependencies
+
+
 def test_base_modules_import_when_databricks_is_blocked():
     code = """
 import importlib.abc
