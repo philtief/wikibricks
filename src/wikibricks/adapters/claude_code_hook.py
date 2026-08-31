@@ -1,4 +1,4 @@
-"""Claude Code hook adapter that records only to local PostgreSQL."""
+"""Claude Code hook adapter that records sessions to local PostgreSQL."""
 
 from __future__ import annotations
 
@@ -11,8 +11,8 @@ import sys
 from datetime import datetime, timezone
 from typing import Any
 
+from wikibricks.adapters import claude_code_buffer
 from wikibricks.adapters.claude_code import state_to_session
-from wikibricks_recorder import page_builder, session
 
 
 def _read_payload() -> dict[str, Any]:
@@ -46,15 +46,31 @@ def _user_id() -> str:
     return (email or getpass.getuser()).replace("@", "-at-")
 
 
-def _is_utility_session(state: dict[str, Any]) -> bool:
-    cwd = state.get("cwd") or ""
-    if cwd in {"/tmp", "/private/tmp", "/var/tmp"} or cwd.startswith(
-        ("/private/var/folders/", "/var/folders/", "/tmp/", "/private/tmp/", "/var/tmp/")
+def should_skip(state: dict[str, Any]) -> bool:
+    cwd = str(state.get("cwd") or "").rstrip("/")
+    if cwd in {"/tmp", "/private/tmp", "/var/tmp"}:
+        return True
+    if cwd.startswith(
+        (
+            "/tmp/",
+            "/private/tmp/",
+            "/private/var/folders/",
+            "/var/tmp/",
+            "/var/folders/",
+        )
     ):
         return True
-    prompts = [event for event in state.get("events", []) if event.get("kind") == "prompt"]
-    first = str(state.get("first_prompt") or "").strip()
-    return len(prompts) <= 1 and page_builder._looks_like_system_prompt(first)
+    try:
+        minimum = int(os.environ.get("WIKIBRICKS_RECORDER_MIN_EVENTS", "2"))
+    except ValueError:
+        minimum = 2
+    events = state.get("events") or []
+    if not events or len(events) < minimum:
+        return True
+    prompts = [event for event in events if event.get("kind") == "prompt"]
+    first = str(state.get("first_prompt") or "").strip().lower()
+    utility_prefixes = ("you are ", "summarize ", "read the transcript", "extract ")
+    return len(prompts) <= 1 and first.startswith(utility_prefixes)
 
 
 def on_session_start() -> None:
@@ -62,11 +78,11 @@ def on_session_start() -> None:
     session_id = payload.get("session_id")
     if not session_id:
         return
-    state = session.load(session_id)
+    state = claude_code_buffer.load(session_id)
     state["started_at"] = state.get("started_at") or _now_iso()
     state["cwd"] = state.get("cwd") or payload.get("cwd") or os.getcwd()
     state["model"] = state.get("model") or payload.get("model")
-    session.save(state)
+    claude_code_buffer.save(state)
 
 
 def on_user_prompt_submit() -> None:
@@ -75,10 +91,10 @@ def on_user_prompt_submit() -> None:
     if not session_id:
         return
     prompt = str(payload.get("prompt") or "")
-    state = session.load(session_id)
+    state = claude_code_buffer.load(session_id)
     state["first_prompt"] = state.get("first_prompt") or prompt
     state["events"].append({"kind": "prompt", "prompt": prompt, "ts": _now_iso()})
-    session.save(state)
+    claude_code_buffer.save(state)
 
 
 def on_post_tool_use() -> None:
@@ -86,7 +102,7 @@ def on_post_tool_use() -> None:
     session_id = payload.get("session_id")
     if not session_id:
         return
-    state = session.load(session_id)
+    state = claude_code_buffer.load(session_id)
     tool_name = str(payload.get("tool_name") or "?")
     state["events"].append(
         {
@@ -98,7 +114,11 @@ def on_post_tool_use() -> None:
     )
     response = payload.get("tool_response")
     if response is not None:
-        content = response if isinstance(response, str) else json.dumps(response, default=str)
+        content = (
+            response
+            if isinstance(response, str)
+            else json.dumps(response, default=str)
+        )
         state["events"].append(
             {
                 "kind": "tool_result",
@@ -107,24 +127,22 @@ def on_post_tool_use() -> None:
                 "ts": _now_iso(),
             }
         )
-    session.save(state)
+    claude_code_buffer.save(state)
 
 
-def _flush(state: dict[str, Any]):
-    if not state.get("events") or _is_utility_session(state) or page_builder.is_ephemeral(state):
-        return None
+def _flush(state: dict[str, Any]) -> None:
+    if should_skip(state):
+        return
     from wikibricks import WikiClient
 
-    client = WikiClient()
-    client.ingest_session(state_to_session(state, user_id=_user_id()))
-    return client
+    WikiClient().ingest_session(state_to_session(state, user_id=_user_id()))
 
 
 def on_stop() -> None:
     payload = _read_payload()
     session_id = payload.get("session_id")
     if session_id:
-        _flush(session.load(session_id))
+        _flush(claude_code_buffer.load(session_id))
 
 
 def on_session_end() -> None:
@@ -144,7 +162,7 @@ def dispatch(event_name: str) -> None:
         if handler:
             handler()
     except Exception as exc:
-        print(f"wikibricks_recorder[{event_name}]: {exc}", file=sys.stderr)
+        print(f"wikibricks[{event_name}]: {exc}", file=sys.stderr)
 
 
 def main() -> None:

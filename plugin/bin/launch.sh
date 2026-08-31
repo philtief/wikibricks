@@ -2,7 +2,7 @@
 # Idempotent launcher for the wikibricks-recorder plugin.
 #
 # First call (per CLAUDE_PLUGIN_DATA + WIKIBRICKS_PLUGIN_REF): installs
-# wikibricks[recorder] from a Git URL into the plugin's persistent data dir.
+# wikibricks from a Git URL into the plugin's persistent data dir.
 # Subsequent calls: exec the requested console-script binary directly.
 #
 # Usage: launch.sh <binary-name> [args...]
@@ -35,7 +35,7 @@ if [ ! -f "$MARKER" ] || [ ! -x "$BINARY" ]; then
   mkdir -p "$TOOL_DIR" "$BIN_DIR"
   UV_TOOL_DIR="$TOOL_DIR" UV_TOOL_BIN_DIR="$BIN_DIR" \
     uv tool install --force \
-      "wikibricks[recorder] @ git+${GIT_URL}@${REF}" >&2
+      "wikibricks @ git+${GIT_URL}@${REF}" >&2
   touch "$MARKER"
 fi
 

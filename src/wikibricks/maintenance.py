@@ -11,6 +11,7 @@ import psycopg
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
+from wikibricks.client import WikiClient
 from wikibricks.postgres_store import PostgresStore
 
 _FINGERPRINT_TABLES = (
@@ -138,9 +139,7 @@ def curate_database(
             )
             repaired_sessions += 1
 
-    from wikibricks.local_client import LocalWikiClient
-
-    index_result = LocalWikiClient(database_url, migrate=False).materialize_index()
+    index_result = WikiClient(database_url, migrate=False).materialize_index()
 
     with store.connection() as conn:
         duplicate_rows = conn.execute(

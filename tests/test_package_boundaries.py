@@ -5,7 +5,13 @@ import sys
 import tomllib
 from pathlib import Path
 
+import wikibricks
+
 ROOT = Path(__file__).resolve().parents[1]
+
+
+def test_public_package_exposes_only_local_runtime():
+    assert wikibricks.__all__ == ["WikiClient", "PostgresStore", "make_agent_tools"]
 
 
 def test_databricks_sdk_is_optional_not_a_base_dependency():
@@ -15,7 +21,7 @@ def test_databricks_sdk_is_optional_not_a_base_dependency():
     assert not any(item.startswith("databricks-sdk") for item in project["dependencies"])
     assert any(
         item.startswith("databricks-sdk")
-        for item in project["optional-dependencies"]["databricks"]
+        for item in project["optional-dependencies"]["lakebase"]
     )
 
 
@@ -41,7 +47,6 @@ sys.meta_path.insert(0, BlockDatabricks())
 import wikibricks
 import wikibricks.client
 import wikibricks.curation_sync
-import wikibricks.ops
 import wikibricks.postgres_store
 import wikibricks_databricks.lakebase_sync
 print('ok')

@@ -1,15 +1,13 @@
-"""Custom agent tools for write operations.
+"""Harness-neutral write tools backed by local PostgreSQL.
 
-UC functions cannot perform DML, so writes (create page, promote answer) are
-exposed to agents as plain Python callables. Register them with your agent
-framework of choice — Databricks Agent Framework, LangChain, LlamaIndex, or
-any MCP server implementation that supports Python tools.
+Register the returned Python callables with Codex, Claude Code, LangChain,
+LlamaIndex, or any MCP implementation that supports Python tools.
 
 Usage::
 
     from wikibricks import make_agent_tools
 
-    tools = make_agent_tools(warehouse_id="abc123")
+    tools = make_agent_tools()
     tools["wiki_promote_answer"](
         question="What is a Delta table?",
         answer="A Delta table is ...",
@@ -20,29 +18,16 @@ Usage::
 from wikibricks.client import WikiClient
 
 
-def make_agent_tools(
-    warehouse_id: str | None = None,
-    workspace_client=None,
-    database_url: str | None = None,
-) -> dict:
+def make_agent_tools(database_url: str | None = None) -> dict:
     """Return a dict of write-capable agent tools bound to a WikiClient.
 
     Each value is a plain Python callable whose docstring describes the
-    tool contract. Agent frameworks can wrap these into their native
-    tool specs (MLflow ``tool_call``, LangChain ``@tool``, etc.).
-
-    Args:
-        warehouse_id: SQL Warehouse id to run MERGE / INSERT statements on.
-        workspace_client: Optional pre-configured ``WorkspaceClient``.
+    tool contract. Agent frameworks can wrap these into their native tool specs.
 
     Returns:
         ``{"wiki_write_page": callable, "wiki_promote_answer": callable}``.
     """
-    client = WikiClient(
-        warehouse_id=warehouse_id,
-        workspace_client=workspace_client,
-        database_url=database_url,
-    )
+    client = WikiClient(database_url)
 
     def wiki_write_page(
         path: str,
