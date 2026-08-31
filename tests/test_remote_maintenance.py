@@ -175,6 +175,7 @@ def test_bundle_defines_one_bounded_weekly_serverless_wheel_job():
     assert len(job["tasks"]) == 1
     task = job["tasks"][0]
     assert task["max_retries"] == 1
+    assert "libraries" not in task
     assert task["python_wheel_task"] == {
         "package_name": "wikibricks",
         "entry_point": "wikibricks-remote-maintenance",
@@ -191,7 +192,7 @@ def test_bundle_defines_one_bounded_weekly_serverless_wheel_job():
             "environment_key": "remote",
             "spec": {
                 "client": "4",
-                "dependencies": ["databricks-sdk>=0.85.0"],
+                "dependencies": ["../dist/*.whl", "databricks-sdk>=0.85.0"],
             },
         }
     ]

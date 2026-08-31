@@ -25,11 +25,10 @@ resources:
               endpoint: ${var.lakebase_endpoint}
               database: ${var.lakebase_database}
               model-endpoint: ${var.model_endpoint}
-          libraries:
-            - whl: ../dist/*.whl
       environments:
         - environment_key: remote
           spec:
             client: "4"
             dependencies:
+              - ../dist/*.whl
               - databricks-sdk>=0.85.0
