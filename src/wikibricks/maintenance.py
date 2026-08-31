@@ -32,6 +32,7 @@ _FINGERPRINT_TABLES = (
     "curation_patches",
     "curation_receipts",
     "curation_conflicts",
+    "remote_maintenance_runs",
     "archive_pages",
     "archive_batches",
     "archive_events",

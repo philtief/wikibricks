@@ -18,7 +18,7 @@ local page and session versions
             v
 Lakebase immutable archive
             |
-            | Lakebase CDC to Delta and monthly analysis
+            | bounded weekly analysis
             v
 immutable curation manifest
             |
@@ -40,7 +40,8 @@ conflict review, and resolution use local PostgreSQL.
 
 ## Stored state
 
-Migration `0003_curation_patches.sql` adds the following records:
+Migrations `0003_curation_patches.sql` through
+`0005_remote_maintenance.sql` add the following records:
 
 | Record | Purpose |
 |---|---|
@@ -50,6 +51,7 @@ Migration `0003_curation_patches.sql` adds the following records:
 | `curation_receipts` | Records the local result for every processed patch. |
 | `curation_conflicts` | Stores base, local, and remote values for a failed group. |
 | `page_aliases` | Resolves a superseded path to its canonical page. |
+| `remote_maintenance_runs` | Records processed archive watermarks, including runs with no proposals. |
 
 Pages remain stable entities with immutable versions. A page is either
 `active` or `superseded`. Superseded pages retain their versions but do not
@@ -135,7 +137,7 @@ links, status changes, receipts, operation records, and outbox events together.
 The resulting page version records `created_by=remote-curator` and the source
 patch ID. A receipt enters the normal archive outbox. Archive history therefore
 records both the page version and the local decision, which prevents the next
-monthly run from proposing the same work.
+weekly run from proposing the same work.
 
 ## Conflict rules
 
@@ -202,10 +204,15 @@ Local hygiene runs without Databricks:
 - Retention removes a session only after every immutable event version has a
   committed archive acknowledgement.
 
-The monthly remote process uses a fixed archive watermark. Lakebase Change Data
-Feed sends immutable history to Delta for semantic consolidation. The process
-validates its output and publishes one immutable manifest for the target
-replica. Remote analysis never needs a live connection to the local database.
+The weekly remote job uses a fixed archive watermark and bounded policy values
+from `src/wikibricks_remote/resources/remote-policy.yml`. It validates model
+output against the proposal contract and publishes one immutable manifest per
+replica. A run with no proposals records its watermark, so the next run does
+not analyze the same evidence again. Remote analysis never connects to the
+local database.
+
+Change Data Feed and a Lakehouse history layer are optional later additions.
+The weekly job does not require either one.
 
 ## Recovery properties
 
@@ -220,7 +227,7 @@ replica. Remote analysis never needs a live connection to the local database.
 The first remote deployment should use an isolated Lakebase Autoscaling branch.
 Run the publisher against copied archive data, pull its manifest into a staging
 local database, and compare page hashes, aliases, links, search results, and
-receipts before enabling the production monthly schedule. Keep the current
+receipts before enabling the production weekly schedule. Keep the current
 FEVM tables unchanged as rollback evidence during migration.
 
 ## References

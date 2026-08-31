@@ -1,0 +1,53 @@
+bundle:
+  name: wikibricks
+
+include:
+  - resources/*.yml
+
+artifacts:
+  default:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+variables:
+  lakebase_project:
+    description: Lakebase Autoscaling project ID
+    default: wikibricks
+  lakebase_branch:
+    description: Lakebase branch read and written by maintenance
+    default: staging
+  lakebase_endpoint:
+    description: Lakebase read-write endpoint ID
+    default: primary
+  lakebase_database:
+    description: PostgreSQL database name
+    default: wikibricks
+  model_endpoint:
+    description: Databricks Foundation Model API endpoint
+    default: databricks-claude-sonnet-4-5
+  schedule_pause_status:
+    description: Weekly schedule state
+    default: PAUSED
+
+targets:
+  dev:
+    default: true
+    mode: development
+    variables:
+      lakebase_branch: staging
+      schedule_pause_status: PAUSED
+
+  staging:
+    mode: development
+    variables:
+      lakebase_branch: staging
+      schedule_pause_status: PAUSED
+
+  personal:
+    mode: production
+    workspace:
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
+    variables:
+      lakebase_branch: production
+      schedule_pause_status: UNPAUSED

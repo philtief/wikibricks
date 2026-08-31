@@ -236,12 +236,15 @@ wikibricks sync lakebase \
   --database wikibricks
 ```
 
+Add `--drain` to send consecutive batches. A drain stops after 100 batches by
+default; set a lower ceiling with `--max-batches`.
+
 The command obtains a short-lived Lakebase credential, copies immutable page
 and session versions, commits by ID and hash, then acknowledges local outbox
 rows. Interrupted syncs retry the same batch without duplicating remote data.
 Normal WikiBricks commands never invoke this adapter.
 
-A monthly remote process can publish curation manifests back to a local inbox.
+A weekly remote job can publish curation manifests back to a local inbox.
 Pulling a manifest does not change active pages:
 
 ```bash
@@ -256,8 +259,13 @@ Conflicting local edits remain active until an explicit resolution. Duplicate
 cleanup updates pages, links, aliases, and receipts in one transaction. See
 [`docs/curation-sync.md`](docs/curation-sync.md) for the protocol and runbook.
 
-The Lakebase migration and monthly Databricks maintenance job are separate from
-this local release and have not been deployed.
+The repository includes a paused-by-default Databricks bundle for the weekly
+job. Validate and deploy it only after creating the Lakebase staging branch:
+
+```bash
+databricks bundle validate --strict -t staging --profile PROFILE
+databricks bundle deploy -t staging --profile PROFILE
+```
 
 ## Develop
 
@@ -265,7 +273,7 @@ this local release and have not been deployed.
 git clone https://github.com/philtief/wikibricks.git
 cd wikibricks
 uv sync --extra dev
-uv run pytest                     # 83 tests
+uv run pytest                     # 88 tests
 uv run ruff check src tests
 uv build
 UV_OFFLINE=1 uv run pytest

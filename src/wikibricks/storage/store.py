@@ -76,7 +76,8 @@ class PostgresStore:
 
     def clear_all(self) -> None:
         tables = (
-            "curation_conflicts, curation_receipts, page_aliases, curation_patches, "
+            "remote_maintenance_runs, curation_conflicts, curation_receipts, "
+            "page_aliases, curation_patches, "
             "curation_runs, sync_replicas, archive_batch_events, archive_events, "
             "archive_batches, curated_pages, archive_pages, sync_state, sync_outbox, "
             "session_search_chunks, session_event_versions, session_events, sessions, "

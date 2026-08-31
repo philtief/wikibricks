@@ -43,7 +43,7 @@ def test_migrations_are_repeatable_and_create_required_indexes(postgres_url: str
     assert {"page_search_chunks_vector_idx", "session_search_chunks_vector_idx"} <= indexes
     assert {"pages_path_trgm_idx", "page_versions_title_trgm_idx"} <= indexes
     assert {"pages_active_path_idx", "curation_conflicts_pending_idx"} <= indexes
-    assert migration_count == 4
+    assert migration_count == 5
 
 
 def test_store_exposes_focused_repositories(store: PostgresStore):
