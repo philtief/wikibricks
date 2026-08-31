@@ -29,6 +29,37 @@ def _database_url(base_url: str, database: str) -> str:
     return make_conninfo(**params)
 
 
+def test_curation_package_supports_stable_public_imports():
+    from wikibricks.curation import (
+        apply_run,
+        build_manifest,
+        create_patch,
+        get_or_create_replica_id,
+        list_conflicts,
+        plan_run,
+        publish_manifest,
+        pull_manifests,
+        resolve_conflict,
+        validate_manifest,
+    )
+
+    assert all(
+        callable(operation)
+        for operation in (
+            apply_run,
+            build_manifest,
+            create_patch,
+            get_or_create_replica_id,
+            list_conflicts,
+            plan_run,
+            publish_manifest,
+            pull_manifests,
+            resolve_conflict,
+            validate_manifest,
+        )
+    )
+
+
 @pytest.fixture(scope="module")
 def curation_remote_url(postgres_url: str) -> str:
     target = _database_url(postgres_url, "wikibricks_curation_remote_test")
