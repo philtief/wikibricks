@@ -246,20 +246,35 @@ the remote commit. A retry after a lost connection does not duplicate data.
 Use `--pull-curated` to import a newer remote `curated_pages` snapshot into the
 local archive cache. A remote page never overwrites a locally changed page.
 
+Remote curation uses immutable patch manifests rather than copying remote rows
+into the active local wiki. Pulling and applying are separate operations:
+
+```bash
+wikibricks sync lakebase \
+  --profile <databricks-profile> \
+  --project <lakebase-project> \
+  --pull-patches
+
+wikibricks sync plan <run-id> --policy safe
+wikibricks sync apply <run-id> --policy safe
+wikibricks sync conflicts
+```
+
+An update applies only when its base version ID and content hash still match.
+A divergent local edit creates a three-way conflict. Duplicate cleanup updates
+the canonical page, retargets links, preserves an alias, and supersedes the
+duplicate in one transaction. See
+[`docs/curation-sync.md`](docs/curation-sync.md) for the manifest contract,
+resolution commands, and monthly runbook.
+
 The local 0.8.0 release includes the archive protocol and local PostgreSQL
 contract tests. [Lakebase Change Data
 Feed](https://docs.databricks.com/aws/en/oltp/projects/quickstart-lakebase-cdf),
-Delta curation, the read-only synced table, and migration of the current
-remote wiki are the next remote phase. They remain undeployed until the local
-gate is approved. Electric is also deferred because its
+Delta curation, and migration of the current remote wiki remain undeployed
+until the local gate is approved. Electric is also deferred because its
 [released write path](https://electric-sql.com/docs/guides/writes) does not yet
 provide the offline upstream-write and conflict contract that WikiBricks
 needs.
-
-The remote phase will replace the read-only snapshot cache as the final
-curation interface with versioned patch sets. Each patch will include its base
-content hash. Local curation will apply unchanged bases and queue local edit
-conflicts for review.
 
 ## Legacy Databricks compatibility
 
@@ -282,7 +297,7 @@ No call falls back to Databricks when local PostgreSQL is unavailable.
 
 ```bash
 uv sync --extra dev
-uv run pytest                        # 983 tests
+uv run pytest                        # 997 tests
 uv run ruff check src tests scripts
 uv build                             # dist/wikibricks-0.8.0-py3-none-any.whl
 UV_OFFLINE=1 uv run pytest

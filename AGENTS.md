@@ -210,10 +210,11 @@ run the complete gate in the public worktree, and show the diff for approval.
 ## Remote phase
 
 Remote work starts only after the local validation report is approved. The
-remote phase will add Lakebase Change Data Feed, Delta history, monthly heavy
-curation, hash-based patch sets, and non-destructive migration of the current
-remote wiki. Local apply accepts a patch only when its base hash still matches.
-Conflicts remain local review items.
+local patch protocol is implemented in `wikibricks.curation_sync`. The remote
+phase adds Lakebase Change Data Feed, Delta history, monthly heavy curation,
+and non-destructive migration of the current remote wiki. Local apply accepts a
+patch only when its base version ID and hash still match. Conflicts remain
+local review items.
 
 Select the Databricks CLI profile explicitly. Use scale-to-zero resources.
 Run bundle validation before deployment. Record resource IDs, job runs,
