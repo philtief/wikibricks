@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- `WikiClient()` now has one runtime: local PostgreSQL. Storage and curation
+  code are split into focused modules behind compatibility exports.
+- YAML configuration, Markdown agent instructions, MCP tool definitions, and
+  session and curation JSON schemas ship as package resources.
+- The optional Lakebase adapter now lives at `wikibricks.remote.lakebase` and
+  imports the Databricks SDK only when it requests a remote credential.
+- The test suite now contains 83 behavior and integration tests focused on the
+  local API, PostgreSQL invariants, agent adapters, MCP, and archive sync.
+
+### Removed
+
+- SQL Warehouse compatibility, Unity Catalog and Vector Search helpers, the
+  Databricks App and jobs, notebooks, the graph App, remote recorder code, and
+  duplicate MCP implementations.
+- The `wikibricks_databricks` and `wikibricks_recorder` packages. Claude Code
+  hooks now use the harness-neutral adapters in `wikibricks.adapters`.
+
 ## [0.8.0] - 2026-08-31
 
 ### Changed

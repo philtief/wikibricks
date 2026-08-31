@@ -18,7 +18,7 @@ local page and session versions
             v
 Lakebase immutable archive
             |
-            | CDC to Delta and monthly analysis
+            | Lakebase CDC to Delta and monthly analysis
             v
 immutable curation manifest
             |
@@ -202,10 +202,10 @@ Local hygiene runs without Databricks:
 - Retention removes a session only after every immutable event version has a
   committed archive acknowledgement.
 
-The monthly remote process uses a fixed archive watermark. It reads Lakebase
-history through Delta, performs semantic consolidation, validates its output,
-and publishes one immutable manifest for the target replica. Remote analysis
-never needs a live connection to the local database.
+The monthly remote process uses a fixed archive watermark. Lakebase Change Data
+Feed sends immutable history to Delta for semantic consolidation. The process
+validates its output and publishes one immutable manifest for the target
+replica. Remote analysis never needs a live connection to the local database.
 
 ## Recovery properties
 

@@ -1,85 +1,80 @@
 # Contributing to WikiBricks
 
-Thanks for your interest. WikiBricks is a Databricks Asset Bundle that deploys a
-Delta + Vector Search wiki store and exposes it as native MCP tools. Before
-opening a PR, please read this file and skim [`AGENTS.md`](AGENTS.md) for the
-project's non-negotiables.
+WikiBricks is local PostgreSQL memory for AI agents. Read [`AGENTS.md`](AGENTS.md)
+before changing code; it defines the storage, MCP, sync, and release contracts.
 
-## Development setup
+## Set up the repository
+
+PostgreSQL 16 or 17 must be running. Integration tests create disposable test
+databases, so never point them at a database that contains user data.
 
 ```bash
-git clone https://github.com/<you>/wikibricks.git
+git clone https://github.com/philtief/wikibricks.git
 cd wikibricks
-uv sync                       # core library only
-uv sync --extra recorder      # also include the optional recorder package
-uv run pytest                 # 453 tests, no Databricks workspace required
+uv sync --extra dev
+uv run pytest
 ```
-
-A Databricks workspace is only needed for bundle deploy and end-to-end runs.
-See `databricks.override.example.yml` and `README.md` → Quick start.
 
 ## Development loop
 
+The repository uses the overnight-dev hook and test-driven development. Add a
+failing behavior test, confirm the expected failure, implement the smallest
+change, then run the focused and full gates.
+
 ```bash
-uv run pytest                          # fast unit + DAG tests
-uv run pytest tests/test_client.py     # single file
-uv run ruff check src tests scripts    # lint
-uv run ruff format src tests scripts   # format
+uv run pytest tests/test_postgres_store.py -q
+uv run ruff check src tests
+uv run pytest
+UV_OFFLINE=1 uv run pytest
+uv build
 ```
 
-The pre-commit hook runs lint + tests. If it blocks your commit, fix the
-problem and create a **new** commit — never `--amend` or `--no-verify`.
+The pre-commit hook runs Ruff and all tests. Fix a blocked commit and create a
+new commit. Do not use `--no-verify` or amend a checked commit.
 
-## Hard rules
+## Code boundaries
 
-1. **No LLM calls inside `src/wikibricks/`.** The library is a storage contract.
-   All LLM work lives in `notebooks/promote_from_traces.py` or user code.
-   *Scope:* this rule binds the library only; `src/wikibricks_recorder/`
-   is consumer-side tooling and may interact with LLMs.
-2. **No FastMCP or bespoke MCP server *for the library*.** UC functions are
-   the library's MCP surface via Databricks managed MCP. The recorder
-   package ships its own stdio MCP server (`wikibricks-mcp`) because UC
-   functions cannot do DML — that is consumer-side and allowed.
-3. **No raw REST API calls.** Use `databricks.sdk.WorkspaceClient` everywhere
-   except the vendored 2WikiMultiHopQA evaluator.
-4. **No hardcoded workspace IDs.** `databricks.yml` uses generic defaults;
-   workspace-specific values belong in `databricks.override.yml` (gitignored).
-5. **No destructive git without explicit confirmation.** No `git push --force`,
-   no `git reset --hard`, no branch deletion.
+- `WikiClient()` and `wikibricks-mcp` must work without network access,
+  Databricks credentials, or the Databricks SDK.
+- Keep model calls out of `src/wikibricks/`. The connected agent owns semantic
+  decisions.
+- Preserve immutable page and event versions, write/outbox atomicity, 64 KiB
+  search chunks, and the five MCP tool names.
+- `pg_trgm` is the only required PostgreSQL extension. Do not make embeddings
+  part of the base runtime.
+- Lakebase access belongs only in `wikibricks.remote.lakebase` and the explicit
+  `wikibricks sync lakebase` command. Import the Databricks SDK lazily.
+- Use the Databricks SDK for control-plane work and SQL for data operations.
+  Do not add raw REST calls.
+- Do not hardcode workspace IDs, user paths, credentials, or tokens.
 
 ## Pull requests
 
-- Target `main`.
-- Keep PRs focused — one feature or fix per PR.
-- Every changed line should trace to the PR description.
-- Add or update tests for behaviour changes. TDD is encouraged.
-- Update `CHANGELOG.md` under `[Unreleased]` using Keep-a-Changelog headings
-  (Added / Changed / Fixed / Deprecated / Removed / Security).
-- Lint + all tests must pass. CI blocks merging on red.
+Target `main` and keep each pull request focused on one behavior or refactor.
+Every changed line should trace to the request. Update tests for behavior
+changes and add an entry under `[Unreleased]` in `CHANGELOG.md`.
 
-## Reporting bugs
+Before opening the pull request, run Ruff, the full suite, the offline suite,
+and `uv build`. Changes to MCP packaging or storage also require an installed
+wheel smoke test.
 
-Open an issue using the **Bug report** template. Include:
+## Bugs and feature requests
 
-- Expected vs. actual behaviour
-- Minimum repro (ideally a failing test)
-- Environment: `python --version`, `uv run python -c "import wikibricks; print(wikibricks.__version__)"`, Databricks runtime
+A bug report should include expected and observed behavior, a minimal
+reproduction, Python and PostgreSQL versions, and whether the failure occurs
+offline. A failing test is preferred.
 
-## Suggesting features
+Feature requests should lead with the use case and the proposed public API.
+Changes to `WikiClient`, the session JSON schema, curation manifests, or MCP
+tool names are compatibility changes and need explicit review.
 
-Open an issue using the **Feature request** template. Describe the use case
-first, then a sketch of the API. Breaking changes to `WikiClient` need a minor
-version bump and a CHANGELOG entry.
+## Releases
 
-## Versioning + release
-
-WikiBricks follows SemVer. When bumping the library version:
-
-1. `pyproject.toml` — `version = "x.y.z"`
-2. **Every notebook's `%pip install` line** — `grep -rn "wikibricks-.*\.whl" notebooks/`
-3. `CHANGELOG.md` — new `## [x.y.z] - YYYY-MM-DD` section; update the footer compare links
-4. `uv build` to produce the wheel
-5. Tag `vx.y.z` — the release workflow builds + publishes
+WikiBricks follows Semantic Versioning. A version change updates
+`pyproject.toml`, `uv.lock`, `plugin/.claude-plugin/plugin.json`,
+`CHANGELOG.md`, and the README wheel/test references together. Build the wheel,
+run the local release gate, and publish only after the release candidate is
+approved.
 
 ## Code of conduct
 
