@@ -89,7 +89,7 @@ def test_remote_maintenance_publishes_once_for_one_archive_watermark(
                     "summary": "A curated weekly summary.",
                     "body": "The archived source supports this synthesis.",
                     "tags": ["weekly"],
-                    "source_ids": [evidence_id],
+                    "source_ids": ["session:weekly-source"],
                     "target_path": None,
                     "evidence_ids": [evidence_id],
                     "reason": "Preserve a reusable conclusion.",
@@ -125,6 +125,9 @@ def test_remote_maintenance_publishes_once_for_one_archive_watermark(
         ).fetchone()
     assert manifest["replica_id"] == first["replica_ids"][0]
     assert manifest["patches"][0]["path"] == "synthesis/weekly-source"
+    assert manifest["patches"][0]["proposal"]["source_ids"] == [
+        "session:weekly-source"
+    ]
     assert run == ("published", manifest["input_watermark"])
 
 

@@ -201,8 +201,6 @@ def build_patches(
         cited = list(raw["evidence_ids"])
         if not cited or not set(cited) <= known_evidence:
             raise ValueError("curation proposal cites unknown evidence")
-        if not set(raw["source_ids"]) <= known_evidence:
-            raise ValueError("curation proposal contains unknown source IDs")
         existing = current.get(path)
         if operation in {"create_page", "update_page"}:
             if not all(
