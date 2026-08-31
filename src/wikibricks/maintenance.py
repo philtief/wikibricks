@@ -110,7 +110,7 @@ def curate_database(
         page_rows = conn.execute(
             "SELECT v.version_id, v.content_text FROM pages p "
             "JOIN page_versions v ON v.version_id = p.current_version_id "
-            "WHERE NOT EXISTS (SELECT 1 FROM page_search_chunks c "
+            "WHERE p.status = 'active' AND NOT EXISTS (SELECT 1 FROM page_search_chunks c "
             "WHERE c.version_id = v.version_id)"
         ).fetchall()
         for version_id, content_text in page_rows:
@@ -140,11 +140,12 @@ def curate_database(
         duplicate_rows = conn.execute(
             "SELECT array_agg(p.path ORDER BY p.path), count(*) "
             "FROM pages p JOIN page_versions v ON v.version_id = p.current_version_id "
-            "WHERE p.path <> '_meta/index' GROUP BY v.content_hash "
+            "WHERE p.status = 'active' AND p.path <> '_meta/index' GROUP BY v.content_hash "
             "HAVING count(*) > 1 ORDER BY min(p.path)"
         ).fetchall()
         orphan_rows = conn.execute(
-            "SELECT p.path FROM pages p WHERE p.path NOT LIKE '_meta/%' "
+            "SELECT p.path FROM pages p WHERE p.status = 'active' "
+            "AND p.path NOT LIKE '_meta/%' "
             "AND NOT EXISTS (SELECT 1 FROM links l WHERE l.source_page_id = p.page_id "
             "OR l.target_page_id = p.page_id) ORDER BY p.path"
         ).fetchall()

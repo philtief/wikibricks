@@ -88,7 +88,8 @@ def _resolve_event(store: PostgresStore, row: dict[str, Any]) -> ArchiveEvent:
         if row["entity_kind"] == "page_version":
             payload_row = conn.execute(
                 "SELECT p.path, v.version, v.title, v.page_type, v.content, v.content_text, "
-                "v.tags, v.source_ids, v.parent_id, v.chunk_index, v.created_by, v.created_at "
+                "v.tags, v.source_ids, v.parent_id, v.chunk_index, v.created_by, v.created_at, "
+                "v.curation_patch_id "
                 "FROM page_versions v JOIN pages p ON p.page_id = v.page_id "
                 "WHERE v.version_id = %s",
                 (row["version_id"],),
@@ -108,6 +109,7 @@ def _resolve_event(store: PostgresStore, row: dict[str, Any]) -> ArchiveEvent:
                 "chunk_index": payload_row[9],
                 "created_by": payload_row[10],
                 "created_at": payload_row[11],
+                "curation_patch_id": payload_row[12],
             }
         elif row["entity_kind"] == "session_event_version":
             payload_row = conn.execute(
@@ -137,6 +139,23 @@ def _resolve_event(store: PostgresStore, row: dict[str, Any]) -> ArchiveEvent:
                 "metadata": payload_row[11],
                 "source_created_at": payload_row[12],
                 "created_at": payload_row[13],
+            }
+        elif row["entity_kind"] == "curation_receipt":
+            payload_row = conn.execute(
+                "SELECT run_id, patch_id, status, result_version_id, local_content_hash, "
+                "details, applied_at FROM curation_receipts WHERE patch_id = %s",
+                (row["version_id"],),
+            ).fetchone()
+            if not payload_row:
+                raise RuntimeError(f"missing immutable curation receipt {row['version_id']}")
+            payload = {
+                "run_id": payload_row[0],
+                "patch_id": payload_row[1],
+                "status": payload_row[2],
+                "result_version_id": payload_row[3],
+                "local_content_hash": payload_row[4],
+                "details": payload_row[5],
+                "applied_at": payload_row[6],
             }
         else:
             raise ValueError(f"unsupported outbox entity kind: {row['entity_kind']}")
@@ -325,3 +344,12 @@ def pull_curated_snapshot(local: PostgresStore, remote_url: str) -> int:
             )
             imported += 1
     return imported
+
+
+def pull_curation_patches(local: PostgresStore, remote_url: str) -> dict[str, int]:
+    """Copy immutable patch manifests into the local inbox without applying them."""
+    from wikibricks.curation_sync import get_or_create_replica_id, pull_manifests
+
+    remote = PostgresStore(remote_url)
+    replica_id = get_or_create_replica_id(local)
+    return pull_manifests(local, remote, replica_id=replica_id)

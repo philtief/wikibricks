@@ -26,6 +26,7 @@ from wikibricks.session_ingest import (
 
 MAX_SEARCH_CHUNK_BYTES = 64 * 1024
 _MIGRATION_LOCK_KEY = "wikibricks:schema-migrations"
+_NO_PRECONDITION = object()
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,31 @@ def _canonical_hash(value: Any) -> str:
         sort_keys=True,
     ).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()
+
+
+def page_content_hash(
+    *,
+    title: str,
+    page_type: str,
+    content: dict[str, Any],
+    content_text: str,
+    tags: list[str] | None,
+    source_ids: list[str] | None,
+    parent_id: str | None,
+    chunk_index: int | None,
+) -> str:
+    return _canonical_hash(
+        {
+            "title": title,
+            "page_type": page_type,
+            "content": content,
+            "content_text": content_text,
+            "tags": tags or [],
+            "source_ids": source_ids,
+            "parent_id": parent_id,
+            "chunk_index": chunk_index,
+        }
+    )
 
 
 def iter_search_chunks(text: str) -> Iterator[tuple[int, int, str]]:
@@ -116,8 +142,10 @@ class PostgresStore:
 
     def clear_all(self) -> None:
         tables = (
-            "archive_batch_events, archive_events, archive_batches, curated_pages, "
-            "archive_pages, sync_state, sync_outbox, session_search_chunks, "
+            "curation_conflicts, curation_receipts, page_aliases, curation_patches, "
+            "curation_runs, sync_replicas, archive_batch_events, archive_events, "
+            "archive_batches, curated_pages, archive_pages, sync_state, sync_outbox, "
+            "session_search_chunks, "
             "session_event_versions, session_events, sessions, operations, sources, "
             "links, page_search_chunks, page_versions, pages"
         )
@@ -152,6 +180,40 @@ class PostgresStore:
         chunk_index: int | None = None,
         content_text_override: str | None = None,
     ) -> str:
+        with self.connection() as conn, conn.transaction():
+            message, _version_id = self._write_page_in_connection(
+                conn,
+                path,
+                title,
+                content_json,
+                page_type=page_type,
+                created_by=created_by,
+                tags=tags,
+                source_ids=source_ids,
+                parent_id=parent_id,
+                chunk_index=chunk_index,
+                content_text_override=content_text_override,
+            )
+            self._failpoint("before_commit")
+        return message
+
+    def _write_page_in_connection(
+        self,
+        conn: Connection,
+        path: str,
+        title: str,
+        content_json: str | dict[str, Any],
+        *,
+        page_type: str = "concept",
+        created_by: str = "agent",
+        tags: list[str] | None = None,
+        source_ids: list[str] | None = None,
+        parent_id: str | None = None,
+        chunk_index: int | None = None,
+        content_text_override: str | None = None,
+        expected_base_content_hash: str | None | object = _NO_PRECONDITION,
+        curation_patch_id: UUID | None = None,
+    ) -> tuple[str, UUID | None]:
         if not path or "/" not in path:
             raise ValueError("wiki page path must contain a slash")
         content = json.loads(content_json) if isinstance(content_json, str) else content_json
@@ -162,79 +224,93 @@ class PostgresStore:
             content_text = " ".join(
                 str(content.get(key) or "") for key in ("summary", "body")
             ).strip()
-        page_hash = _canonical_hash(
-            {
-                "title": title,
-                "page_type": page_type,
-                "content": content,
-                "content_text": content_text,
-                "tags": tags or [],
-                "source_ids": source_ids,
-                "parent_id": parent_id,
-                "chunk_index": chunk_index,
-            }
+        page_hash = page_content_hash(
+            title=title,
+            page_type=page_type,
+            content=content,
+            content_text=content_text,
+            tags=tags,
+            source_ids=source_ids,
+            parent_id=parent_id,
+            chunk_index=chunk_index,
         )
-        with self.connection() as conn, conn.transaction():
-            existing = conn.execute(
-                "SELECT p.page_id, v.version, v.content_hash, v.tags "
-                "FROM pages p LEFT JOIN page_versions v ON v.version_id = p.current_version_id "
-                "WHERE p.path = %s FOR UPDATE OF p",
-                (path,),
-            ).fetchone()
-            if existing and existing[2] == page_hash:
-                return f"Wiki page unchanged: {path}"
-            if existing:
-                page_id, current_version, _old_hash, old_tags = existing
-                version = int(current_version) + 1
-                preserved = [tag for tag in (old_tags or []) if tag.startswith("llm:")]
-                final_tags = list(dict.fromkeys([*(tags or []), *preserved]))
-            else:
-                page_id = uuid4()
-                version = 1
-                final_tags = tags or []
-                conn.execute(
-                    "INSERT INTO pages (page_id, path) VALUES (%s, %s)",
-                    (page_id, path),
-                )
-            version_id = uuid4()
+        existing = conn.execute(
+            "SELECT p.page_id, v.version, v.content_hash, v.tags, p.status "
+            "FROM pages p LEFT JOIN page_versions v ON v.version_id = p.current_version_id "
+            "WHERE p.path = %s FOR UPDATE OF p",
+            (path,),
+        ).fetchone()
+        if existing and existing[4] != "active":
+            raise ValueError(f"wiki page is superseded: {path}")
+        if expected_base_content_hash is None and existing:
+            raise RuntimeError(f"page already exists: {path}")
+        if isinstance(expected_base_content_hash, str):
+            if not existing or existing[2] != expected_base_content_hash:
+                raise RuntimeError(f"page base content hash changed: {path}")
+        if existing and existing[2] == page_hash:
+            current_id = conn.execute(
+                "SELECT current_version_id FROM pages WHERE page_id = %s", (existing[0],)
+            ).fetchone()[0]
+            return f"Wiki page unchanged: {path}", current_id
+        if existing:
+            page_id, current_version, _old_hash, old_tags, _status = existing
+            version = int(current_version) + 1
+            preserved = [tag for tag in (old_tags or []) if tag.startswith("llm:")]
+            final_tags = list(dict.fromkeys([*(tags or []), *preserved]))
+        else:
+            page_id = uuid4()
+            version = 1
+            final_tags = tags or []
             conn.execute(
-                "INSERT INTO page_versions "
-                "(version_id, page_id, version, title, page_type, content, content_text, "
-                "tags, source_ids, parent_id, chunk_index, created_by, content_hash) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
-                (
-                    version_id,
-                    page_id,
-                    version,
-                    title,
-                    page_type,
-                    Jsonb(content),
-                    content_text,
-                    final_tags,
-                    source_ids,
-                    UUID(parent_id) if parent_id else None,
-                    chunk_index,
-                    created_by,
-                    page_hash,
-                ),
+                "INSERT INTO pages (page_id, path) VALUES (%s, %s)",
+                (page_id, path),
             )
-            conn.execute(
-                "UPDATE pages SET current_version_id = %s, updated_at = now() WHERE page_id = %s",
-                (version_id, page_id),
-            )
-            self._insert_search_chunks(conn, "page_search_chunks", version_id, content_text)
-            conn.execute(
-                "INSERT INTO operations (operation_id, op_type, path) VALUES (%s, 'write', %s)",
-                (uuid4(), path),
-            )
-            conn.execute(
-                "INSERT INTO sync_outbox "
-                "(event_id, entity_kind, entity_id, version_id, payload_hash) "
-                "VALUES (%s, 'page_version', %s, %s, %s)",
-                (uuid4(), page_id, version_id, page_hash),
-            )
-            self._failpoint("before_commit")
-        return f"Wrote wiki page: {path}"
+        version_id = uuid4()
+        conn.execute(
+            "INSERT INTO page_versions "
+            "(version_id, page_id, version, title, page_type, content, content_text, "
+            "tags, source_ids, parent_id, chunk_index, created_by, content_hash, curation_patch_id) "
+            "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)",
+            (
+                version_id,
+                page_id,
+                version,
+                title,
+                page_type,
+                Jsonb(content),
+                content_text,
+                final_tags,
+                source_ids,
+                UUID(parent_id) if parent_id else None,
+                chunk_index,
+                created_by,
+                page_hash,
+                curation_patch_id,
+            ),
+        )
+        conn.execute(
+            "UPDATE pages SET current_version_id = %s, updated_at = now() WHERE page_id = %s",
+            (version_id, page_id),
+        )
+        self._insert_search_chunks(conn, "page_search_chunks", version_id, content_text)
+        conn.execute(
+            "INSERT INTO operations (operation_id, op_type, path, details) "
+            "VALUES (%s, 'write', %s, %s)",
+            (
+                uuid4(),
+                path,
+                Jsonb({"curation_patch_id": str(curation_patch_id)})
+                if curation_patch_id
+                else None,
+            ),
+        )
+        conn.execute(
+            "INSERT INTO sync_outbox "
+            "(event_id, entity_kind, entity_id, version_id, payload_hash) "
+            "VALUES (%s, 'page_version', %s, %s, %s)",
+            (uuid4(), page_id, version_id, page_hash),
+        )
+        return f"Wrote wiki page: {path}", version_id
 
     @staticmethod
     def _page_row(row: tuple[Any, ...]) -> dict[str, Any]:
@@ -252,15 +328,54 @@ class PostgresStore:
             "version": row[10],
         }
 
+    def current_page_state(self, path: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT p.page_id, p.path, p.status, p.superseded_by_page_id, "
+                "v.version_id, v.version, v.title, v.page_type, v.content, v.content_text, "
+                "v.tags, v.source_ids, v.parent_id, v.chunk_index, v.content_hash "
+                "FROM pages p JOIN page_versions v ON v.version_id = p.current_version_id "
+                "WHERE p.path = %s",
+                (path,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "page_id": str(row[0]),
+            "path": row[1],
+            "status": row[2],
+            "superseded_by_page_id": str(row[3]) if row[3] else None,
+            "version_id": str(row[4]),
+            "version": row[5],
+            "title": row[6],
+            "page_type": row[7],
+            "content": row[8],
+            "content_text": row[9],
+            "tags": list(row[10] or []),
+            "source_ids": list(row[11]) if row[11] is not None else None,
+            "parent_id": str(row[12]) if row[12] else None,
+            "chunk_index": row[13],
+            "content_hash": row[14],
+        }
+
     def read_page(self, path: str) -> dict[str, Any] | None:
         with self.connection() as conn:
             row = conn.execute(
                 "SELECT p.page_id, p.path, v.title, v.page_type, v.content, v.content_text, "
                 "v.tags, v.created_by, p.created_at, p.updated_at, v.version "
                 "FROM pages p JOIN page_versions v ON v.version_id = p.current_version_id "
-                "WHERE p.path = %s",
+                "WHERE p.path = %s AND p.status = 'active'",
                 (path,),
             ).fetchone()
+            if not row:
+                row = conn.execute(
+                    "SELECT p.page_id, p.path, v.title, v.page_type, v.content, v.content_text, "
+                    "v.tags, v.created_by, p.created_at, p.updated_at, v.version "
+                    "FROM page_aliases a JOIN pages p ON p.page_id = a.target_page_id "
+                    "JOIN page_versions v ON v.version_id = p.current_version_id "
+                    "WHERE a.alias_path = %s AND p.status = 'active'",
+                    (path,),
+                ).fetchone()
             if row:
                 return self._page_row(row)
             session = conn.execute(
@@ -322,7 +437,7 @@ class PostgresStore:
             rows = conn.execute(
                 "SELECT p.path, v.title, v.page_type, v.version "
                 "FROM pages p JOIN page_versions v ON v.version_id = p.current_version_id "
-                "WHERE p.path LIKE %s "
+                "WHERE p.path LIKE %s AND p.status = 'active' "
                 "UNION ALL "
                 "SELECT page_path, title, 'session', 1 FROM sessions WHERE page_path LIKE %s "
                 "UNION ALL "
@@ -365,7 +480,8 @@ class PostgresStore:
                 JOIN page_versions v ON v.version_id = p.current_version_id
                 LEFT JOIN page_search_chunks c ON c.version_id = v.version_id
                 CROSS JOIN q
-                WHERE p.path ILIKE %s OR v.title ILIKE %s OR c.search_vector @@ q.value
+                WHERE p.status = 'active'
+                  AND (p.path ILIKE %s OR v.title ILIKE %s OR c.search_vector @@ q.value)
                 GROUP BY p.page_id, p.path, v.title, v.page_type, v.content_text, v.tags, v.version
             ),
             session_hits AS (

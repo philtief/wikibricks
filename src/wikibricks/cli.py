@@ -8,6 +8,7 @@ import sys
 import time
 from pathlib import Path
 from typing import Any
+from uuid import UUID
 
 from wikibricks.adapters.jsonl import iter_jsonl_sessions
 from wikibricks.adapters.omnigent import (
@@ -153,7 +154,38 @@ def build_parser() -> argparse.ArgumentParser:
     lakebase.add_argument("--database", default="wikibricks")
     lakebase.add_argument("--limit", type=int, default=1000)
     lakebase.add_argument("--pull-curated", action="store_true")
+    lakebase.add_argument(
+        "--pull-patches",
+        action="store_true",
+        help="Download immutable remote curation manifests without applying them",
+    )
     lakebase.set_defaults(handler=_command_sync_lakebase)
+
+    replica = sync_targets.add_parser("replica", help="Show the stable local replica ID")
+    replica.set_defaults(handler=_command_sync_replica)
+
+    plan = sync_targets.add_parser("plan", help="Plan a downloaded curation run locally")
+    plan.add_argument("run_id", type=UUID)
+    plan.add_argument("--policy", choices=("safe", "all"), default="safe")
+    plan.set_defaults(handler=_command_sync_plan)
+
+    apply = sync_targets.add_parser("apply", help="Apply a downloaded curation run locally")
+    apply.add_argument("run_id", type=UUID)
+    apply.add_argument("--policy", choices=("safe", "all"), default="safe")
+    apply.set_defaults(handler=_command_sync_apply)
+
+    conflicts = sync_targets.add_parser("conflicts", help="List unresolved local curation conflicts")
+    conflicts.set_defaults(handler=_command_sync_conflicts)
+
+    resolve = sync_targets.add_parser("resolve", help="Resolve one local curation conflict group")
+    resolve.add_argument("run_id", type=UUID)
+    resolve.add_argument("group_id", type=UUID)
+    resolve.add_argument(
+        "--action",
+        required=True,
+        choices=("keep_local", "accept_remote", "merged", "defer"),
+    )
+    resolve.set_defaults(handler=_command_sync_resolve)
     return parser
 
 
@@ -244,6 +276,7 @@ def _command_sync_lakebase(args: argparse.Namespace) -> int:
     from wikibricks_databricks.lakebase_sync import (
         LakebaseTarget,
         pull_curated_snapshot,
+        pull_curation_patches,
         sync_to_archive,
     )
 
@@ -261,7 +294,57 @@ def _command_sync_lakebase(args: argparse.Namespace) -> int:
     if args.pull_curated:
         remote_url = target.fresh_database_url()
         result["curated_pages_imported"] = pull_curated_snapshot(local, remote_url)
+    if args.pull_patches:
+        remote_url = target.fresh_database_url()
+        result["curation"] = pull_curation_patches(local, remote_url)
     _print_json(result)
+    return 0
+
+
+def _command_sync_replica(args: argparse.Namespace) -> int:
+    from wikibricks.curation_sync import get_or_create_replica_id
+
+    store = PostgresStore(args.database_url)
+    _print_json({"replica_id": str(get_or_create_replica_id(store))})
+    return 0
+
+
+def _command_sync_plan(args: argparse.Namespace) -> int:
+    from wikibricks.curation_sync import plan_run
+
+    store = PostgresStore(args.database_url)
+    _print_json(plan_run(store, args.run_id, policy=args.policy))
+    return 0
+
+
+def _command_sync_apply(args: argparse.Namespace) -> int:
+    from wikibricks.curation_sync import apply_run
+
+    store = PostgresStore(args.database_url)
+    _print_json(apply_run(store, args.run_id, policy=args.policy))
+    return 0
+
+
+def _command_sync_conflicts(args: argparse.Namespace) -> int:
+    from wikibricks.curation_sync import list_conflicts
+
+    store = PostgresStore(args.database_url)
+    _print_json(list_conflicts(store))
+    return 0
+
+
+def _command_sync_resolve(args: argparse.Namespace) -> int:
+    from wikibricks.curation_sync import resolve_conflict
+
+    store = PostgresStore(args.database_url)
+    _print_json(
+        resolve_conflict(
+            store,
+            args.run_id,
+            args.group_id,
+            action=args.action,
+        )
+    )
     return 0
 
 
