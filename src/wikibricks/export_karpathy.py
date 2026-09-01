@@ -1,10 +1,7 @@
-"""CLI: export a wikibricks store to a Karpathy-style markdown folder.
+"""Export WikiBricks pages to a Karpathy-style Markdown folder.
 
 Usage:
-    uv run python -m wikibricks.export_karpathy ./out/ \\
-        --profile fe-vm-agent-marketplace \\
-        --catalog mycat --schema myschema \\
-        --warehouse-id 41754a8563a43a49
+    python -m wikibricks.export_karpathy ./wiki
 
 Walks every page in the wiki, writes one `.md` per page under the target
 directory. Frontmatter carries title, tags, memory_class, page_type, path.
@@ -12,12 +9,8 @@ Outgoing currently-valid edges (`valid_until IS NULL`) become a `## Related`
 section with `[[wikilinks]]` or `link_type::[[wikilinks]]` (LLM Wiki v2
 typed-edge syntax).
 
-The output round-trips with `python -m wikibricks.import_karpathy` — you
-can export the whole wiki, edit in Obsidian / Foam / Dendron / vim, and
-re-import the modified folder.
-
-This is the answer to "what about lock-in?" — wikibricks owns nothing,
-the data is yours, as a folder of plain markdown.
+The output round-trips with `python -m wikibricks.import_karpathy`. Edit the
+files in any Markdown editor, then import the folder again.
 """
 
 import argparse
@@ -81,7 +74,7 @@ def write_pages(target_dir: Path, pages: list[dict], edges: list[dict]) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("target_dir", help="where to write the markdown tree")
-    p.add_argument("--database-url", help="PostgreSQL connection URL")
+    p.add_argument("--database-url", help="Optional PostgreSQL connection URL")
     p.add_argument("--limit", type=int, default=None,
                    help="cap number of pages exported (testing)")
     args = p.parse_args()

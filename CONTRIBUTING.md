@@ -1,12 +1,13 @@
 # Contributing to WikiBricks
 
-WikiBricks is local PostgreSQL memory for AI agents. Read
+WikiBricks is shared local memory for AI agents. Read
 [`AGENTS.md`](AGENTS.md) before changing code.
 
 ## Set up
 
-PostgreSQL 16 or 17 must be running. Tests create disposable databases, so
-never point them at user data.
+SQLite tests need no service. PostgreSQL 16 or 17 is required only for
+compatibility and Lakebase tests. Tests create disposable databases, so never
+point them at user data.
 
 ```bash
 git clone https://github.com/philtief/wikibricks.git
@@ -39,7 +40,8 @@ Do not bypass the pre-commit hook or amend a checked commit.
 - The connected agent, not the library, makes semantic curation decisions.
 - Preserve immutable versions, transactionally coupled outbox writes, and the
   five MCP tool names.
-- `pg_trgm` is the only required PostgreSQL extension.
+- Keep SQLite as the zero-configuration default. PostgreSQL compatibility uses
+  `pg_trgm`.
 - Keep Lakebase access behind explicit configuration or the diagnostic sync
   command.
 - Use the Databricks SDK for control-plane work and SQL for data operations.

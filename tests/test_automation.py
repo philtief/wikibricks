@@ -1,17 +1,12 @@
 from __future__ import annotations
 
-import asyncio
 import json
-import os
 import sqlite3
-import sys
 from dataclasses import replace
 from pathlib import Path
 from uuid import UUID
 
 import pytest
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from wikibricks.automation import run_background_cycle, run_remote_cycle
@@ -222,43 +217,23 @@ def _omnigent_db(path: Path) -> tuple[str, sqlite3.Connection]:
     return "cc" * 16, connection
 
 
-def test_mcp_start_imports_omnigent_without_a_user_command(
-    tmp_path: Path,
-):
+def test_background_cycle_does_not_scrape_omnigent_database(tmp_path: Path):
     database_path = tmp_path / "wikibricks.db"
     store = SQLiteStore(database_path)
     store.migrate()
     chat_db = tmp_path / "chat.db"
     conversation_id, writer = _omnigent_db(chat_db)
-    environment = dict(os.environ)
-    environment.update(
-        {
+    config = load_config(
+        home=tmp_path,
+        environ={
             "WIKIBRICKS_DATABASE_PATH": str(database_path),
-            "WIKIBRICKS_AUTOMATION_ENABLED": "true",
-            "WIKIBRICKS_AUTOMATION_POLL_SECONDS": "1",
             "WIKIBRICKS_OMNIGENT_DATABASE": str(chat_db),
-            "WIKIBRICKS_USER_ID": "u",
-            "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
-        }
+        },
     )
-
-    async def exercise() -> None:
-        server = StdioServerParameters(
-            command=sys.executable,
-            args=["-m", "wikibricks.mcp_server"],
-            env=environment,
-        )
-        async with stdio_client(server) as (read_stream, write_stream):
-            async with ClientSession(read_stream, write_stream) as session:
-                await session.initialize()
-                path = f"omnigent-sessions/u/2026/08/30/{conversation_id}"
-                for _ in range(100):
-                    if store.read_page(path) is not None:
-                        break
-                    await asyncio.sleep(0.02)
-                assert store.read_page(path) is not None
-
     try:
-        asyncio.run(exercise())
+        result = run_background_cycle(config, now=700_000)
     finally:
         writer.close()
+
+    assert "omnigent" not in result
+    assert store.read_page(f"omnigent-sessions/u/2026/08/30/{conversation_id}") is None

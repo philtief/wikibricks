@@ -1,6 +1,6 @@
 # Curation sync protocol
 
-Local PostgreSQL owns the active WikiBricks pages. Lakebase stores immutable
+Local SQLite owns the active WikiBricks pages. Lakebase stores immutable
 history and publishes curation proposals. A remote process cannot update a
 local page directly.
 
@@ -35,9 +35,10 @@ new local page versions and receipts
 Lakebase acknowledgement history
 ```
 
-A configured MCP background cycle contacts Databricks once a day. The
+A configured background cycle contacts Lakebase once a week. Omnigent and the
+MCP server start the same scheduler. The
 diagnostic `wikibricks sync lakebase` command can run the same exchange on
-demand. Planning, application, and conflict resolution use local PostgreSQL.
+demand. Planning, application, and conflict resolution use local SQLite.
 
 ## Stored state
 
@@ -61,7 +62,7 @@ reports.
 
 ## Manifest contract
 
-A curator publishes a complete manifest in one PostgreSQL transaction. The
+A curator publishes a complete manifest in one Lakebase transaction. The
 manifest contains:
 
 - `schema_version`
@@ -94,10 +95,11 @@ Patches contain data, never SQL or executable code.
 
 ## Background apply and recovery commands
 
-The MCP process performs the normal flow without a user command. It pushes
-pending versions, pulls matching manifests, applies low-risk exact-base patch
-groups, and resolves divergent groups as `keep_local`. It then runs local
-maintenance so search metadata and `_meta/index` match the active pages.
+The Omnigent or MCP process performs the normal flow without a user command.
+It pushes pending versions, pulls matching manifests, applies low-risk
+exact-base patch groups, and resolves divergent groups as `keep_local`. It
+then runs local maintenance so search metadata and `_meta/index` match the
+active pages.
 
 The commands in this section expose the protocol for diagnostics and recovery.
 A pull copies matching manifests into the local inbox without changing a page:
@@ -135,10 +137,11 @@ wikibricks curate
 wikibricks check
 ```
 
-Application takes a PostgreSQL advisory transaction lock. It then locks every
-participating page row and repeats the precondition checks. Each group commits
-as one transaction. A failure rolls back page versions, search rows, aliases,
-links, status changes, receipts, operation records, and outbox events together.
+Application takes a SQLite write lock and repeats the precondition checks.
+Each group commits as one transaction. A failure rolls back page versions,
+search rows, aliases, links, status changes, receipts, operation records, and
+outbox events together. The optional PostgreSQL compatibility backend uses an
+advisory transaction lock for the same boundary.
 
 The resulting page version records `created_by=remote-curator` and the source
 patch ID. A receipt enters the normal archive outbox. Archive history therefore
@@ -205,10 +208,11 @@ but stay outside the curated `_meta/index` page.
 
 Local hygiene runs without Databricks:
 
-- The write path prevents identical versions and updates GIN search chunks.
-- The active MCP client searches before writing and updates existing pages.
+- The write path prevents identical versions and updates FTS5 search chunks.
+- The active agent searches before writing and updates existing pages.
 - A daily `wikibricks curate` repairs search metadata and reports active
-  duplicates and orphans. The MCP process schedules this automatically.
+  duplicates and orphans. Omnigent and the MCP process schedule this
+  automatically.
 - Retention removes a session only after every immutable event version has a
   committed archive acknowledgement.
 
@@ -222,16 +226,15 @@ local database.
 The weekly job reads the Lakebase archive directly. It does not require a
 second storage system.
 
-The local MCP process checks the archive once a day. This keeps the Databricks
-job weekly while allowing its manifest to reach local PostgreSQL within one
-day. Missing credentials, a suspended endpoint, or a network failure does not
-delay local search or agent work.
+The local scheduler checks the archive once a week. Missing credentials, a
+suspended endpoint, or a network failure does not delay local search or agent
+work.
 
 ## Recovery properties
 
 - Pull is idempotent by run ID and manifest hash.
 - Apply is idempotent by patch receipt and proposed content hash.
-- Concurrent apply commands serialize through an advisory lock.
+- Concurrent apply commands serialize through the local store's write lock.
 - A crash before group commit leaves no partial page or cleanup state.
 - A lost connection after the remote archive commit retries the existing
   archive batch by immutable event ID.
@@ -245,4 +248,4 @@ receipts before enabling the production weekly schedule.
 ## References
 
 1. [Andrej Karpathy, LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-2. [PostgreSQL, TOAST storage](https://www.postgresql.org/docs/current/storage-toast.html)
+2. [SQLite, FTS5](https://www.sqlite.org/fts5.html)

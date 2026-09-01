@@ -11,8 +11,6 @@ automation:
   enabled: true
   poll_seconds: 300
   local_maintenance_hours: 24
-  omnigent:
-    database: ~/.omnigent/chat.db
 sync:
   batch_size: 1000
   apply_policy: safe

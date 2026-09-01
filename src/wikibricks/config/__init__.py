@@ -20,7 +20,6 @@ _ALLOWED = {
         "enabled": None,
         "poll_seconds": None,
         "local_maintenance_hours": None,
-        "omnigent": {"database": None},
     },
     "sync": {
         "batch_size": None,
@@ -45,7 +44,6 @@ class WikiBricksConfig:
     automation_enabled: bool
     automation_poll_seconds: int
     automation_local_maintenance_hours: int
-    automation_omnigent_database: Path
     sync_batch_size: int
     sync_apply_policy: Literal["safe", "all"]
     sync_interval_hours: int
@@ -133,7 +131,6 @@ def _environment_overlay(environ: Mapping[str, str]) -> dict[str, Any]:
         "WIKIBRICKS_SYNC_APPLY_POLICY": ("sync", "apply_policy", str),
         "WIKIBRICKS_AUTOMATION_ENABLED": ("automation", "enabled", str),
         "WIKIBRICKS_AUTOMATION_POLL_SECONDS": ("automation", "poll_seconds", int),
-        "WIKIBRICKS_OMNIGENT_DATABASE": ("automation", "omnigent.database", str),
         "WIKIBRICKS_SYNC_INTERVAL_HOURS": ("sync", "interval_hours", int),
         "WIKIBRICKS_SYNC_PROFILE": ("sync", "profile", str),
         "WIKIBRICKS_SYNC_PROJECT": ("sync", "project", str),
@@ -234,15 +231,6 @@ def load_config(
         minimum=1,
         maximum=8760,
     )
-    omnigent_database = _string(
-        value["automation"]["omnigent"]["database"],
-        "automation.omnigent.database",
-    )
-    assert omnigent_database is not None
-    if omnigent_database.startswith("~/"):
-        omnigent_path = user_home / omnigent_database[2:]
-    else:
-        omnigent_path = Path(omnigent_database).expanduser()
     batch_size = _integer(
         value["sync"]["batch_size"],
         "sync.batch_size",
@@ -275,7 +263,6 @@ def load_config(
         automation_enabled=automation_enabled,
         automation_poll_seconds=poll_seconds,
         automation_local_maintenance_hours=local_maintenance_hours,
-        automation_omnigent_database=omnigent_path,
         sync_batch_size=batch_size,
         sync_apply_policy=policy,
         sync_interval_hours=sync_interval_hours,

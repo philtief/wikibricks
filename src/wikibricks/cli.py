@@ -123,11 +123,11 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
 
         config = load_config()
     parser = argparse.ArgumentParser(prog="wikibricks")
-    parser.add_argument("--database-url", help="PostgreSQL connection URL")
+    parser.add_argument("--database-url", help="Optional PostgreSQL connection URL")
     parser.add_argument("--database-path", type=Path, default=config.database_path)
     commands = parser.add_subparsers(dest="command", required=True)
 
-    init = commands.add_parser("init", help="Apply local PostgreSQL migrations")
+    init = commands.add_parser("init", help="Initialize the local memory database")
     init.set_defaults(handler=_command_init)
 
     search = commands.add_parser("search", help="Search local memory")
@@ -147,7 +147,7 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
     )
     curate.set_defaults(handler=_command_curate)
 
-    backup = commands.add_parser("backup", help="Create a pg_dump backup")
+    backup = commands.add_parser("backup", help="Back up the local memory database")
     backup.add_argument("output", type=Path)
     backup.set_defaults(handler=_command_backup)
 

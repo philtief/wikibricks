@@ -2,71 +2,67 @@
 
 Date: 2026-09-01
 
-Branch: `feat/lakebase-remote-maintenance`
+Branch: `main`
 
 ## Result
 
 WikiBricks records, searches, reads, writes, curates, backs up, and serves MCP
-tools through PostgreSQL without Databricks credentials. The installed wheel
-also completes its MCP smoke test without the Databricks SDK.
+tools through local SQLite without Databricks credentials. The Omnigent bridge
+also passed its focused cross-harness, pre-turn recall, post-commit capture,
+native transcript, and tool relay tests.
 
 ## Environment
 
 | Component | Version |
 |---|---|
 | Python | 3.14.3 |
-| PostgreSQL | 17.11 |
-| WikiBricks | 0.8.0 |
+| SQLite | 3.51.2 |
+| PostgreSQL compatibility test service | 17.11 |
+| WikiBricks | 0.9.0 |
 | overnight-dev plugin | 1.29.0 |
-
-PostgreSQL 16 and 17 integration coverage was completed during the local-first
-release gate on 2026-08-31. This cleanup reran the full suite against PostgreSQL
-17.
 
 ## Current gates
 
 | Command or check | Result |
 |---|---|
 | `uv run ruff check src tests` | passed |
-| `uv run pytest -q` | 89 passed |
-| `UV_OFFLINE=1 uv run pytest -q` | 89 passed |
-| `uv build` | wheel and source archive built |
-| Clean Python 3.14 wheel install | 33 dependencies installed |
-| Installed `wikibricks init` | disposable PostgreSQL schema created |
-| Installed `wikibricks-mcp` | five-tool write, search, and read smoke passed |
-| Installed `wikibricks-hook` | executable present |
-| Strict plugin and marketplace validation | passed |
-| Databricks SDK in clean base install | absent |
+| `uv run pytest -q` | 97 passed |
+| `UV_OFFLINE=1 uv run pytest -q` | 97 passed |
+| `uv build --offline` | wheel and source archive built |
+| Installed-wheel MCP smoke | five tools passed write, search, and read |
+| Omnigent focused memory suite | 6 passed |
+| Omnigent native transcript boundary | 2 passed |
 
-The clean-install database was dropped after the smoke test.
+The installed-wheel smoke used a new Python 3.14 virtual environment. The wheel
+was installed there while its already-resolved MCP dependencies came from the
+development environment because registry access was unavailable during this
+run.
 
-## Wheel
+## Artifacts
 
 | Artifact | Size | SHA-256 |
 |---|---:|---|
-| `dist/wikibricks-0.8.0-py3-none-any.whl` | 82,641 bytes | `f194b0b2bc6a6543f5d99ee79e5ec030b2025979254ab483b640944cbc5c9625` |
+| `dist/wikibricks-0.9.0-py3-none-any.whl` | 98,883 bytes | `ff7a28bb799e720bbff59d514847c4301c1036996478fe3250ec7688f46b73b6` |
+| `dist/wikibricks-0.9.0.tar.gz` | 195,731 bytes | `63d0c5c21d56a4ba0e70a27b3a8cce5fe69d0859b190b6d461770f345557190f` |
 
-The wheel contains 58 files, including YAML defaults, agent instructions, MCP
-schemas, curation schemas, PostgreSQL migrations, local storage modules, and
-the optional remote job package.
+The wheel contains 62 files, including SQLite migrations, YAML defaults, agent
+instructions, MCP schemas, curation contracts, the optional PostgreSQL
+compatibility backend, and the remote job package.
 
-Base dependencies are `mcp<2,>=1.0`, `psycopg[binary]==3.2.13`, and
-`pyyaml>=6.0`. The Databricks SDK is limited to the `lakebase` extra.
+The base dependencies are `mcp>=1.0,<2` and `PyYAML>=6.0`. PostgreSQL migration
+and Lakebase dependencies remain optional extras.
 
 ## Behavioral coverage
 
-The suite verifies:
+The suite verifies immutable SQLite page and session versions, atomic outbox
+writes, long event reconstruction, bounded FTS5 search, deterministic local
+maintenance, and archive-gated retention. It also covers the five tools through
+a stdio MCP session with outbound networking blocked.
 
-- immutable PostgreSQL page and session versions;
-- atomic version and outbox writes;
-- exact reconstruction of a 25 MB event;
-- bounded full-text search chunks and trigram path search;
-- Claude Code, Omnigent, Codex metadata, and JSONL session import;
-- all five tools through a real stdio MCP session without outbound access;
-- deterministic local curation and archive-gated retention;
-- idempotent Lakebase archive retry;
-- guarded curation manifests, atomic cleanup groups, and conflict history.
+The Omnigent tests verify one offline memory flow from Codex to Claude Code to
+Kimi, idempotent background capture, source runner metadata, a 250 ms fail-open
+recall boundary, hidden-context removal, and native tool relay.
 
-Raw sessions remain evidence. Agents maintain the smaller linked wiki, and
-local deterministic maintenance keeps indexes and retention state clean
-between optional remote runs.
+Raw sessions remain evidence. Agents maintain the smaller linked wiki. Daily
+local maintenance keeps indexes and retention state consistent between
+optional weekly remote runs.

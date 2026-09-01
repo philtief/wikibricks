@@ -1,21 +1,17 @@
 """CLI: import a Karpathy-style markdown wiki folder into WikiBricks.
 
 Usage:
-    uv run python -m wikibricks.import_karpathy ./my-notes/ \\
-        --profile fe-vm-agent-marketplace \\
-        --warehouse-id 41754a8563a43a49 \\
-        --catalog mycat --schema myschema [--dry-run]
+    python -m wikibricks.import_karpathy ./wiki [--dry-run]
 
 The importer walks every `.md` file under the source directory, parses
 frontmatter, extracts `[[wikilinks]]` and `relationship::[[target]]` typed
-edges, and writes pages + edges via `WikiClient.bulk_write_pages` +
-`WikiClient.commit_edges`. Edges with a `link_type` not in the library's
+edges, and writes pages and edges through `WikiClient`. Edges with a
+`link_type` not in the library's
 `VALID_LINK_TYPES` are downgraded to `related` and the original type is
 preserved as a tag.
 
-Idempotent: re-running overwrites existing pages (`write_page` archives
-the previous version) and the v0.6.0 bi-temporal `commit_edges` adds a
-new edge version while closing the previous one.
+Re-importing unchanged pages is a no-op. Changed pages and links keep their
+previous versions.
 """
 
 import argparse
@@ -154,7 +150,7 @@ def _resolve_edges_to_ids(
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("source_dir", help="path to the markdown wiki root")
-    p.add_argument("--database-url", help="PostgreSQL connection URL")
+    p.add_argument("--database-url", help="Optional PostgreSQL connection URL")
     p.add_argument("--dry-run", action="store_true",
                    help="report what would be imported without writing")
     args = p.parse_args()

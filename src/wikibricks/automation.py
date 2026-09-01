@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import asyncio
-import getpass
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -22,14 +22,6 @@ _LOGGER = logging.getLogger(__name__)
 _LOCK_NAME = "wikibricks:background-automation"
 _LOCAL_CURSOR = "automation:local-maintenance"
 _REMOTE_CURSOR = "automation:lakebase-sync"
-
-
-def _user_id() -> str:
-    return (
-        os.environ.get("WIKIBRICKS_USER_ID")
-        or os.environ.get("WIKIBRICKS_RECORDER_USER_ID")
-        or getpass.getuser()
-    ).replace("@", "-at-")
 
 
 def _due(store: Any, target: str, interval_hours: int, now: float) -> bool:
@@ -173,19 +165,6 @@ def run_background_cycle(
         if not acquired:
             return {"status": "busy"}
 
-        if active.automation_omnigent_database.exists():
-            try:
-                from wikibricks.cli import import_omnigent
-
-                result["omnigent"] = import_omnigent(
-                    database_url=database_target,
-                    db_path=active.automation_omnigent_database,
-                    user_id=_user_id(),
-                )
-            except Exception as exc:
-                _LOGGER.warning("WikiBricks Omnigent capture failed: %s", exc)
-                result["omnigent_error"] = str(exc)
-
         if (
             active.sync_profile
             and active.sync_project
@@ -230,4 +209,23 @@ async def run_background_loop() -> None:
         await asyncio.sleep(delay)
 
 
-__all__ = ["run_background_cycle", "run_background_loop", "run_remote_cycle"]
+def run_background_worker(stop: threading.Event) -> None:
+    """Run maintenance for a native host until its lifecycle ends."""
+    while not stop.is_set():
+        delay = 300
+        try:
+            config = load_config()
+            delay = config.automation_poll_seconds
+            if config.automation_enabled:
+                run_background_cycle(config)
+        except Exception as exc:
+            _LOGGER.warning("WikiBricks background cycle failed: %s", exc)
+        stop.wait(delay)
+
+
+__all__ = [
+    "run_background_cycle",
+    "run_background_loop",
+    "run_background_worker",
+    "run_remote_cycle",
+]

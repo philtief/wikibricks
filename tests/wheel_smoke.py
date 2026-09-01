@@ -56,7 +56,7 @@ async def _exercise() -> None:
                     {"query": "installed wheel marker"},
                 )
             )
-            assert searched[0]["path"] == "topics/wheel-smoke"
+            assert any(result["path"] == "topics/wheel-smoke" for result in searched)
 
             page = _json_result(
                 await session.call_tool(

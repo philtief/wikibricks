@@ -1,7 +1,7 @@
 [project]
 name = "wikibricks"
 version = "0.9.0"
-description = "Local PostgreSQL memory for AI agents with optional Lakebase archival"
+description = "Shared local memory for Omnigent and MCP agent harnesses"
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0,<2",

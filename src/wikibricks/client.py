@@ -233,7 +233,7 @@ class WikiClient:
 
     def sync_index(self) -> None:
         warnings.warn(
-            "sync_index is unnecessary for local PostgreSQL search",
+            "sync_index is unnecessary for local search",
             DeprecationWarning,
             stacklevel=2,
         )

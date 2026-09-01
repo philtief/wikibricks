@@ -8,7 +8,7 @@ Branch: `feat/lakebase-remote-maintenance`
 
 The staging job published one immutable curation manifest from a bounded
 Lakebase archive. Its immediate rerun was idle after the archive watermark
-advanced. Local PostgreSQL remained authoritative throughout the test.
+advanced. The local store remained authoritative throughout the test.
 
 The job publishes proposals only. It cannot connect to or update a local
 WikiBricks database.
