@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 import yaml
@@ -14,6 +15,22 @@ from wikibricks.postgres_store import PostgresStore
 from wikibricks.remote.lakebase import sync_to_archive
 
 ROOT = Path(__file__).parents[1]
+
+
+def test_model_json_parser_accepts_trailing_commentary():
+    from wikibricks_remote.main import _json_content
+
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content='{"proposals": []}\nThe wiki is already clean.'
+                )
+            )
+        ]
+    )
+
+    assert _json_content(response) == {"proposals": []}
 
 
 def _database_url(base_url: str, database: str) -> str:
