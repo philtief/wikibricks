@@ -1,15 +1,13 @@
 # Changelog
 
-## Unreleased
+## 0.11.0 - 2026-09-01
 
-- Added a source-free Omnigent 0.11 companion installer based on public agent
-  YAML, MCP, and `omnigent config` interfaces.
-- Made Codex the configurable default harness while keeping the installed
-  memory agent usable with other Omnigent harnesses.
-- Removed native-integration and automatic-transcript claims. The Omnigent
-  importer remains an optional recovery command.
-- Updated installation guidance for SQLite-first local memory and optional
-  weekly Lakebase curation.
+- Replaced the Omnigent companion agent with one shared memory skill and native
+  MCP configuration for Codex, Claude Code, and Kimi.
+- Added an idempotent `wikibricks install omnigent` command that preserves
+  unrelated user settings and removes the recognized legacy agent profile.
+- Kept the Omnigent importer as an optional recovery command. Normal work does
+  not poll Omnigent's conversation database.
 
 ## 0.9.0 - 2026-09-01
 

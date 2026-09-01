@@ -7,8 +7,9 @@ and usage are documented in `README.md`.
 
 WikiBricks is shared memory for multiple agent harnesses.
 
-- Omnigent is the primary interface. A companion agent uses public agent YAML,
-  instructions, and MCP. Do not patch or import Omnigent source code.
+- Omnigent is the primary interface. Its native Codex, Claude Code, and Kimi
+  launchers use one shared WikiBricks skill and user-level MCP configuration.
+  Do not create a separate memory agent or patch Omnigent source code.
 - Codex, Claude Code, Kimi, and other clients used outside Omnigent connect to
   the same local database through standard MCP.
 - SQLite at `~/.wikibricks/wikibricks.db` is the default active store.
@@ -49,7 +50,7 @@ src/wikibricks/
   storage/                  Shared storage contracts and optional PostgreSQL code
   curation/                 Guarded patch planning and application
   automation.py             Daily local and optional weekly remote scheduler
-  omnigent_install.py       Public Omnigent companion installer
+  omnigent_install.py       Native skill and MCP installer for Omnigent
   remote/lakebase.py        Optional Lakebase exchange
   resources/                MCP instructions and JSON contracts
   sql/sqlite/               Forward-only SQLite migrations
@@ -92,7 +93,7 @@ optional agent and workspace, source timestamps, metadata, and ordered events.
 Session identity is `(harness, external_id)`. Exact re-imports are no-ops.
 Changed source events create immutable versions.
 
-The MCP server exposes exactly these tools to Omnigent and direct clients:
+The MCP server exposes exactly these tools to native harnesses and direct clients:
 
 - `wiki_search`
 - `wiki_read_full`
@@ -102,7 +103,8 @@ The MCP server exposes exactly these tools to Omnigent and direct clients:
 
 Do not add client-specific names or schemas. Generic MCP has no portable
 session lifecycle, so it must not claim automatic transcript capture. The
-Omnigent integration must remain a readable agent YAML plus public CLI calls.
+Omnigent integration must use public harness configuration. It must not set a
+WikiBricks default agent. Preserve unrelated user settings when installing.
 
 ## Curation and synchronization
 

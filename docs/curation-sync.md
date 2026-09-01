@@ -35,8 +35,8 @@ new local page versions and receipts
 Lakebase acknowledgement history
 ```
 
-A configured background cycle contacts Lakebase once a week. Omnigent and the
-MCP server start the same scheduler. The
+A configured background cycle contacts Lakebase once a week. Each configured
+harness starts the WikiBricks MCP server, which owns the scheduler. The
 diagnostic `wikibricks sync lakebase` command can run the same exchange on
 demand. Planning, application, and conflict resolution use local SQLite.
 
@@ -95,8 +95,8 @@ Patches contain data, never SQL or executable code.
 
 ## Background apply and recovery commands
 
-The Omnigent or MCP process performs the normal flow without a user command.
-It pushes pending versions, pulls matching manifests, applies low-risk
+The MCP process performs the normal flow without a user command. It pushes
+pending versions, pulls matching manifests, applies low-risk
 exact-base patch groups, and resolves divergent groups as `keep_local`. It
 then runs local maintenance so search metadata and `_meta/index` match the
 active pages.
@@ -211,8 +211,7 @@ Local hygiene runs without Databricks:
 - The write path prevents identical versions and updates FTS5 search chunks.
 - The active agent searches before writing and updates existing pages.
 - A daily `wikibricks curate` repairs search metadata and reports active
-  duplicates and orphans. Omnigent and the MCP process schedule this
-  automatically.
+  duplicates and orphans. The MCP process schedules this automatically.
 - Retention removes a session only after every immutable event version has a
   committed archive acknowledgement.
 

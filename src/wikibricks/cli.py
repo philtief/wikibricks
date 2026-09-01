@@ -134,10 +134,8 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
     install_targets = install.add_subparsers(dest="install_target", required=True)
     omnigent_install = install_targets.add_parser(
         "omnigent",
-        help="Configure the WikiBricks companion agent in Omnigent",
+        help="Configure shared memory for Omnigent's native harnesses",
     )
-    omnigent_install.add_argument("--agent-path", type=Path)
-    omnigent_install.add_argument("--harness", default="codex")
     omnigent_install.set_defaults(handler=_command_install_omnigent)
 
     search = commands.add_parser("search", help="Search local memory")
@@ -265,7 +263,7 @@ def _command_install_omnigent(args: argparse.Namespace) -> int:
     from wikibricks.omnigent_install import install_omnigent
 
     initialize_database(_target(args))
-    _print_json(install_omnigent(args.agent_path, harness=args.harness))
+    _print_json(install_omnigent())
     return 0
 
 

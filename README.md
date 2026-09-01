@@ -1,9 +1,9 @@
 # WikiBricks
 
 WikiBricks is one local memory shared by Codex, Claude Code, Kimi, and other
-agent harnesses. Omnigent is the primary interface: it chooses and manages the
-harness, while a WikiBricks companion agent supplies memory through standard
-MCP. Clients used outside Omnigent connect to the same MCP server.
+agent harnesses. Omnigent manages the sessions and launches the native harness.
+A shared WikiBricks skill tells that harness when to recall and save context;
+standard MCP provides the memory tools. There is no separate WikiBricks agent.
 
 The active memory is a SQLite database at `~/.wikibricks/wikibricks.db`.
 Search, recall, writes, and maintenance work without Databricks, PostgreSQL,
@@ -17,10 +17,10 @@ local database.
                   Omnigent
          UI, sessions, runtime selection
                        |
-          WikiBricks companion agent
-             instructions + MCP
+          Codex  Claude Code  Kimi
+             native harness process
                        |
-      Codex  Claude Code  Kimi  other harnesses
+       WikiBricks shared skill + MCP
                        |
                        v
             ~/.wikibricks/wikibricks.db
@@ -34,26 +34,26 @@ optional, once a week:
 local SQLite <---- guarded sync ----> Lakebase <---- Databricks curation job
 ```
 
-Omnigent is the zero-touch path after installation. Its standard agent YAML
-loads the WikiBricks MCP server and instructs the selected harness to search
-before relevant work, read matching pages, and save durable findings. A Codex
-session can therefore inform a later Claude Code or Kimi session without a
-separate memory store or a memory command from the user.
+After installation, use the normal `omnigent codex`, `omnigent claude`, or
+`omnigent kimi` command. The selected harness loads the WikiBricks skill and
+MCP server from its user-level configuration. A Codex session can therefore
+inform later Claude Code or Kimi work without selecting a memory agent or
+running a memory command.
 
 WikiBricks uses agent-driven curation. It stores findings, decisions,
 comparisons, and reusable answers that the agent judges useful instead of
 copying every message. This keeps the maintained wiki smaller than the chat
 history and follows the LLM Wiki pattern.
 
-The integration uses Omnigent 0.11.0's public agent YAML and MCP interfaces.
-WikiBricks does not patch, import, or require the Omnigent source tree. Generic
-MCP has no portable session lifecycle, so a client outside Omnigent receives
-the same memory tools but no claim of automatic transcript recording.
+The integration uses the public configuration interfaces of Omnigent 0.11.0,
+Codex, Claude Code, and Kimi. WikiBricks does not patch, import, or require the
+Omnigent source tree. Generic MCP has no portable session lifecycle, so
+WikiBricks does not claim automatic transcript recording.
 
 ## Install
 
 SQLite is included with Python. WikiBricks has no local database service to
-install. Omnigent 0.11.0 or newer is required for the companion installer.
+install. Omnigent 0.11.0 or newer is required for the native installer.
 
 Install the official Omnigent release with Homebrew:
 
@@ -71,34 +71,40 @@ brew unlink omnigent
 uv tool install --force omnigent==0.11.0
 ```
 
-Install WikiBricks, select the default Omnigent harness, and start Omnigent:
+Install WikiBricks once, then use the usual Omnigent commands:
 
 ```bash
 uv tool install "wikibricks @ git+https://github.com/philtief/wikibricks.git"
-wikibricks install omnigent --harness codex
-omnigent
+wikibricks install omnigent
+
+omnigent codex
+# or: omnigent claude
+# or: omnigent kimi
 ```
 
-The installer initializes SQLite, writes a readable agent file to
-`~/.wikibricks/omnigent/agent.yaml`, and selects it through `omnigent config
-set --global`. It does not edit Omnigent code. Run the installer again with a
-different default when needed:
+The installer:
 
-```bash
-wikibricks install omnigent --harness kimi
-```
+- initializes `~/.wikibricks/wikibricks.db`;
+- installs the same `wikibricks-memory` skill in the shared, Codex, and Claude
+  Code user skill directories;
+- registers `wikibricks-mcp` through the Codex and Claude Code user-level
+  configuration commands when those clients are installed;
+- prepares Kimi's user-level `~/.kimi/mcp.json`;
+- removes the previous WikiBricks agent profile when it is still selected.
 
-Omnigent can also override the runtime for one session while keeping the same
-memory agent:
+The command preserves unrelated MCP servers and Omnigent settings, including a
+configured remote server. Rerun it after installing a previously missing
+Codex or Claude Code binary.
 
-```bash
-omnigent run ~/.wikibricks/omnigent/agent.yaml --harness claude-sdk
-```
+This native installer currently covers Codex, Claude Code, and Kimi. Other
+Omnigent launchers can use `wikibricks-mcp`, but they are not yet part of the
+zero-configuration installation contract.
 
 Set `WIKIBRICKS_DATABASE_PATH` only when you want a non-default database path.
 
-For Codex, Claude Code, Kimi, or another client used outside Omnigent, install
-the MCP server once:
+The same Codex, Claude Code, and Kimi configuration also works when those
+clients run outside Omnigent. For another MCP client, install WikiBricks and
+register `wikibricks-mcp` once:
 
 ```bash
 uv tool install "wikibricks @ git+https://github.com/philtief/wikibricks.git"
@@ -170,8 +176,8 @@ Tool names and schemas do not change between harnesses.
 
 ## Background maintenance
 
-The MCP server starts a local scheduler, including when Omnigent launches it
-for the companion agent. It performs a cheap due-work check every five minutes.
+The MCP server starts a local scheduler when a configured harness launches it.
+It performs a cheap due-work check every five minutes.
 Deterministic local maintenance runs once a day and repairs search metadata,
 rebuilds `_meta/index`, and reports duplicate or orphan pages. It does not call
 a model.
@@ -244,7 +250,7 @@ wikibricks import jsonl examples/session-v1.jsonl
 ```
 
 The Omnigent database importer is an optional, read-only recovery command. The
-companion integration does not poll `~/.omnigent/chat.db` during normal work.
+native integration does not poll `~/.omnigent/chat.db` during normal work.
 
 ```bash
 wikibricks import omnigent --user-id "$USER"
