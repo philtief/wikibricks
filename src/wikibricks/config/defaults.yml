@@ -1,6 +1,7 @@
 version: 1
 database:
-  url: postgresql:///wikibricks
+  path: ~/.wikibricks/wikibricks.db
+  url: null
 search:
   default_results: 5
   maximum_results: 20
@@ -15,7 +16,7 @@ automation:
 sync:
   batch_size: 1000
   apply_policy: safe
-  interval_hours: 24
+  interval_hours: 168
   profile: null
   project: null
   branch: production

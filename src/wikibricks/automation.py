@@ -14,6 +14,7 @@ from uuid import UUID
 
 from wikibricks.config import WikiBricksConfig, load_config
 from wikibricks.postgres_store import PostgresStore
+from wikibricks.storage.sqlite_store import SQLiteStore
 
 _LOGGER = logging.getLogger(__name__)
 _LOCK_NAME = "wikibricks:background-automation"
@@ -29,7 +30,7 @@ def _user_id() -> str:
     ).replace("@", "-at-")
 
 
-def _due(store: PostgresStore, target: str, interval_hours: int, now: float) -> bool:
+def _due(store: Any, target: str, interval_hours: int, now: float) -> bool:
     cursor = store.get_sync_cursor(target)
     latest = max(
         float(cursor.get("attempted_at", 0)),
@@ -38,16 +39,20 @@ def _due(store: PostgresStore, target: str, interval_hours: int, now: float) -> 
     return now - latest >= interval_hours * 3600
 
 
-def _mark_attempt(store: PostgresStore, target: str, now: float) -> None:
+def _mark_attempt(store: Any, target: str, now: float) -> None:
     store.set_sync_cursor(target, {"attempted_at": now})
 
 
-def _mark_complete(store: PostgresStore, target: str, now: float) -> None:
+def _mark_complete(store: Any, target: str, now: float) -> None:
     store.set_sync_cursor(target, {"attempted_at": now, "completed_at": now})
 
 
 @contextmanager
-def _single_runner(store: PostgresStore) -> Iterator[bool]:
+def _single_runner(store: Any) -> Iterator[bool]:
+    if isinstance(store, SQLiteStore):
+        owner = f"{os.getpid()}:{id(store)}"
+        yield store.acquire_lease(_LOCK_NAME, owner, 600)
+        return
     with store.connection() as conn:
         acquired = bool(
             conn.execute(
@@ -152,7 +157,12 @@ def run_background_cycle(
     if not active.automation_enabled:
         return {"status": "disabled"}
     current_time = time.time() if now is None else now
-    store = PostgresStore(active.database_url)
+    database_target: str | Any = active.database_url or active.database_path
+    store = (
+        PostgresStore(active.database_url)
+        if active.database_url
+        else SQLiteStore(active.database_path)
+    )
     store.migrate()
     result: dict[str, Any] = {"status": "complete"}
     with _single_runner(store) as acquired:
@@ -164,7 +174,7 @@ def run_background_cycle(
                 from wikibricks.cli import import_omnigent
 
                 result["omnigent"] = import_omnigent(
-                    database_url=active.database_url,
+                    database_url=database_target,
                     db_path=active.automation_omnigent_database,
                     user_id=_user_id(),
                 )
@@ -194,7 +204,7 @@ def run_background_cycle(
             try:
                 from wikibricks.maintenance import curate_database
 
-                result["maintenance"] = curate_database(active.database_url)
+                result["maintenance"] = curate_database(database_target)
                 _mark_complete(store, _LOCAL_CURSOR, current_time)
             except Exception as exc:
                 _LOGGER.warning("WikiBricks local maintenance failed: %s", exc)

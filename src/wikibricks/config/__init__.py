@@ -13,7 +13,7 @@ import yaml
 
 _ALLOWED = {
     "version": None,
-    "database": {"url": None},
+    "database": {"path": None, "url": None},
     "search": {"default_results": None, "maximum_results": None},
     "maintenance": {"prune_archived_sessions_after_days": None},
     "automation": {
@@ -37,7 +37,8 @@ _ALLOWED = {
 
 @dataclass(frozen=True, slots=True)
 class WikiBricksConfig:
-    database_url: str
+    database_path: Path
+    database_url: str | None
     search_default_results: int
     search_maximum_results: int
     prune_archived_sessions_after_days: int | None
@@ -119,6 +120,7 @@ def _string(value: Any, path: str, *, optional: bool = False) -> str | None:
 def _environment_overlay(environ: Mapping[str, str]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     mappings = {
+        "WIKIBRICKS_DATABASE_PATH": ("database", "path", str),
         "WIKIBRICKS_DATABASE_URL": ("database", "url", str),
         "WIKIBRICKS_SEARCH_DEFAULT_RESULTS": ("search", "default_results", int),
         "WIKIBRICKS_SEARCH_MAXIMUM_RESULTS": ("search", "maximum_results", int),
@@ -183,9 +185,17 @@ def load_config(
 
     if value.get("version") != 1:
         raise ValueError("version must be 1")
-    database_url = value["database"]["url"]
-    if not isinstance(database_url, str) or not database_url.strip():
-        raise ValueError("database.url must be a non-empty string")
+    database_path = _string(value["database"]["path"], "database.path")
+    assert database_path is not None
+    if database_path.startswith("~/"):
+        resolved_database_path = user_home / database_path[2:]
+    else:
+        resolved_database_path = Path(database_path).expanduser()
+    database_url = _string(
+        value["database"].get("url"),
+        "database.url",
+        optional=True,
+    )
     default_results = _integer(
         value["search"]["default_results"],
         "search.default_results",
@@ -257,6 +267,7 @@ def load_config(
     assert sync_endpoint is not None
     assert sync_database is not None
     return WikiBricksConfig(
+        database_path=resolved_database_path,
         database_url=database_url,
         search_default_results=default_results,
         search_maximum_results=maximum_results,

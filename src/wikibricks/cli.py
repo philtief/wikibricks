@@ -17,6 +17,7 @@ from wikibricks.adapters.omnigent import (
     load_conversations,
 )
 from wikibricks.postgres_store import PostgresStore
+from wikibricks.storage.sqlite_store import SQLiteStore
 
 if TYPE_CHECKING:
     from wikibricks.config import WikiBricksConfig
@@ -26,7 +27,7 @@ DEFAULT_OMNIGENT_DB = Path.home() / ".omnigent" / "chat.db"
 
 def import_omnigent(
     *,
-    database_url: str | None,
+    database_url: str | Path | None,
     db_path: Path,
     user_id: str,
     since_days: int = 0,
@@ -34,7 +35,12 @@ def import_omnigent(
 ) -> dict[str, int]:
     if not db_path.exists():
         raise FileNotFoundError(f"Omnigent store not found: {db_path}")
-    store = PostgresStore(database_url)
+    store = (
+        PostgresStore(database_url)
+        if isinstance(database_url, str)
+        and database_url.startswith(("postgresql://", "postgres://"))
+        else SQLiteStore(database_url)
+    )
     store.migrate()
     target = f"omnigent:{db_path.resolve()}"
     saved = store.get_sync_cursor(target)

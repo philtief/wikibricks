@@ -80,7 +80,11 @@ async def _serve() -> None:
     from wikibricks.maintenance import initialize_database
 
     try:
-        await asyncio.to_thread(initialize_database, load_config().database_url)
+        config = load_config()
+        await asyncio.to_thread(
+            initialize_database,
+            config.database_url or config.database_path,
+        )
     except Exception as exc:
         _LOGGER.warning("WikiBricks local database initialization failed: %s", exc)
 

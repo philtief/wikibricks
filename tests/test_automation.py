@@ -25,6 +25,21 @@ from wikibricks.curation import (
 )
 from wikibricks.maintenance import initialize_database
 from wikibricks.postgres_store import PostgresStore
+from wikibricks.storage.sqlite_store import SQLiteStore
+
+
+def test_local_background_maintenance_uses_sqlite_lease(tmp_path: Path):
+    config = load_config(
+        home=tmp_path,
+        environ={"WIKIBRICKS_DATABASE_PATH": str(tmp_path / "memory.db")},
+    )
+
+    first = run_background_cycle(config, now=700_000)
+    second = run_background_cycle(config, now=700_060)
+
+    assert first["maintenance"]["ok"] is True
+    assert "maintenance" not in second
+    assert SQLiteStore(config.database_path).read_page("_meta/index") is not None
 
 
 def _database_url(base_url: str, database: str) -> str:
@@ -164,8 +179,8 @@ def test_remote_failure_is_rate_limited_and_does_not_skip_local_maintenance(
 
     monkeypatch.setattr("wikibricks.automation.run_remote_cycle", fail_remote)
 
-    first = run_background_cycle(config, now=100_000)
-    second = run_background_cycle(config, now=100_060)
+    first = run_background_cycle(config, now=700_000)
+    second = run_background_cycle(config, now=700_060)
 
     assert first["remote_error"] == "remote unavailable"
     assert first["maintenance"]["ok"] is True
@@ -208,17 +223,17 @@ def _omnigent_db(path: Path) -> tuple[str, sqlite3.Connection]:
 
 
 def test_mcp_start_imports_omnigent_without_a_user_command(
-    postgres_url: str,
     tmp_path: Path,
 ):
-    automatic_url = _database_url(postgres_url, "wikibricks_automation_local_test")
-    store = PostgresStore(automatic_url)
+    database_path = tmp_path / "wikibricks.db"
+    store = SQLiteStore(database_path)
+    store.migrate()
     chat_db = tmp_path / "chat.db"
     conversation_id, writer = _omnigent_db(chat_db)
     environment = dict(os.environ)
     environment.update(
         {
-            "WIKIBRICKS_DATABASE_URL": postgres_url,
+            "WIKIBRICKS_DATABASE_PATH": str(database_path),
             "WIKIBRICKS_AUTOMATION_ENABLED": "true",
             "WIKIBRICKS_AUTOMATION_POLL_SECONDS": "1",
             "WIKIBRICKS_OMNIGENT_DATABASE": str(chat_db),
@@ -226,7 +241,6 @@ def test_mcp_start_imports_omnigent_without_a_user_command(
             "PYTHONPATH": str(Path(__file__).resolve().parents[1] / "src"),
         }
     )
-    environment["WIKIBRICKS_DATABASE_URL"] = automatic_url
 
     async def exercise() -> None:
         server = StdioServerParameters(

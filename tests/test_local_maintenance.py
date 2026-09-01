@@ -4,6 +4,7 @@ from pathlib import Path
 
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
+from wikibricks import WikiClient
 from wikibricks.curation_sync import (
     build_manifest,
     create_patch,
@@ -21,6 +22,54 @@ from wikibricks.maintenance import (
 )
 from wikibricks.models import SessionEvent, SessionRecord
 from wikibricks.postgres_store import PostgresStore
+from wikibricks.storage.sqlite_store import SQLiteStore
+
+
+def test_sqlite_online_backup_restores_a_consistent_database(tmp_path: Path):
+    source = tmp_path / "source.db"
+    restored = tmp_path / "restored.db"
+    client = WikiClient(source)
+    client.write_page(
+        "topics/backup",
+        "Backup",
+        {"summary": "safe", "body": "copy"},
+    )
+
+    backup = backup_database(source, tmp_path / "backup.db")
+    restore_database(backup, restored)
+
+    assert WikiClient(restored).read_page("topics/backup")["content"]["body"] == "copy"
+    assert check_database(restored)["ok"] is True
+
+
+def test_sqlite_curation_repairs_search_and_reports_hygiene(tmp_path: Path):
+    database_path = tmp_path / "memory.db"
+    store = SQLiteStore(database_path)
+    store.migrate()
+    content = {"summary": "same", "body": "shared exact content"}
+    store.write_page("topics/duplicate-a", "Duplicate", content)
+    store.write_page("topics/duplicate-b", "Duplicate", content)
+    store.ingest_session(
+        SessionRecord(
+            harness="omnigent",
+            external_id="repair-search",
+            user_id="u",
+            events=[SessionEvent("0", "tool_result", "search chunk repair marker")],
+        )
+    )
+    with store.connection(write=True) as conn:
+        conn.execute("DELETE FROM page_search_fts")
+        conn.execute("DELETE FROM page_search_chunks")
+        conn.execute("DELETE FROM session_search_fts")
+        conn.execute("DELETE FROM session_search_chunks")
+
+    result = curate_database(database_path)
+
+    assert result["ok"] is True
+    assert result["repaired_page_search_versions"] == 2
+    assert result["repaired_session_search_versions"] == 1
+    assert result["duplicate_page_groups"][0]["count"] == 2
+    assert WikiClient(database_path).search("repair marker")[0]["page_type"] == "session"
 
 
 def _database_url(base_url: str, database: str) -> str:

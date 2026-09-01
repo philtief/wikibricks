@@ -1,9 +1,11 @@
-"""Local PostgreSQL initialization, validation, backup, and maintenance."""
+"""Local SQLite initialization, validation, backup, and maintenance."""
 
 from __future__ import annotations
 
 import shutil
+import sqlite3
 import subprocess
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -14,6 +16,7 @@ from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from wikibricks.client import WikiClient
 from wikibricks.postgres_store import PostgresStore
 from wikibricks.storage.content import insert_search_chunks
+from wikibricks.storage.sqlite_store import SQLiteStore
 
 _FINGERPRINT_TABLES = (
     "pages",
@@ -47,8 +50,21 @@ def _database_params(database_url: str) -> tuple[dict[str, str], str]:
     return params, database
 
 
-def initialize_database(database_url: str, *, migrate: bool = True) -> bool:
+def _is_postgres_target(target: str | Path) -> bool:
+    return isinstance(target, str) and (
+        target.startswith(("postgresql://", "postgres://"))
+        or ("dbname=" in target and ("host=" in target or "user=" in target))
+    )
+
+
+def initialize_database(database_url: str | Path, *, migrate: bool = True) -> bool:
     """Create the target database when absent, then apply migrations."""
+    if not _is_postgres_target(database_url):
+        path = Path(database_url)
+        created = not path.exists()
+        if migrate:
+            SQLiteStore(path).migrate()
+        return created
     params, database = _database_params(database_url)
     admin_params = dict(params)
     admin_params["dbname"] = "postgres"
@@ -63,7 +79,33 @@ def initialize_database(database_url: str, *, migrate: bool = True) -> bool:
     return not bool(exists)
 
 
-def check_database(database_url: str) -> dict[str, Any]:
+def check_database(database_url: str | Path) -> dict[str, Any]:
+    if not _is_postgres_target(database_url):
+        store = SQLiteStore(database_url)
+        store.migrate()
+        with store.connection() as conn:
+            integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+            broken_pages = int(
+                conn.execute(
+                    "SELECT count(*) FROM pages p LEFT JOIN page_versions v "
+                    "ON v.version_id = p.current_version_id "
+                    "WHERE p.current_version_id IS NULL OR v.version_id IS NULL"
+                ).fetchone()[0]
+            )
+            broken_sessions = int(
+                conn.execute(
+                    "SELECT count(*) FROM session_events e LEFT JOIN session_event_versions v "
+                    "ON v.version_id = e.current_version_id "
+                    "WHERE e.active = 1 AND (e.current_version_id IS NULL OR v.version_id IS NULL)"
+                ).fetchone()[0]
+            )
+        return {
+            "ok": integrity == "ok" and broken_pages == 0 and broken_sessions == 0,
+            "integrity": integrity,
+            "broken_page_pointers": broken_pages,
+            "broken_session_pointers": broken_sessions,
+            "pending_outbox": store.outbox_count(),
+        }
     store = PostgresStore(database_url)
     store.migrate()
     with store.connection() as conn:
@@ -101,7 +143,7 @@ def check_database(database_url: str) -> dict[str, Any]:
 
 
 def curate_database(
-    database_url: str,
+    database_url: str | Path,
     *,
     prune_archived_sessions_after_days: int | None = None,
 ) -> dict[str, Any]:
@@ -111,6 +153,40 @@ def curate_database(
         and prune_archived_sessions_after_days < 1
     ):
         raise ValueError("session retention must be at least one day")
+
+    if not _is_postgres_target(database_url):
+        store = SQLiteStore(database_url)
+        store.migrate()
+        repaired_pages, repaired_sessions = store.repair_search_indexes()
+        index_result = WikiClient(database_url, migrate=False).materialize_index()
+        with store.connection() as conn:
+            duplicate_rows = conn.execute(
+                "SELECT group_concat(p.path, char(31)), count(*) FROM pages p "
+                "JOIN page_versions v ON v.version_id = p.current_version_id "
+                "WHERE p.status = 'active' AND p.path <> '_meta/index' "
+                "GROUP BY v.content_hash HAVING count(*) > 1 ORDER BY min(p.path)"
+            ).fetchall()
+            orphan_rows = conn.execute(
+                "SELECT p.path FROM pages p WHERE p.status = 'active' "
+                "AND p.path NOT LIKE '_meta/%' AND NOT EXISTS ("
+                "SELECT 1 FROM links l WHERE l.source_page_id = p.page_id "
+                "OR l.target_page_id = p.page_id) ORDER BY p.path"
+            ).fetchall()
+        result = {
+            "ok": True,
+            "index": index_result,
+            "repaired_page_search_versions": repaired_pages,
+            "repaired_session_search_versions": repaired_sessions,
+            "duplicate_page_groups": [
+                {"paths": paths.split(chr(31)), "count": int(count)}
+                for paths, count in duplicate_rows
+            ],
+            "orphan_pages": [row[0] for row in orphan_rows],
+            "pruned_sessions": 0,
+            "pending_outbox": store.outbox_count(),
+        }
+        store.log("curate_local", details=result)
+        return result
 
     store = PostgresStore(database_url)
     store.migrate()
@@ -208,7 +284,14 @@ def curate_database(
     return result
 
 
-def backup_database(database_url: str, output: Path) -> Path:
+def backup_database(database_url: str | Path, output: Path) -> Path:
+    if not _is_postgres_target(database_url):
+        source = SQLiteStore(database_url)
+        source.migrate()
+        output.parent.mkdir(parents=True, exist_ok=True)
+        with source.connection() as source_conn, sqlite3.connect(output) as destination:
+            source_conn.backup(destination)
+        return output
     executable = shutil.which("pg_dump")
     if executable is None:
         raise RuntimeError("pg_dump is required for WikiBricks backups")
@@ -231,7 +314,30 @@ def backup_database(database_url: str, output: Path) -> Path:
     return output
 
 
-def restore_database(backup: Path, database_url: str) -> None:
+def restore_database(backup: Path, database_url: str | Path) -> None:
+    if not _is_postgres_target(database_url):
+        target = Path(database_url)
+        if target.exists() and target.stat().st_size:
+            raise RuntimeError("restore target database already exists")
+        with sqlite3.connect(backup) as source:
+            integrity = source.execute("PRAGMA integrity_check").fetchone()[0]
+            if integrity != "ok":
+                raise RuntimeError(f"backup database is invalid: {integrity}")
+            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            with tempfile.NamedTemporaryFile(
+                prefix=f".{target.name}.",
+                suffix=".restore",
+                dir=target.parent,
+                delete=False,
+            ) as handle:
+                temporary = Path(handle.name)
+            try:
+                with sqlite3.connect(temporary) as destination:
+                    source.backup(destination)
+                temporary.replace(target)
+            finally:
+                temporary.unlink(missing_ok=True)
+        return
     executable = shutil.which("pg_restore")
     if executable is None:
         raise RuntimeError("pg_restore is required for WikiBricks restores")
@@ -254,7 +360,23 @@ def restore_database(backup: Path, database_url: str) -> None:
     )
 
 
-def database_fingerprint(database_url: str) -> dict[str, dict[str, Any]]:
+def database_fingerprint(database_url: str | Path) -> dict[str, dict[str, Any]]:
+    if not _is_postgres_target(database_url):
+        store = SQLiteStore(database_url)
+        store.migrate()
+        result: dict[str, dict[str, Any]] = {}
+        with store.connection() as conn:
+            tables = [
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table' "
+                    "AND name NOT LIKE 'sqlite_%' AND name NOT LIKE '%_fts%' ORDER BY name"
+                )
+            ]
+            for table in tables:
+                count = int(conn.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0])
+                result[table] = {"count": count}
+        return result
     store = PostgresStore(database_url)
     result: dict[str, dict[str, Any]] = {}
     with store.connection() as conn:
@@ -269,6 +391,12 @@ def database_fingerprint(database_url: str) -> dict[str, dict[str, Any]]:
     return result
 
 
-def vacuum_database(database_url: str) -> None:
+def vacuum_database(database_url: str | Path) -> None:
+    if not _is_postgres_target(database_url):
+        store = SQLiteStore(database_url)
+        store.migrate()
+        with store.connection() as conn:
+            conn.execute("VACUUM")
+        return
     with psycopg.connect(database_url, autocommit=True) as conn:
         conn.execute("VACUUM (ANALYZE)")

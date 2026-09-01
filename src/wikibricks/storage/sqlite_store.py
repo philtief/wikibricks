@@ -327,6 +327,23 @@ class SQLiteStore:
                 ).fetchone()[0]
             )
 
+    def get_sync_cursor(self, target: str) -> dict[str, Any]:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT cursor FROM sync_state WHERE target = ?",
+                (target,),
+            ).fetchone()
+        return json.loads(row[0]) if row else {}
+
+    def set_sync_cursor(self, target: str, cursor: dict[str, Any]) -> None:
+        with self.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO sync_state(target, cursor, updated_at) VALUES (?, ?, ?) "
+                "ON CONFLICT(target) DO UPDATE SET cursor = excluded.cursor, "
+                "updated_at = excluded.updated_at",
+                (target, _json(cursor), _now()),
+            )
+
     def log(
         self,
         op_type: str,
@@ -451,6 +468,75 @@ class SQLiteStore:
             }
             for row in rows
         ]
+
+    def acquire_lease(
+        self,
+        name: str,
+        owner: str,
+        ttl_seconds: int,
+        *,
+        now: float | None = None,
+    ) -> bool:
+        if ttl_seconds < 1:
+            raise ValueError("lease ttl must be positive")
+        current = datetime.now(timezone.utc).timestamp() if now is None else now
+        expires = current + ttl_seconds
+        with self.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO background_leases(name, owner, expires_at, renewed_at) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT(name) DO UPDATE SET "
+                "owner = excluded.owner, expires_at = excluded.expires_at, "
+                "renewed_at = excluded.renewed_at WHERE background_leases.owner = excluded.owner "
+                "OR background_leases.expires_at <= excluded.renewed_at",
+                (name, owner, expires, current),
+            )
+            lease = conn.execute(
+                "SELECT owner, expires_at FROM background_leases WHERE name = ?",
+                (name,),
+            ).fetchone()
+        return bool(lease and lease["owner"] == owner and lease["expires_at"] == expires)
+
+    def repair_search_indexes(self) -> tuple[int, int]:
+        with self.connection(write=True) as conn:
+            page_rows = conn.execute(
+                "SELECT v.version_id, v.content_text FROM pages p "
+                "JOIN page_versions v ON v.version_id = p.current_version_id "
+                "WHERE p.status = 'active' AND NOT EXISTS ("
+                "SELECT 1 FROM page_search_chunks c WHERE c.version_id = v.version_id)"
+            ).fetchall()
+            for row in page_rows:
+                _insert_chunks(
+                    conn,
+                    table="page_search_chunks",
+                    fts_table="page_search_fts",
+                    version_id=row["version_id"],
+                    text=row["content_text"],
+                )
+            session_rows = conn.execute(
+                "SELECT v.version_id, v.content FROM session_events e "
+                "JOIN session_event_versions v ON v.version_id = e.current_version_id "
+                "WHERE e.active = 1 AND NOT EXISTS ("
+                "SELECT 1 FROM session_search_chunks c WHERE c.version_id = v.version_id)"
+            ).fetchall()
+            for row in session_rows:
+                _insert_chunks(
+                    conn,
+                    table="session_search_chunks",
+                    fts_table="session_search_fts",
+                    version_id=row["version_id"],
+                    text=row["content"],
+                )
+            conn.execute("DELETE FROM page_search_fts")
+            conn.execute(
+                "INSERT INTO page_search_fts(version_id, chunk_text) "
+                "SELECT version_id, chunk_text FROM page_search_chunks ORDER BY chunk_id"
+            )
+            conn.execute("DELETE FROM session_search_fts")
+            conn.execute(
+                "INSERT INTO session_search_fts(version_id, chunk_text) "
+                "SELECT version_id, chunk_text FROM session_search_chunks ORDER BY chunk_id"
+            )
+        return len(page_rows), len(session_rows)
 
     @staticmethod
     def _session_title(record: SessionRecord) -> str:

@@ -136,3 +136,9 @@ def test_two_store_instances_write_without_duplicate_versions(tmp_path: Path):
 
     assert len(stores[0].list_pages()) == 2
     assert stores[0].outbox_count() == 2
+
+
+def test_only_one_process_holds_the_background_lease(store: SQLiteStore):
+    assert store.acquire_lease("maintenance", "worker-a", 60, now=100)
+    assert not store.acquire_lease("maintenance", "worker-b", 60, now=101)
+    assert store.acquire_lease("maintenance", "worker-b", 60, now=161)

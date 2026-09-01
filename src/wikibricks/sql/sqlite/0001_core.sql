@@ -108,6 +108,19 @@ CREATE TABLE IF NOT EXISTS operations (
     created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS background_leases (
+    name TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    expires_at REAL NOT NULL,
+    renewed_at REAL NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sync_state (
+    target TEXT PRIMARY KEY,
+    cursor TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS page_search_chunks (
     chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
     version_id TEXT NOT NULL REFERENCES page_versions(version_id) ON DELETE CASCADE,
