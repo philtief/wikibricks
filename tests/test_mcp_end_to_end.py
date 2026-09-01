@@ -51,6 +51,8 @@ def test_server_instructions_preserve_the_compounding_wiki_workflow():
     ):
         assert concept in instructions
     assert "recording a session does not" in instructions
+    assert "at the start of every task" in instructions
+    assert "without asking the user" in instructions
     assert "claude" not in instructions
     assert "databricks" not in instructions
 
@@ -86,6 +88,7 @@ def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
         if not key.startswith("DATABRICKS_")
     }
     environment["WIKIBRICKS_DATABASE_URL"] = postgres_url
+    environment["WIKIBRICKS_AUTOMATION_ENABLED"] = "false"
     environment["PYTHONPATH"] = os.pathsep.join(
         [str(tmp_path), str(Path(__file__).resolve().parents[1] / "src")]
     )

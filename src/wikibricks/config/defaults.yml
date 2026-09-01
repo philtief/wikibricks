@@ -6,6 +6,18 @@ search:
   maximum_results: 20
 maintenance:
   prune_archived_sessions_after_days: null
+automation:
+  enabled: true
+  poll_seconds: 300
+  local_maintenance_hours: 24
+  omnigent:
+    database: ~/.omnigent/chat.db
 sync:
   batch_size: 1000
   apply_policy: safe
+  interval_hours: 24
+  profile: null
+  project: null
+  branch: production
+  endpoint: primary
+  database: wikibricks

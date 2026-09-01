@@ -112,9 +112,15 @@ def load_conversations(
     limit: int = 0,
 ) -> list[dict[str, Any]]:
     """Read Omnigent's SQLite store without acquiring write access."""
-    connection = sqlite3.connect(f"file:{db_path}?mode=ro&immutable=1", uri=True)
+    connection = sqlite3.connect(
+        f"{db_path.resolve().as_uri()}?mode=ro",
+        uri=True,
+        timeout=2,
+    )
     connection.row_factory = sqlite3.Row
     try:
+        connection.execute("PRAGMA query_only=ON")
+        connection.execute("PRAGMA busy_timeout=2000")
         where = ["c.archived = 0"]
         params: list[Any] = []
         if since_epoch is not None:

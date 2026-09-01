@@ -8,18 +8,12 @@ require Databricks.
 
 PostgreSQL 16 or 17 must be running, and `uv` must be on `PATH`.
 
-```bash
-export WIKIBRICKS_DATABASE_URL=postgresql:///wikibricks
-wikibricks init
-```
+## Install
 
-## Install this branch
-
-Clone the public feature branch:
+Clone the public repository:
 
 ```bash
-git clone --branch feat/lakebase-remote-maintenance \
-  https://github.com/philtief/wikibricks.git
+git clone https://github.com/philtief/wikibricks.git
 ```
 
 Then run these commands inside Claude Code, replacing the path with the clone's
@@ -47,7 +41,10 @@ Five hooks call `wikibricks-hook`:
 
 The plugin also starts `wikibricks-mcp`, which exposes `wiki_search`,
 `wiki_read_full`, `wiki_index`, `wiki_write_page`, and
-`wiki_promote_answer`.
+`wiki_promote_answer`. That process initializes local PostgreSQL, imports live
+Omnigent sessions, runs local maintenance, and performs configured Lakebase
+sync in the background. It also instructs the agent to retrieve relevant
+context before answering. Normal sessions require no WikiBricks commands.
 
 Set `WIKIBRICKS_USER_ID` to override the recorded user. Without it, the
 adapter uses `git config user.email`, then the operating-system user.

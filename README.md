@@ -7,6 +7,11 @@ network connection.
 Lakebase is optional. It stores an archive and can run a weekly curation job,
 but it is never part of the local read or write path.
 
+After the one-time install, WikiBricks runs behind the agent. The MCP process
+captures Omnigent sessions, performs local maintenance, retrieves relevant
+memory, and applies safe remote curation. Normal use requires no WikiBricks
+commands.
+
 ## Install
 
 WikiBricks supports PostgreSQL 16 and 17. On macOS:
@@ -14,29 +19,25 @@ WikiBricks supports PostgreSQL 16 and 17. On macOS:
 ```bash
 brew install uv postgresql@17
 brew services start postgresql@17
-uv tool install "wikibricks @ git+https://github.com/philtief/wikibricks.git@feat/lakebase-remote-maintenance"
-wikibricks init
-wikibricks check
+uv tool install "wikibricks @ git+https://github.com/philtief/wikibricks.git"
 ```
 
 The default database URL is `postgresql:///wikibricks`. Set another URL before
-initialization if needed:
+starting the agent if needed:
 
 ```bash
 export WIKIBRICKS_DATABASE_URL=postgresql://user:password@localhost/wikibricks
-wikibricks init
 ```
 
-`wikibricks init` creates the database, enables `pg_trgm`, and applies the
-forward-only migrations. You can run it again after an upgrade.
+The MCP server creates the database, enables `pg_trgm`, and applies migrations
+when the agent starts. `wikibricks init` remains available for diagnostics.
 
 For development from a checkout:
 
 ```bash
-git clone --branch feat/lakebase-remote-maintenance https://github.com/philtief/wikibricks.git
+git clone https://github.com/philtief/wikibricks.git
 cd wikibricks
 uv sync --extra dev
-uv run wikibricks init
 ```
 
 ## Connect an agent
@@ -84,12 +85,19 @@ The server exposes five tools:
 - `wiki_promote_answer`
 
 Their names, descriptions, and schemas do not depend on an agent harness.
+The server tells the agent to search relevant memory at the start of a task and
+read the best pages before answering. This is part of the MCP contract, so the
+user does not need to request a memory lookup.
 
 ## Import sessions
 
-Omnigent stores conversations in `~/.omnigent/chat.db`. WikiBricks reads that
-database without modifying it and preserves agent metadata, including Codex
-sessions:
+Omnigent stores conversations in `~/.omnigent/chat.db`. While an agent is
+connected, WikiBricks reads new and changed conversations in the background.
+The importer is read-only, supports a live SQLite WAL, and preserves agent
+metadata, including Codex sessions.
+
+The command below is a recovery and bulk-import tool. It is not part of normal
+use:
 
 ```bash
 wikibricks import omnigent --user-id "$USER"
@@ -128,7 +136,7 @@ Codex / Claude / Omnigent / another harness
                     |
         deterministic local maintenance
                     |
-          explicit archive sync only
+          optional background archive sync
                     v
              Lakebase (optional)
 ```
@@ -147,7 +155,8 @@ The active agent handles semantic maintenance during normal work: search
 before writing, update an existing page when possible, cite its evidence, and
 record contradictions.
 
-Local maintenance is deterministic and offline:
+Local maintenance is deterministic and offline. The MCP process runs it once a
+day. These commands remain available for diagnostics and recovery:
 
 ```bash
 wikibricks curate
@@ -155,9 +164,8 @@ wikibricks check
 wikibricks vacuum
 ```
 
-Run `wikibricks curate` after a large import or from a daily local scheduler.
-It repairs search chunks, rebuilds `_meta/index`, and reports duplicates and
-orphans. It does not call a model.
+`wikibricks curate` repairs search chunks, rebuilds `_meta/index`, and reports
+duplicates and orphans. It does not call a model.
 
 Back up before retention or a large curation apply:
 
@@ -189,9 +197,21 @@ search:
   maximum_results: 20
 maintenance:
   prune_archived_sessions_after_days: null
+automation:
+  enabled: true
+  poll_seconds: 300
+  local_maintenance_hours: 24
+  omnigent:
+    database: ~/.omnigent/chat.db
 sync:
   batch_size: 1000
   apply_policy: safe
+  interval_hours: 24
+  profile: null
+  project: null
+  branch: production
+  endpoint: primary
+  database: wikibricks
 ```
 
 Unknown keys and invalid values fail during startup. Explicit CLI or API
@@ -200,41 +220,34 @@ packaged defaults.
 
 ## Optional Lakebase archive
 
-Install the Lakebase extra on the machine that runs archive sync:
+Install the Lakebase extra on the machine that runs the agent:
 
 ```bash
 uv tool install --force \
-  "wikibricks[lakebase] @ git+https://github.com/philtief/wikibricks.git@feat/lakebase-remote-maintenance"
+  "wikibricks[lakebase] @ git+https://github.com/philtief/wikibricks.git"
 ```
 
-Push a bounded archive batch explicitly:
+Set the Lakebase target once in `~/.wikibricks/config.yml`:
 
-```bash
-wikibricks sync lakebase \
-  --profile PROFILE \
-  --project PROJECT \
-  --branch production \
-  --endpoint primary \
-  --database wikibricks
+```yaml
+sync:
+  profile: PROFILE
+  project: PROJECT
+  branch: production
+  endpoint: primary
+  database: wikibricks
 ```
 
-Add `--drain` to send consecutive batches. Immutable IDs and hashes make a
-retry idempotent.
+The local background cycle connects once a day. It pushes bounded immutable
+versions, pulls new manifests, and applies low-risk patches whose base version
+and content hash still match. A divergent local edit wins automatically and is
+recorded as `keep_local`. Remote failures are logged and never block an agent.
 
-The optional weekly job reads archived evidence and publishes immutable
-curation manifests. It cannot update a local database directly. Pulling a
-manifest also leaves active pages unchanged:
-
-```bash
-wikibricks sync lakebase --profile PROFILE --project PROJECT --pull-patches
-wikibricks sync plan RUN_ID --policy safe
-wikibricks sync apply RUN_ID --policy safe
-wikibricks sync conflicts
-```
-
-An update applies only when its base version ID and content hash still match.
-Local edits win conflicts until you resolve them explicitly. The full protocol
-is in [`docs/curation-sync.md`](docs/curation-sync.md).
+The weekly Databricks job reads the archive and publishes manifests. The next
+local cycle applies them to local PostgreSQL. Lakebase never connects to the
+laptop. The guarded exchange is documented in
+[`docs/curation-sync.md`](docs/curation-sync.md), including manual recovery
+commands.
 
 Every bundle target keeps the weekly schedule paused by default:
 

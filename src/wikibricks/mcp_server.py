@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
+from contextlib import suppress
 from typing import Any
 
 from wikibricks.resources import get_server_instructions, get_tool_schemas
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def _build_tools() -> dict[str, Any]:
@@ -71,8 +75,23 @@ async def _serve() -> None:
     async def call_tool(name: str, arguments: dict[str, Any]) -> list[TextContent]:
         return [TextContent(type="text", text=format_tool_response(name, arguments))]
 
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(read_stream, write_stream, server.create_initialization_options())
+    from wikibricks.automation import run_background_loop
+    from wikibricks.config import load_config
+    from wikibricks.maintenance import initialize_database
+
+    try:
+        await asyncio.to_thread(initialize_database, load_config().database_url)
+    except Exception as exc:
+        _LOGGER.warning("WikiBricks local database initialization failed: %s", exc)
+
+    automation = asyncio.create_task(run_background_loop())
+    try:
+        async with stdio_server() as (read_stream, write_stream):
+            await server.run(read_stream, write_stream, server.create_initialization_options())
+    finally:
+        automation.cancel()
+        with suppress(asyncio.CancelledError):
+            await automation
 
 
 def main() -> None:

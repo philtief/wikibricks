@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+## 0.9.0 - 2026-09-01
+
+- Added MCP-owned background automation for live Omnigent capture, daily local
+  maintenance, and optional Lakebase push, pull, and safe apply.
+- Local edits now win background curation conflicts automatically.
+- Added automatic local database creation and live SQLite WAL support.
+- Made MCP instructions responsible for context retrieval at the start of an
+  agent task.
 - Renamed the Claude Code plugin and hook to `wikibricks` and
   `wikibricks-hook`.
 - Made the weekly remote schedule opt-in for every bundle target.

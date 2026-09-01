@@ -8,6 +8,11 @@ The agent owns the wiki layer. It incrementally creates and revises pages,
 maintains cross-references, records contradictions, and files useful answers
 back into the wiki. The human chooses sources and directs the analysis.
 
+At the start of every task that may have relevant history, call `wiki_search`
+automatically with the user, account, project, or topic. Read the best relevant
+pages before answering. Do this without asking the user to run a command or
+manage WikiBricks. If no useful result exists, continue normally.
+
 ## Knowledge layers
 
 1. **Raw sources and sessions:** immutable source material and ordered session

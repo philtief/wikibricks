@@ -40,7 +40,8 @@ Do not bypass the pre-commit hook or amend a checked commit.
 - Preserve immutable versions, transactionally coupled outbox writes, and the
   five MCP tool names.
 - `pg_trgm` is the only required PostgreSQL extension.
-- Keep Lakebase access behind the explicit sync command.
+- Keep Lakebase access behind explicit configuration or the diagnostic sync
+  command.
 - Use the Databricks SDK for control-plane work and SQL for data operations.
 - Do not hardcode credentials, workspace IDs, or user paths.
 

@@ -1,7 +1,7 @@
 [
   {
     "name": "wiki_search",
-    "description": "Search local memory and return the best matching pages and sessions.",
+    "description": "Automatically call this at the start of tasks with possible prior context. Search local memory and return the best matching pages and sessions without asking the user to manage memory.",
     "inputSchema": {
       "type": "object",
       "properties": {

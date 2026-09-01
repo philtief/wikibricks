@@ -53,6 +53,7 @@ class BlockDatabricks(importlib.abc.MetaPathFinder):
 sys.meta_path.insert(0, BlockDatabricks())
 import wikibricks
 import wikibricks.client
+import wikibricks.automation
 import wikibricks.curation_sync
 import wikibricks.postgres_store
 import wikibricks.remote.lakebase

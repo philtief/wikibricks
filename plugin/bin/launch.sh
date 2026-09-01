@@ -20,7 +20,7 @@ PACKAGE_ROOT="$(cd "${CLAUDE_PLUGIN_ROOT}/.." && pwd -P)"
 DATA_DIR="${CLAUDE_PLUGIN_DATA:-${HOME}/.claude/plugins/data/wikibricks}"
 TOOL_DIR="${DATA_DIR}/uv-tools"
 BIN_DIR="${DATA_DIR}/bin"
-MARKER="${DATA_DIR}/installed-0.8.0"
+MARKER="${DATA_DIR}/installed-0.9.0"
 BINARY="${BIN_DIR}/$1"
 
 if [ ! -f "$MARKER" ] || [ ! -x "$BINARY" ]; then

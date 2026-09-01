@@ -9,10 +9,10 @@ PostgreSQL is the authoritative local memory store. `WikiClient()` and
 `wikibricks-mcp` must record, search, read, write, and maintain memory without
 network access, Databricks credentials, or the Databricks SDK.
 
-Lakebase is an optional archive. Only an explicit
-`wikibricks sync lakebase` command contacts it. The optional weekly job reads
-that archive and publishes curation manifests; it never writes to a local
-WikiBricks database.
+Lakebase is an optional archive. A configured MCP background cycle or an
+explicit `wikibricks sync lakebase` command contacts it. The optional weekly
+job reads that archive and publishes curation manifests; it never connects to
+a local WikiBricks database.
 
 The library does not call a language model. The connected agent owns semantic
 decisions.
@@ -42,6 +42,7 @@ src/wikibricks/
   config/                   YAML defaults and validation
   storage/                  PostgreSQL repositories
   curation/                 Local planning and guarded patch application
+  automation.py            MCP-owned capture, hygiene, and optional sync loop
   remote/lakebase.py        Explicit optional archive adapter
   resources/                Agent guidance and JSON contracts
   sql/migrations/           Forward-only PostgreSQL migrations
@@ -69,7 +70,7 @@ implementation code in `storage/` and `curation/`.
 5. `pg_trgm` is the only required extension. Built-in `tsvector` and GIN
    provide full-text search.
 6. A local write and its outbox event belong in one transaction.
-7. Lakebase sync must be explicit, bounded, idempotent, and resumable.
+7. Lakebase sync must be opt-in, bounded, idempotent, and resumable.
 8. Import Databricks SDK modules lazily inside remote operations.
 9. Use the Databricks SDK for control-plane work and SQL for data operations.
 10. Never hardcode a workspace ID, user path, connection string, or token.

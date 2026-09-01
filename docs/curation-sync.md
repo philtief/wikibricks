@@ -14,7 +14,7 @@ sessions are evidence, while agents maintain a smaller set of linked pages.
 ```text
 local page and session versions
             |
-            | explicit archive push
+            | configured background archive push
             v
 Lakebase immutable archive
             |
@@ -22,11 +22,11 @@ Lakebase immutable archive
             v
 immutable curation manifest
             |
-            | explicit pull
+            | background pull
             v
 local durable inbox
             |
-            | plan, compare, apply
+            | exact-base check and safe apply
             v
 new local page versions and receipts
             |
@@ -35,8 +35,9 @@ new local page versions and receipts
 Lakebase acknowledgement history
 ```
 
-Only `wikibricks sync lakebase` contacts Databricks. Planning, application,
-conflict review, and resolution use local PostgreSQL.
+A configured MCP background cycle contacts Databricks once a day. The
+diagnostic `wikibricks sync lakebase` command can run the same exchange on
+demand. Planning, application, and conflict resolution use local PostgreSQL.
 
 ## Stored state
 
@@ -91,10 +92,15 @@ The first schema supports five operations:
 
 Patches contain data, never SQL or executable code.
 
-## Pull, plan, and apply
+## Background apply and recovery commands
 
-The pull copies matching manifests into the local inbox. It does not change a
-page:
+The MCP process performs the normal flow without a user command. It pushes
+pending versions, pulls matching manifests, applies low-risk exact-base patch
+groups, and resolves divergent groups as `keep_local`. It then runs local
+maintenance so search metadata and `_meta/index` match the active pages.
+
+The commands in this section expose the protocol for diagnostics and recovery.
+A pull copies matching manifests into the local inbox without changing a page:
 
 ```bash
 wikibricks sync lakebase \
@@ -119,7 +125,7 @@ wikibricks sync plan RUN_ID --policy safe
 ```
 
 The safe policy processes low-risk groups. Any group containing a medium- or
-high-risk patch remains `review_required`. After review, apply such a group
+high-risk patch remains `review_required`. An operator can apply such a group
 with the all policy:
 
 ```bash
@@ -175,6 +181,8 @@ wikibricks sync resolve RUN_ID GROUP_ID --action merged
 `accept_remote` writes another local version and preserves the divergent
 version in history. For `merged`, edit the page through the ordinary MCP or
 Python API first, then record the resolution. `defer` leaves the conflict open.
+The background policy records `keep_local`, so normal operation does not leave
+pending conflicts or require a user decision.
 
 ## Duplicate cleanup
 
@@ -200,7 +208,7 @@ Local hygiene runs without Databricks:
 - The write path prevents identical versions and updates GIN search chunks.
 - The active MCP client searches before writing and updates existing pages.
 - A daily `wikibricks curate` repairs search metadata and reports active
-  duplicates and orphans.
+  duplicates and orphans. The MCP process schedules this automatically.
 - Retention removes a session only after every immutable event version has a
   committed archive acknowledgement.
 
@@ -213,6 +221,11 @@ local database.
 
 The weekly job reads the Lakebase archive directly. It does not require a
 second storage system.
+
+The local MCP process checks the archive once a day. This keeps the Databricks
+job weekly while allowing its manifest to reach local PostgreSQL within one
+day. Missing credentials, a suspended endpoint, or a network failure does not
+delay local search or agent work.
 
 ## Recovery properties
 
