@@ -1,0 +1,68 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wikibricks.dev/schemas/curation-proposals-v1.schema.json",
+  "title": "WikiBricks remote curation proposals",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["proposals"],
+  "properties": {
+    "proposals": {
+      "type": "array",
+      "maxItems": 20,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "group",
+          "operation",
+          "path",
+          "title",
+          "page_type",
+          "summary",
+          "body",
+          "tags",
+          "source_ids",
+          "target_path",
+          "evidence_ids",
+          "reason",
+          "risk_class"
+        ],
+        "properties": {
+          "group": {"type": "string", "minLength": 1},
+          "operation": {
+            "enum": [
+              "create_page",
+              "update_page",
+              "retarget_links",
+              "add_alias",
+              "supersede_page"
+            ]
+          },
+          "path": {"type": "string", "pattern": "^[^/]+(?:/[^/]+)+$"},
+          "title": {"type": ["string", "null"]},
+          "page_type": {
+            "type": ["string", "null"],
+            "enum": ["entity", "concept", "synthesis", "comparison", null]
+          },
+          "summary": {"type": ["string", "null"]},
+          "body": {"type": ["string", "null"]},
+          "tags": {"type": "array", "items": {"type": "string"}},
+          "source_ids": {"type": "array", "items": {"type": "string"}},
+          "target_path": {
+            "anyOf": [
+              {"type": "null"},
+              {"type": "string", "pattern": "^[^/]+(?:/[^/]+)+$"}
+            ]
+          },
+          "evidence_ids": {
+            "type": "array",
+            "minItems": 1,
+            "items": {"type": "string", "minLength": 1}
+          },
+          "reason": {"type": "string", "minLength": 1},
+          "risk_class": {"enum": ["low", "medium", "high"]}
+        }
+      }
+    }
+  }
+}

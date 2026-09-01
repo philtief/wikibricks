@@ -1,39 +1,7 @@
-"""WikiBricks: Delta + Vector Search wiki store for AI agents on Databricks."""
+"""WikiBricks: local PostgreSQL memory with optional remote archival."""
 
 from wikibricks.agent_tools import make_agent_tools
 from wikibricks.client import WikiClient
-from wikibricks.ops import (
-    CATALOG,
-    EMBEDDING_MODEL,
-    HISTORY_TABLE,
-    LINKS_TABLE,
-    LOG_TABLE,
-    PAGES_TABLE,
-    PROMOTE_CHECKPOINT_TABLE,
-    SCHEMA,
-    SOURCES_TABLE,
-    SOURCES_VOLUME,
-    UC_FUNCTION_NAMES,
-    VS_ENDPOINT,
-    VS_INDEX,
-    drop_uc_functions_sql,
-)
+from wikibricks.postgres_store import PostgresStore
 
-__all__ = [
-    "WikiClient",
-    "make_agent_tools",
-    "CATALOG",
-    "SCHEMA",
-    "PAGES_TABLE",
-    "HISTORY_TABLE",
-    "LINKS_TABLE",
-    "SOURCES_TABLE",
-    "LOG_TABLE",
-    "PROMOTE_CHECKPOINT_TABLE",
-    "SOURCES_VOLUME",
-    "UC_FUNCTION_NAMES",
-    "VS_INDEX",
-    "VS_ENDPOINT",
-    "EMBEDDING_MODEL",
-    "drop_uc_functions_sql",
-]
+__all__ = ["WikiClient", "PostgresStore", "make_agent_tools"]

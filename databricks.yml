@@ -1,96 +1,53 @@
 bundle:
   name: wikibricks
 
-artifacts:
-  wikibricks_wheel:
-    type: whl
-    build: rm -f dist/wikibricks-*.whl app/wikibricks-*.whl && uv build --wheel && cp dist/wikibricks-*.whl app/
-    path: .
-
-variables:
-  catalog:
-    description: Unity Catalog catalog to deploy the wiki store into.
-    default: main
-  schema:
-    description: Schema under the catalog.
-    default: wiki
-  warehouse_id:
-    description: >
-      SQL warehouse used by UC functions and the deploy notebook. Required —
-      pass with `--var=warehouse_id=<id>` or set a per-target default in an
-      uncommitted `databricks.override.yml`.
-  vs_endpoint:
-    description: Vector Search endpoint name.
-    default: wiki_endpoint
-  seed_domain:
-    description: Seed-domain loader (sample | hotpot | custom | none).
-    default: sample
-  llm_model:
-    description: Foundation-Model-API endpoint used by the Streamlit app chat + judge.
-    default: databricks-claude-sonnet-4-5
-  embed_model:
-    description: FMAPI embedding endpoint used by promote_from_traces to cluster queries.
-    default: databricks-bge-large-en
-  auto_commit_threshold:
-    description: Confidence floor above which curate auto-commits proposed edges.
-    default: "0.85"
-  cluster_threshold:
-    description: >
-      Cosine-similarity floor for joining an existing query cluster in promote.
-      Lower = coarser grouping (more promotion candidates); higher = stricter.
-    default: "0.80"
-  judge_threshold:
-    description: >
-      Minimum LLM-judge score for a synthesised answer to be promoted. The
-      judge prompt asks for a single digit 1-5, so `4.0` admits scores of
-      4 or 5 (strictly-greater-than-equal semantics via `score >= threshold`
-      i.e. `not score < threshold`). Default sits right on the integer grid;
-      raise to 5.0 for strict-only-top-rated, or lower to 3.0 to promote
-      anything that isn't actively bad.
-    default: "4.0"
-  enabled_uc_functions:
-    description: >
-      Comma-separated subset of UC function names to deploy as the MCP
-      tool surface. Empty (default) deploys all 8: fn_wiki_search,
-      fn_wiki_read, fn_wiki_read_full, fn_wiki_history, fn_wiki_log,
-      fn_wiki_index, fn_wiki_schema, fn_wiki_write_help. Use a subset to
-      reduce tool-list noise for weaker models or to scope an agent to
-      read-only discovery (e.g. `fn_wiki_search,fn_wiki_read_full,fn_wiki_index`).
-    default: ""
-
 include:
   - resources/*.yml
 
-sync:
-  include:
-    - app/**
-    - app/wikibricks-*.whl
+artifacts:
+  default:
+    type: whl
+    build: uv build --wheel
+    path: .
+
+variables:
+  lakebase_project:
+    description: Lakebase Autoscaling project ID
+    default: wikibricks
+  lakebase_branch:
+    description: Lakebase branch read and written by maintenance
+    default: staging
+  lakebase_endpoint:
+    description: Lakebase read-write endpoint ID
+    default: primary
+  lakebase_database:
+    description: PostgreSQL database name
+    default: wikibricks
+  model_endpoint:
+    description: Databricks Foundation Model API endpoint
+    default: databricks-claude-sonnet-4-5
+  schedule_pause_status:
+    description: Weekly schedule state
+    default: PAUSED
 
 targets:
-  # Workspace host/profile are intentionally unset — supply via
-  # `DATABRICKS_CONFIG_PROFILE` env var, `--profile <name>` flag, or an
-  # uncommitted `databricks.override.yml`. Example override file shipped at
-  # `databricks.override.example.yml`.
   dev:
-    mode: development
     default: true
+    mode: development
     variables:
-      schema: wiki
-      auto_commit_threshold: "0.75"
+      lakebase_branch: staging
+      schedule_pause_status: PAUSED
 
   staging:
+    mode: development
     variables:
-      schema: wiki_staging
+      lakebase_branch: staging
+      schedule_pause_status: PAUSED
 
-  prod:
+  personal:
     mode: production
     workspace:
-      # Example shared location. Override to /Workspace/Users/<your-principal>/...
-      # for a single-principal production deployment.
-      root_path: /Workspace/Shared/.bundle/${bundle.name}/${bundle.target}
-    permissions:
-      - group_name: users
-        level: CAN_MANAGE
+      root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
     variables:
-      schema: wiki_prod
-
+      lakebase_branch: production
+      schedule_pause_status: PAUSED

@@ -1,0 +1,20 @@
+version: 1
+
+selection:
+  max_replicas_per_run: 10
+  max_events_per_replica: 200
+  max_input_chars: 120000
+  max_current_pages: 200
+
+publishing:
+  max_proposals_per_replica: 20
+  allowed_operations:
+    - create_page
+    - update_page
+    - retarget_links
+    - add_alias
+    - supersede_page
+
+model:
+  temperature: 0
+  max_output_tokens: 8192

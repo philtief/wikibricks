@@ -1,22 +1,21 @@
 {
   "name": "wikibricks",
-  "description": "Claude Code plugins built on top of WikiBricks — a Delta + Vector Search wiki store for agents on Databricks.",
+  "description": "Claude Code adapters for local PostgreSQL agent memory.",
   "owner": {
     "name": "Philipp Tiefenbacher",
     "email": "philipp.tiefenbacher@databricks.com"
   },
   "plugins": [
     {
-      "name": "wikibricks-recorder",
+      "name": "wikibricks",
       "source": "./plugin",
-      "description": "Records every Claude Code session as one WikiBricks page and exposes the wiki to the agent via 5 stdio MCP tools.",
+      "description": "Records Claude Code sessions in local PostgreSQL and exposes five local tools over stdio MCP.",
       "homepage": "https://github.com/philtief/wikibricks",
       "repository": "https://github.com/philtief/wikibricks.git",
       "license": "Apache-2.0",
       "keywords": [
-        "databricks",
-        "unity-catalog",
-        "vector-search",
+        "postgresql",
+        "local-first",
         "memory",
         "agent",
         "mcp",

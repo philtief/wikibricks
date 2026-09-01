@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://wikibricks.dev/schemas/session-record.schema.json",
+  "title": "WikiBricks session record",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "session"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "session": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness", "external_id", "user_id", "events"],
+      "properties": {
+        "harness": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]*$"
+        },
+        "external_id": {"type": "string", "minLength": 1},
+        "user_id": {"type": "string", "minLength": 1},
+        "agent": {"type": ["string", "null"]},
+        "workspace": {"type": ["string", "null"]},
+        "started_at": {"type": ["string", "null"], "format": "date-time"},
+        "updated_at": {"type": ["string", "null"], "format": "date-time"},
+        "metadata": {"type": "object"},
+        "events": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["external_id", "kind", "content"],
+            "properties": {
+              "external_id": {"type": "string", "minLength": 1},
+              "kind": {
+                "enum": [
+                  "user",
+                  "assistant",
+                  "tool_call",
+                  "tool_result",
+                  "error",
+                  "lifecycle"
+                ]
+              },
+              "content": {"type": "string"},
+              "created_at": {
+                "type": ["string", "null"],
+                "format": "date-time"
+              },
+              "metadata": {"type": "object"}
+            }
+          }
+        }
+      }
+    }
+  }
+}

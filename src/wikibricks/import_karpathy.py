@@ -20,7 +20,6 @@ new edge version while closing the previous one.
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -30,7 +29,8 @@ from wikibricks.karpathy_logic import (
     parse_frontmatter,
     wiki_path_for,
 )
-from wikibricks.ops import VALID_LINK_TYPES
+
+VALID_LINK_TYPES = ("related", "contradicts", "extends", "supersedes", "cites")
 
 
 def _collect_files(source_dir: Path) -> list[Path]:
@@ -154,10 +154,7 @@ def _resolve_edges_to_ids(
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("source_dir", help="path to the markdown wiki root")
-    p.add_argument("--profile", help="Databricks CLI profile")
-    p.add_argument("--catalog", required=False)
-    p.add_argument("--schema", required=False)
-    p.add_argument("--warehouse-id", required=False)
+    p.add_argument("--database-url", help="PostgreSQL connection URL")
     p.add_argument("--dry-run", action="store_true",
                    help="report what would be imported without writing")
     args = p.parse_args()
@@ -181,20 +178,9 @@ def main() -> int:
         }, indent=2))
         return 0
 
-    if args.catalog:
-        os.environ["WIKIBRICKS_CATALOG"] = args.catalog
-    if args.schema:
-        os.environ["WIKIBRICKS_SCHEMA"] = args.schema
-
-    from databricks.sdk import WorkspaceClient
-
     from wikibricks import WikiClient
 
-    ws = WorkspaceClient(profile=args.profile) if args.profile else WorkspaceClient()
-    wiki = WikiClient(
-        warehouse_id=args.warehouse_id or os.environ.get("WIKIBRICKS_WAREHOUSE_ID", ""),
-        workspace_client=ws,
-    )
+    wiki = WikiClient(args.database_url)
 
     written = wiki.write_pages(pages)
     print(f"wrote {written} pages")

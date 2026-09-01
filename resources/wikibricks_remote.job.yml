@@ -1,0 +1,34 @@
+resources:
+  jobs:
+    wikibricks_remote:
+      name: "[${bundle.target}] WikiBricks weekly remote maintenance"
+      description: Publish reviewable curation manifests from the optional Lakebase archive.
+      max_concurrent_runs: 1
+      timeout_seconds: 3600
+      schedule:
+        quartz_cron_expression: "0 0 4 ? * SUN"
+        timezone_id: UTC
+        pause_status: ${var.schedule_pause_status}
+      tasks:
+        - task_key: maintain
+          environment_key: remote
+          timeout_seconds: 3600
+          max_retries: 1
+          min_retry_interval_millis: 60000
+          retry_on_timeout: false
+          python_wheel_task:
+            package_name: wikibricks
+            entry_point: wikibricks-remote-maintenance
+            named_parameters:
+              project: ${var.lakebase_project}
+              branch: ${var.lakebase_branch}
+              endpoint: ${var.lakebase_endpoint}
+              database: ${var.lakebase_database}
+              model-endpoint: ${var.model_endpoint}
+      environments:
+        - environment_key: remote
+          spec:
+            client: "4"
+            dependencies:
+              - ../dist/*.whl
+              - databricks-sdk>=0.85.0

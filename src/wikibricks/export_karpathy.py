@@ -21,7 +21,6 @@ the data is yours, as a folder of plain markdown.
 """
 
 import argparse
-import os
 import sys
 from collections import defaultdict
 from pathlib import Path
@@ -32,24 +31,26 @@ from wikibricks.karpathy_logic import map_wiki_path_to_file, render_page_markdow
 def fetch_pages_and_edges(wiki) -> tuple[list[dict], list[dict]]:
     """Pull all pages and all currently-valid edges (joined to source/target paths).
 
-    `wiki` is a WikiClient. Uses two SQL statements: list_pages (already a
-    method) and a join over links + pages to resolve page_ids to paths.
+    Session and archive records are evidence, not curated wiki pages, so they
+    are excluded from Markdown export.
     """
-    from wikibricks.ops import LINKS_TABLE, PAGES_TABLE
-
-    pages = wiki.list_pages()
-
-    # Pull currently-valid edges with src + tgt paths resolved.
-    resp = wiki._exec(  # noqa: SLF001
-        f"SELECT s.path AS source_path, t.path AS target_path, l.link_type "
-        f"FROM {LINKS_TABLE} l "
-        f"JOIN {PAGES_TABLE} s ON s.page_id = l.source_page_id "
-        f"JOIN {PAGES_TABLE} t ON t.page_id = l.target_page_id "
-        f"WHERE l.valid_until IS NULL"
-    )
-    rows = resp.result.data_array if resp.result else []
-    cols = [c.name for c in wiki._manifest_columns(resp.manifest)] if rows else []
-    edges = [dict(zip(cols, r)) for r in rows]
+    pages = []
+    edges = []
+    for item in wiki.list_pages():
+        if item["page_type"] in {"session", "archive"}:
+            continue
+        page = wiki.read_page(item["path"])
+        if page is None:
+            continue
+        pages.append(page)
+        edges.extend(
+            {
+                "source_path": page["path"],
+                "target_path": neighbor["path"],
+                "link_type": neighbor["link_type"],
+            }
+            for neighbor in wiki.graph_neighbors(page["path"])
+        )
     return pages, edges
 
 
@@ -80,28 +81,14 @@ def write_pages(target_dir: Path, pages: list[dict], edges: list[dict]) -> int:
 def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("target_dir", help="where to write the markdown tree")
-    p.add_argument("--profile", help="Databricks CLI profile")
-    p.add_argument("--catalog")
-    p.add_argument("--schema")
-    p.add_argument("--warehouse-id")
+    p.add_argument("--database-url", help="PostgreSQL connection URL")
     p.add_argument("--limit", type=int, default=None,
                    help="cap number of pages exported (testing)")
     args = p.parse_args()
 
-    if args.catalog:
-        os.environ["WIKIBRICKS_CATALOG"] = args.catalog
-    if args.schema:
-        os.environ["WIKIBRICKS_SCHEMA"] = args.schema
-
-    from databricks.sdk import WorkspaceClient
-
     from wikibricks import WikiClient
 
-    ws = WorkspaceClient(profile=args.profile) if args.profile else WorkspaceClient()
-    wiki = WikiClient(
-        warehouse_id=args.warehouse_id or os.environ.get("WIKIBRICKS_WAREHOUSE_ID", ""),
-        workspace_client=ws,
-    )
+    wiki = WikiClient(args.database_url)
 
     pages, edges = fetch_pages_and_edges(wiki)
     if args.limit is not None:
