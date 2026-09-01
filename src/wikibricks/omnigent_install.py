@@ -1,23 +1,42 @@
-"""Install WikiBricks for Omnigent's native harnesses."""
+"""Install one WikiBricks memory across local agent harnesses."""
 
 from __future__ import annotations
 
-import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
-import tempfile
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Mapping
+from importlib.metadata import PackageNotFoundError
+from importlib.metadata import version as package_version
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
 import yaml
 
+from wikibricks.install_io import (
+    load_json_object,
+    load_yaml_mapping,
+    write_json_atomic,
+    write_text_atomic,
+    write_yaml_atomic,
+)
+
 _MINIMUM_VERSION = (0, 11, 0)
 _VERSION_PATTERN = re.compile(r"\b(\d+)\.(\d+)\.(\d+)(?:[^\s]*)?")
 _MCP_NAME = "wikibricks"
+_FILE_HARNESSES = {
+    "goose": "goose",
+    "hermes": "hermes",
+    "kimi": "kimi",
+    "kiro": "kiro-cli",
+    "opencode": "opencode",
+    "pi": "pi",
+    "qwen": "qwen",
+}
 
 
 def _version(command: str, run: Callable[..., Any]) -> str:
@@ -43,7 +62,10 @@ def _version(command: str, run: Callable[..., Any]) -> str:
 
 
 def _checked(run: Callable[..., Any], command: list[str], action: str) -> None:
-    result = run(command, capture_output=True, text=True, check=False)
+    try:
+        result = run(command, capture_output=True, text=True, check=False)
+    except FileNotFoundError as exc:
+        raise RuntimeError(f"Cannot {action}: executable not found") from exc
     if result.returncode:
         detail = (result.stderr or result.stdout or "command failed").strip()
         raise RuntimeError(f"Cannot {action}: {detail}")
@@ -63,52 +85,34 @@ def _configure_cli_mcp(
     _checked(run, add_command, f"configure the {harness} WikiBricks MCP server")
 
 
-def _load_kimi_config(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {}
+def _installed_version() -> str:
     try:
-        value = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Cannot update Kimi MCP config {path}: {exc}") from exc
-    if not isinstance(value, dict):
-        raise RuntimeError(f"Cannot update Kimi MCP config {path}: top level must be an object")
-    servers = value.get("mcpServers")
-    if servers is not None and not isinstance(servers, dict):
-        raise RuntimeError(f"Cannot update Kimi MCP config {path}: mcpServers must be an object")
-    return value
+        return package_version("wikibricks")
+    except PackageNotFoundError:
+        return "0.11.0"
 
 
-def _write_json_atomic(path: Path, value: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary: Path | None = None
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            encoding="utf-8",
-            dir=path.parent,
-            prefix=f".{path.name}.",
-            delete=False,
-        ) as handle:
-            json.dump(value, handle, indent=2)
-            handle.write("\n")
-            temporary = Path(handle.name)
-        os.replace(temporary, path)
-    finally:
-        if temporary is not None and temporary.exists():
-            temporary.unlink()
+def _selected(prepare_all: bool, executable: str | None) -> bool:
+    return prepare_all or executable is not None
 
 
-def _install_skill(home: Path) -> Path:
+def _skill_paths(home: Path, *, codex: bool, claude: bool, pi: bool) -> list[Path]:
+    targets = [home / ".agents" / "skills" / "wikibricks-memory" / "SKILL.md"]
+    if codex:
+        targets.append(home / ".codex" / "skills" / "wikibricks-memory" / "SKILL.md")
+    if claude:
+        targets.append(home / ".claude" / "skills" / "wikibricks-memory" / "SKILL.md")
+    if pi:
+        targets.append(home / ".pi" / "agent" / "skills" / "wikibricks-memory" / "SKILL.md")
+    return targets
+
+
+def _install_skills(paths: list[Path]) -> None:
     text = files("wikibricks.resources").joinpath("wikibricks-memory-skill.md").read_text(
         encoding="utf-8"
     )
-    shared = home / ".agents" / "skills" / "wikibricks-memory" / "SKILL.md"
-    codex = home / ".codex" / "skills" / "wikibricks-memory" / "SKILL.md"
-    claude = home / ".claude" / "skills" / "wikibricks-memory" / "SKILL.md"
-    for target in (shared, codex, claude):
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(text, encoding="utf-8")
-    return shared
+    for path in paths:
+        write_text_atomic(path, text)
 
 
 def _is_legacy_agent(path: Path) -> bool:
@@ -130,85 +134,143 @@ def _is_legacy_agent(path: Path) -> bool:
     return isinstance(command, str) and Path(command).name == "wikibricks-mcp"
 
 
-def _remove_legacy_agent(
-    home: Path,
-    *,
-    command: str,
-    run: Callable[..., Any],
-) -> tuple[bool, bool]:
-    config_path = home / ".omnigent" / "config.yaml"
-    default_value: object = None
-    if config_path.is_file():
-        try:
-            config = yaml.safe_load(config_path.read_text(encoding="utf-8")) or {}
-        except (OSError, yaml.YAMLError) as exc:
-            raise RuntimeError(f"Cannot read Omnigent config {config_path}: {exc}") from exc
-        if not isinstance(config, dict):
-            raise RuntimeError(f"Cannot read Omnigent config {config_path}: top level must be a mapping")
-        default_value = config.get("default_agent")
-
+def _legacy_agents(home: Path, config: dict[str, Any]) -> tuple[list[Path], bool]:
     standard = home / ".wikibricks" / "omnigent" / "agent.yaml"
     candidates = [standard]
+    default = config.get("default_agent")
     default_path: Path | None = None
-    default_was_legacy = False
-    if isinstance(default_value, str) and default_value:
-        default_path = Path(default_value).expanduser()
+    if isinstance(default, str) and default:
+        default_path = Path(default).expanduser().resolve()
         candidates.append(default_path)
-        resolved_default = default_path.resolve()
-        if resolved_default == standard.resolve():
-            default_was_legacy = not resolved_default.exists() or _is_legacy_agent(
-                resolved_default
-            )
+
+    legacy: list[Path] = []
+    for path in candidates:
+        resolved = path.resolve()
+        if resolved not in legacy and _is_legacy_agent(resolved):
+            legacy.append(resolved)
+    default_is_legacy = default_path is not None and default_path in legacy
+    return legacy, default_is_legacy
+
+
+def _omnigent_harness_config(
+    config: dict[str, Any],
+    *,
+    wrapper_paths: Mapping[str, Path],
+) -> dict[str, Any]:
+    raw = config.get("harness")
+    if isinstance(raw, str):
+        harnesses: dict[str, Any] = {"default": raw}
+    elif raw is None:
+        harnesses = {}
+    elif isinstance(raw, dict):
+        harnesses = dict(raw)
+    else:
+        raise RuntimeError("Cannot update Omnigent config: harness must be a string or mapping")
+
+    for harness, path in wrapper_paths.items():
+        existing = harnesses.get(harness)
+        if existing is None:
+            entry: dict[str, Any] = {}
+        elif isinstance(existing, dict):
+            entry = dict(existing)
         else:
-            default_was_legacy = _is_legacy_agent(resolved_default)
-
-    removed = False
-    seen: set[Path] = set()
-    for candidate in candidates:
-        resolved = candidate.resolve()
-        if resolved in seen:
-            continue
-        seen.add(resolved)
-        if _is_legacy_agent(resolved):
-            resolved.unlink()
-            removed = True
-
-    if default_was_legacy:
-        _checked(
-            run,
-            [command, "config", "unset", "--global", "default_agent"],
-            "remove the legacy WikiBricks default agent",
-        )
-    return removed, default_was_legacy
+            raise RuntimeError(f"Cannot update Omnigent config: harness.{harness} must be a mapping")
+        entry["command"] = str(path)
+        harnesses[harness] = entry
+    config["harness"] = harnesses
+    return config
 
 
-def install_omnigent(
+def _wrapper_source(kind: str) -> str:
+    python = shlex.quote(sys.executable)
+    return f"#!/bin/sh\nexec {python} -m wikibricks.harness_launchers {kind} \"$@\"\n"
+
+
+def _config_root(home: Path, environ: Mapping[str, str], *, explicit_home: bool) -> Path:
+    if not explicit_home and environ.get("XDG_CONFIG_HOME"):
+        return Path(environ["XDG_CONFIG_HOME"]).expanduser().resolve()
+    return home / ".config"
+
+
+def install_integrations(
     *,
     home: Path | None = None,
+    require_omnigent: bool = False,
     command: str = "omnigent",
     run: Callable[..., Any] = subprocess.run,
     which: Callable[[str], str | None] = shutil.which,
+    environ: Mapping[str, str] | None = None,
 ) -> dict[str, Any]:
-    """Configure one shared memory skill and MCP server for native harnesses."""
-    version = _version(command, run)
+    """Install WikiBricks for detected clients and all Omnigent harnesses."""
+    env = os.environ if environ is None else environ
+    explicit_home = home is not None
     resolved_home = (home or Path.home()).expanduser().resolve()
+    omnigent = which(command)
+    prepare_all = require_omnigent or omnigent is not None
+    omnigent_version = _version(command, run) if prepare_all else None
+    mode = "omnigent" if prepare_all else "standalone"
+
     mcp_command = which("wikibricks-mcp")
     if mcp_command is None:
         raise RuntimeError("wikibricks-mcp is not installed or is not on PATH")
     mcp_command = os.path.abspath(Path(mcp_command).expanduser())
 
+    executables = {
+        "codex": which("codex"),
+        "claude": which("claude"),
+        **{name: which(binary) for name, binary in _FILE_HARNESSES.items()},
+    }
+    selected = {
+        name: _selected(prepare_all, executables[name]) for name in _FILE_HARNESSES
+    }
+
+    config_root = _config_root(resolved_home, env, explicit_home=explicit_home)
     kimi_home = resolved_home / ".kimi"
-    if home is None and os.environ.get("KIMI_SHARE_DIR"):
-        kimi_home = Path(os.environ["KIMI_SHARE_DIR"]).expanduser().resolve()
-    kimi_path = kimi_home / "mcp.json"
-    kimi_config = _load_kimi_config(kimi_path)
-    skill_path = _install_skill(resolved_home)
+    if not explicit_home and env.get("KIMI_SHARE_DIR"):
+        kimi_home = Path(env["KIMI_SHARE_DIR"]).expanduser().resolve()
+    paths = {
+        "goose": config_root / "goose" / "config.yaml",
+        "hermes": resolved_home / ".hermes" / "config.yaml",
+        "kimi": kimi_home / "mcp.json",
+        "kiro": resolved_home / ".kiro" / "settings" / "mcp.json",
+        "opencode": config_root / "opencode" / "opencode.json",
+        "qwen": resolved_home / ".qwen" / "settings.json",
+        "claude": resolved_home / ".claude.json",
+        "omnigent": resolved_home / ".omnigent" / "config.yaml",
+        "manifest": resolved_home / ".wikibricks" / "omnigent-install.json",
+    }
+
+    configs: dict[str, dict[str, Any]] = {}
+    for name in ("kimi", "kiro", "qwen", "opencode"):
+        if selected.get(name):
+            parent = "mcp" if name == "opencode" else "mcpServers"
+            configs[name] = load_json_object(paths[name], parent=parent)
+    for name, parent in (("goose", "extensions"), ("hermes", "mcp_servers")):
+        if selected.get(name):
+            configs[name] = load_yaml_mapping(paths[name], parent=parent)
+    if prepare_all and executables["claude"] is None:
+        configs["claude"] = load_json_object(paths["claude"], parent="mcpServers")
+
+    omnigent_config: dict[str, Any] = {}
+    legacy_agents: list[Path] = []
+    default_was_legacy = False
+    wrapper_paths: dict[str, Path] = {}
+    launchers: dict[str, str] = {}
+    if prepare_all:
+        omnigent_config = load_yaml_mapping(paths["omnigent"])
+        legacy_agents, default_was_legacy = _legacy_agents(resolved_home, omnigent_config)
+        for name in ("opencode", "hermes"):
+            downstream = executables[name]
+            if downstream:
+                wrapper_paths[f"{name}-native"] = resolved_home / ".wikibricks" / "bin" / name
+                launchers[name] = os.path.abspath(Path(downstream).expanduser())
+        _omnigent_harness_config(omnigent_config, wrapper_paths=wrapper_paths)
+        if default_was_legacy:
+            omnigent_config.pop("default_agent", None)
 
     statuses: dict[str, str] = {}
-    codex = which("codex")
-    if codex is None:
-        statuses["codex"] = "not installed"
-    else:
+    codex = executables["codex"]
+    if codex is not None:
         _configure_cli_mcp(
             get_command=[codex, "mcp", "get", _MCP_NAME],
             remove_command=[codex, "mcp", "remove", _MCP_NAME],
@@ -217,11 +279,11 @@ def install_omnigent(
             harness="Codex",
         )
         statuses["codex"] = "configured"
+    elif prepare_all:
+        statuses["codex"] = "not installed"
 
-    claude = which("claude")
-    if claude is None:
-        statuses["claude"] = "not installed"
-    else:
+    claude = executables["claude"]
+    if claude is not None:
         _configure_cli_mcp(
             get_command=[claude, "mcp", "get", _MCP_NAME],
             remove_command=[claude, "mcp", "remove", "--scope", "user", _MCP_NAME],
@@ -239,25 +301,132 @@ def install_omnigent(
             harness="Claude",
         )
         statuses["claude"] = "configured"
+    elif prepare_all:
+        servers = configs["claude"].setdefault("mcpServers", {})
+        servers[_MCP_NAME] = {"command": mcp_command}
+        statuses["claude"] = "prepared (binary not installed)"
 
-    servers = kimi_config.setdefault("mcpServers", {})
-    servers[_MCP_NAME] = {"command": mcp_command}
-    _write_json_atomic(kimi_path, kimi_config)
-    statuses["kimi"] = "configured" if which("kimi") else "prepared (binary not installed)"
+    if prepare_all:
+        statuses["debby"] = "configured via Claude MCP"
+        statuses["polly"] = "configured via Claude MCP"
 
-    legacy_removed, default_unset = _remove_legacy_agent(
+    if selected["kimi"]:
+        configs["kimi"].setdefault("mcpServers", {})[_MCP_NAME] = {"command": mcp_command}
+    if selected["qwen"]:
+        configs["qwen"].setdefault("mcpServers", {})[_MCP_NAME] = {"command": mcp_command}
+    if selected["kiro"]:
+        configs["kiro"].setdefault("mcpServers", {})[_MCP_NAME] = {"command": mcp_command}
+    if selected["opencode"]:
+        configs["opencode"].setdefault("mcp", {})[_MCP_NAME] = {
+            "type": "local",
+            "command": [mcp_command],
+            "enabled": True,
+        }
+    if selected["goose"]:
+        configs["goose"].setdefault("extensions", {})[_MCP_NAME] = {
+            "name": _MCP_NAME,
+            "type": "stdio",
+            "enabled": True,
+            "cmd": mcp_command,
+            "args": [],
+            "timeout": 300,
+        }
+    if selected["hermes"]:
+        configs["hermes"].setdefault("mcp_servers", {})[_MCP_NAME] = {
+            "command": mcp_command,
+            "args": [],
+        }
+
+    for name in _FILE_HARNESSES:
+        if selected[name]:
+            statuses[name] = (
+                "configured" if executables[name] is not None else "prepared (binary not installed)"
+            )
+
+    skill_paths = _skill_paths(
         resolved_home,
-        command=command,
-        run=run,
+        codex=prepare_all or codex is not None,
+        claude=prepare_all or claude is not None,
+        pi=selected["pi"],
     )
-    return {
-        "omnigent_version": version,
-        "skill_path": str(skill_path),
+    _install_skills(skill_paths)
+
+    for name in ("kimi", "kiro", "qwen", "opencode"):
+        if name in configs:
+            write_json_atomic(paths[name], configs[name])
+    if "claude" in configs:
+        write_json_atomic(paths["claude"], configs["claude"])
+    for name in ("goose", "hermes"):
+        if name in configs:
+            write_yaml_atomic(paths[name], configs[name])
+    if prepare_all:
+        write_yaml_atomic(paths["omnigent"], omnigent_config)
+        for name in launchers:
+            wrapper = resolved_home / ".wikibricks" / "bin" / name
+            write_text_atomic(wrapper, _wrapper_source(name), executable=True)
+        for path in legacy_agents:
+            path.unlink()
+
+    owned_files = [str(path) for path in skill_paths]
+    owned_files.extend(str(resolved_home / ".wikibricks" / "bin" / name) for name in launchers)
+    owned_files.append(str(paths["manifest"]))
+    owned_settings: dict[str, list[str]] = {}
+    for name in statuses:
+        if name in {"debby", "polly"}:
+            owned_settings[name] = ["Claude mcpServers.wikibricks"]
+        elif name == "goose":
+            owned_settings[name] = ["extensions.wikibricks"]
+        elif name == "hermes":
+            owned_settings[name] = ["mcp_servers.wikibricks"]
+        elif name == "opencode":
+            owned_settings[name] = ["mcp.wikibricks"]
+        elif name in {"kimi", "kiro", "qwen", "claude"}:
+            owned_settings[name] = ["mcpServers.wikibricks"]
+        elif name == "codex":
+            owned_settings[name] = ["mcp_servers.wikibricks"]
+    if wrapper_paths:
+        owned_settings["omnigent"] = [
+            *(f"harness.{name}.command" for name in sorted(wrapper_paths)),
+        ]
+
+    manifest = {
+        "schema_version": 1,
+        "installer_version": _installed_version(),
+        "mode": mode,
         "mcp_command": mcp_command,
         "harnesses": statuses,
-        "legacy_agent_removed": legacy_removed,
-        "legacy_default_unset": default_unset,
+        "owned_files": sorted(owned_files),
+        "owned_settings": owned_settings,
+        "launchers": launchers,
+    }
+    write_json_atomic(paths["manifest"], manifest)
+
+    return {
+        "mode": mode,
+        "omnigent_version": omnigent_version,
+        "skill_path": str(skill_paths[0]),
+        "mcp_command": mcp_command,
+        "harnesses": statuses,
+        "legacy_agent_removed": bool(legacy_agents),
+        "legacy_default_unset": default_was_legacy,
     }
 
 
-__all__ = ["install_omnigent"]
+def install_omnigent(
+    *,
+    home: Path | None = None,
+    command: str = "omnigent",
+    run: Callable[..., Any] = subprocess.run,
+    which: Callable[[str], str | None] = shutil.which,
+) -> dict[str, Any]:
+    """Compatibility entry point that requires Omnigent."""
+    return install_integrations(
+        home=home,
+        require_omnigent=True,
+        command=command,
+        run=run,
+        which=which,
+    )
+
+
+__all__ = ["install_integrations", "install_omnigent"]

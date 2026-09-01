@@ -1,141 +1,271 @@
 import json
+import os
 from pathlib import Path
 from subprocess import CompletedProcess
 
 import pytest
 import yaml
 
-from wikibricks.omnigent_install import install_omnigent
+from wikibricks import omnigent_install as install_module
 
 
-def _runner(calls: list[list[str]]):
+def _runner(calls: list[list[str]], version: str = "0.11.0"):
     def run(command: list[str], **_: object) -> CompletedProcess[str]:
         calls.append(command)
         if command == ["omnigent", "--version"]:
-            return CompletedProcess(command, 0, stdout="omnigent 0.11.0\n", stderr="")
+            return CompletedProcess(command, 0, stdout=f"omnigent {version}\n", stderr="")
+        if len(command) >= 3 and command[1:3] == ["mcp", "get"]:
+            return CompletedProcess(command, 1, stdout="", stderr="not found")
         return CompletedProcess(command, 0, stdout="", stderr="")
 
     return run
 
 
-def test_install_omnigent_configures_native_harnesses_without_an_agent(tmp_path: Path):
+def _write_json(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value))
+
+
+def _write_yaml(path: Path, value: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(yaml.safe_dump(value))
+
+
+def test_install_integrations_configures_every_omnigent_harness_idempotently(
+    tmp_path: Path,
+):
     calls: list[list[str]] = []
     mcp_command = tmp_path / "bin" / "wikibricks-mcp"
-    versioned_command = tmp_path / "tools" / "wikibricks-0.11" / "wikibricks-mcp"
-    versioned_command.parent.mkdir(parents=True)
-    versioned_command.write_text("")
     mcp_command.parent.mkdir(parents=True)
-    mcp_command.symlink_to(versioned_command)
-    legacy_agent = tmp_path / "custom" / "old-wikibricks-agent.yaml"
-    legacy_agent.parent.mkdir(parents=True)
-    legacy_agent.write_text(
-        yaml.safe_dump(
-            {
-                "name": "wikibricks",
-                "tools": {"wikibricks": {"type": "mcp", "command": "wikibricks-mcp"}},
-            }
-        )
+    mcp_command.write_text("")
+
+    legacy_agent = tmp_path / "old-agent.yaml"
+    _write_yaml(
+        legacy_agent,
+        {
+            "name": "wikibricks",
+            "tools": {"wikibricks": {"type": "mcp", "command": "wikibricks-mcp"}},
+        },
     )
     omnigent_config = tmp_path / ".omnigent" / "config.yaml"
-    omnigent_config.parent.mkdir(parents=True)
-    omnigent_config.write_text(
-        yaml.safe_dump({"default_agent": str(legacy_agent), "server": "https://example.test"})
+    _write_yaml(
+        omnigent_config,
+        {
+            "default_agent": str(legacy_agent),
+            "harness": "codex-native",
+            "server": "https://example.test",
+        },
     )
-    kimi_config = tmp_path / ".kimi" / "mcp.json"
-    kimi_config.parent.mkdir(parents=True)
-    kimi_config.write_text(
-        json.dumps({"futureSetting": True, "mcpServers": {"existing": {"command": "existing-mcp"}}})
+
+    json_configs = {
+        tmp_path / ".kimi" / "mcp.json": {
+            "futureSetting": True,
+            "mcpServers": {"existing": {"command": "existing-mcp"}},
+        },
+        tmp_path / ".qwen" / "settings.json": {
+            "theme": "dark",
+            "mcpServers": {"existing": {"command": "existing-mcp"}},
+        },
+        tmp_path / ".kiro" / "settings" / "mcp.json": {
+            "futureSetting": True,
+            "mcpServers": {"existing": {"command": "existing-mcp"}},
+        },
+        tmp_path / ".config" / "opencode" / "opencode.json": {
+            "model": "provider/model",
+            "mcp": {"existing": {"type": "remote", "url": "https://mcp.test"}},
+        },
+    }
+    for path, value in json_configs.items():
+        _write_json(path, value)
+
+    goose_config = tmp_path / ".config" / "goose" / "config.yaml"
+    _write_yaml(
+        goose_config,
+        {
+            "GOOSE_PROVIDER": "openai",
+            "extensions": {"existing": {"type": "builtin", "enabled": True}},
+        },
+    )
+    hermes_config = tmp_path / ".hermes" / "config.yaml"
+    _write_yaml(
+        hermes_config,
+        {
+            "model": {"provider": "openrouter"},
+            "mcp_servers": {"existing": {"command": "existing-mcp"}},
+        },
     )
 
     binaries = {
         "wikibricks-mcp": str(mcp_command),
+        "omnigent": "/tools/omnigent",
         "codex": "/tools/codex",
         "claude": "/tools/claude",
-        "kimi": None,
+        "goose": "/tools/goose",
+        "hermes": "/tools/hermes",
+        "kimi": "/tools/kimi",
+        "kiro-cli": "/tools/kiro-cli",
+        "opencode": "/tools/opencode",
+        "pi": "/tools/pi",
+        "qwen": "/tools/qwen",
     }
-    result = install_omnigent(
+    result = install_module.install_integrations(
         home=tmp_path,
         run=_runner(calls),
         which=binaries.get,
     )
 
-    shared_skill = tmp_path / ".agents" / "skills" / "wikibricks-memory" / "SKILL.md"
-    codex_skill = tmp_path / ".codex" / "skills" / "wikibricks-memory" / "SKILL.md"
-    claude_skill = tmp_path / ".claude" / "skills" / "wikibricks-memory" / "SKILL.md"
-    assert shared_skill.read_text() == codex_skill.read_text()
-    assert shared_skill.read_text() == claude_skill.read_text()
-    assert "wiki_search" in shared_skill.read_text()
-    assert "wiki_write_page" in shared_skill.read_text()
+    assert result["mode"] == "omnigent"
+    assert result["omnigent_version"] == "0.11.0"
+    assert set(result["harnesses"]) == {
+        "claude",
+        "codex",
+        "debby",
+        "goose",
+        "hermes",
+        "kimi",
+        "kiro",
+        "opencode",
+        "pi",
+        "polly",
+        "qwen",
+    }
 
-    kimi = json.loads(kimi_config.read_text())
+    kimi = json.loads((tmp_path / ".kimi" / "mcp.json").read_text())
+    qwen = json.loads((tmp_path / ".qwen" / "settings.json").read_text())
+    kiro = json.loads((tmp_path / ".kiro" / "settings" / "mcp.json").read_text())
+    opencode = json.loads(
+        (tmp_path / ".config" / "opencode" / "opencode.json").read_text()
+    )
+    goose = yaml.safe_load(goose_config.read_text())
+    hermes = yaml.safe_load(hermes_config.read_text())
+
     assert kimi["futureSetting"] is True
     assert kimi["mcpServers"]["existing"] == {"command": "existing-mcp"}
     assert kimi["mcpServers"]["wikibricks"] == {"command": str(mcp_command)}
-
-    assert not legacy_agent.exists()
-    assert ["omnigent", "config", "unset", "--global", "default_agent"] in calls
-    assert not any("default_agent=" in part for call in calls for part in call)
-    assert ["/tools/codex", "mcp", "add", "wikibricks", "--", str(mcp_command)] in calls
-    assert [
-        "/tools/claude",
-        "mcp",
-        "add",
-        "--scope",
-        "user",
-        "wikibricks",
-        "--",
-        str(mcp_command),
-    ] in calls
-    assert result == {
-        "omnigent_version": "0.11.0",
-        "skill_path": str(shared_skill),
-        "mcp_command": str(mcp_command),
-        "harnesses": {
-            "codex": "configured",
-            "claude": "configured",
-            "kimi": "prepared (binary not installed)",
-        },
-        "legacy_agent_removed": True,
-        "legacy_default_unset": True,
+    assert qwen["theme"] == "dark"
+    assert qwen["mcpServers"]["wikibricks"] == {"command": str(mcp_command)}
+    assert kiro["futureSetting"] is True
+    assert kiro["mcpServers"]["wikibricks"] == {"command": str(mcp_command)}
+    assert opencode["model"] == "provider/model"
+    assert opencode["mcp"]["existing"] == {
+        "type": "remote",
+        "url": "https://mcp.test",
+    }
+    assert opencode["mcp"]["wikibricks"] == {
+        "type": "local",
+        "command": [str(mcp_command)],
+        "enabled": True,
+    }
+    assert goose["GOOSE_PROVIDER"] == "openai"
+    assert goose["extensions"]["existing"] == {"type": "builtin", "enabled": True}
+    assert goose["extensions"]["wikibricks"] == {
+        "name": "wikibricks",
+        "type": "stdio",
+        "enabled": True,
+        "cmd": str(mcp_command),
+        "args": [],
+        "timeout": 300,
+    }
+    assert hermes["model"] == {"provider": "openrouter"}
+    assert hermes["mcp_servers"]["wikibricks"] == {
+        "command": str(mcp_command),
+        "args": [],
     }
 
+    skill_texts = [
+        (tmp_path / path / "skills" / "wikibricks-memory" / "SKILL.md").read_text()
+        for path in (".agents", ".codex", ".claude", ".pi/agent")
+    ]
+    assert len(set(skill_texts)) == 1
+    assert "wiki_search" in skill_texts[0]
 
-def test_install_omnigent_skips_absent_cli_harnesses_and_prepares_kimi(tmp_path: Path):
-    calls: list[list[str]] = []
-    other_agent = tmp_path / "my-agent.yaml"
-    other_agent.write_text(yaml.safe_dump({"name": "my-agent"}))
-    config = tmp_path / ".omnigent" / "config.yaml"
-    config.parent.mkdir(parents=True)
-    config.write_text(yaml.safe_dump({"default_agent": str(other_agent)}))
-    result = install_omnigent(
+    updated_omnigent = yaml.safe_load(omnigent_config.read_text())
+    assert updated_omnigent["server"] == "https://example.test"
+    assert updated_omnigent["harness"]["default"] == "codex-native"
+    for name in ("opencode", "hermes"):
+        wrapper = tmp_path / ".wikibricks" / "bin" / name
+        assert updated_omnigent["harness"][f"{name}-native"]["command"] == str(wrapper)
+        assert wrapper.is_file()
+        assert os.access(wrapper, os.X_OK)
+    assert "default_agent" not in updated_omnigent
+    assert not legacy_agent.exists()
+
+    manifest_path = tmp_path / ".wikibricks" / "omnigent-install.json"
+    manifest = json.loads(manifest_path.read_text())
+    assert manifest["schema_version"] == 1
+    assert manifest["mode"] == "omnigent"
+    assert manifest["mcp_command"] == str(mcp_command)
+    assert manifest["launchers"] == {
+        "hermes": "/tools/hermes",
+        "opencode": "/tools/opencode",
+    }
+    assert "mcpServers.wikibricks" in manifest["owned_settings"]["kimi"]
+    assert str(omnigent_config) not in manifest["owned_files"]
+
+    tracked = [*json_configs, goose_config, hermes_config, omnigent_config, manifest_path]
+    first_bytes = {path: path.read_bytes() for path in tracked}
+    second = install_module.install_integrations(
         home=tmp_path,
         run=_runner(calls),
-        which=lambda name: "/bin/wikibricks-mcp" if name == "wikibricks-mcp" else None,
+        which=binaries.get,
+    )
+    assert second == {
+        **result,
+        "legacy_agent_removed": False,
+        "legacy_default_unset": False,
+    }
+    assert {path: path.read_bytes() for path in tracked} == first_bytes
+
+
+def test_install_integrations_with_only_codex_does_not_create_other_client_configs(
+    tmp_path: Path,
+):
+    calls: list[list[str]] = []
+    binaries = {
+        "wikibricks-mcp": "/tools/wikibricks-mcp",
+        "codex": "/tools/codex",
+    }
+
+    result = install_module.install_integrations(
+        home=tmp_path,
+        run=_runner(calls),
+        which=binaries.get,
     )
 
-    assert result["harnesses"] == {
-        "codex": "not installed",
-        "claude": "not installed",
-        "kimi": "prepared (binary not installed)",
-    }
-    assert json.loads((tmp_path / ".kimi" / "mcp.json").read_text()) == {
-        "mcpServers": {"wikibricks": {"command": "/bin/wikibricks-mcp"}}
-    }
-    assert calls == [["omnigent", "--version"]]
-    assert other_agent.exists()
+    assert result["mode"] == "standalone"
+    assert result["omnigent_version"] is None
+    assert result["harnesses"] == {"codex": "configured"}
+    assert [
+        "/tools/codex",
+        "mcp",
+        "add",
+        "wikibricks",
+        "--",
+        "/tools/wikibricks-mcp",
+    ] in calls
+    assert (tmp_path / ".agents" / "skills" / "wikibricks-memory" / "SKILL.md").is_file()
+    assert (tmp_path / ".codex" / "skills" / "wikibricks-memory" / "SKILL.md").is_file()
+    for absent in (".claude", ".kimi", ".qwen", ".hermes", ".kiro", ".pi"):
+        assert not (tmp_path / absent).exists()
+    assert not (tmp_path / ".config" / "goose").exists()
+    assert not (tmp_path / ".config" / "opencode").exists()
 
 
-def test_install_omnigent_respects_kimi_share_dir(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+def test_install_integrations_respects_kimi_share_dir(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ):
     home = tmp_path / "home"
     kimi_home = tmp_path / "kimi"
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("KIMI_SHARE_DIR", str(kimi_home))
 
-    install_omnigent(
+    install_module.install_integrations(
         run=_runner([]),
-        which=lambda name: "/bin/wikibricks-mcp" if name == "wikibricks-mcp" else None,
+        which=lambda name: {
+            "wikibricks-mcp": "/bin/wikibricks-mcp",
+            "kimi": "/bin/kimi",
+        }.get(name),
     )
 
     assert (home / ".agents" / "skills" / "wikibricks-memory" / "SKILL.md").exists()
@@ -144,31 +274,37 @@ def test_install_omnigent_respects_kimi_share_dir(
     }
 
 
-def test_install_omnigent_preserves_invalid_kimi_config(tmp_path: Path):
-    config = tmp_path / ".kimi" / "mcp.json"
-    config.parent.mkdir(parents=True)
-    config.write_text("{not-json\n")
+def test_install_integrations_preflights_every_config_before_mutation(tmp_path: Path):
+    invalid = tmp_path / ".qwen" / "settings.json"
+    invalid.parent.mkdir(parents=True)
+    invalid.write_text("{not-json\n")
+    calls: list[list[str]] = []
+    binaries = {
+        "wikibricks-mcp": "/bin/wikibricks-mcp",
+        "codex": "/bin/codex",
+        "qwen": "/bin/qwen",
+    }
 
-    with pytest.raises(RuntimeError, match="Cannot update Kimi MCP config"):
-        install_omnigent(
+    with pytest.raises(RuntimeError, match="Cannot update JSON config"):
+        install_module.install_integrations(
             home=tmp_path,
-            run=_runner([]),
-            which=lambda name: "/bin/wikibricks-mcp" if name == "wikibricks-mcp" else None,
+            run=_runner(calls),
+            which=binaries.get,
         )
 
-    assert config.read_text() == "{not-json\n"
+    assert invalid.read_text() == "{not-json\n"
+    assert calls == []
+    assert not (tmp_path / ".agents").exists()
+    assert not (tmp_path / ".codex").exists()
 
 
-def test_install_omnigent_rejects_old_omnigent_before_writing_files(tmp_path: Path):
-    def run(command: list[str], **_: object) -> CompletedProcess[str]:
-        return CompletedProcess(command, 0, stdout="omnigent 0.10.0\n", stderr="")
-
+def test_install_omnigent_alias_rejects_old_version_before_writing(tmp_path: Path):
     with pytest.raises(RuntimeError, match="Omnigent 0.11.0 or newer"):
-        install_omnigent(
+        install_module.install_omnigent(
             home=tmp_path,
-            run=run,
+            run=_runner([], version="0.10.0"),
             which=lambda name: "/bin/wikibricks-mcp" if name == "wikibricks-mcp" else None,
         )
 
     assert not (tmp_path / ".agents").exists()
-    assert not (tmp_path / ".kimi").exists()
+    assert not (tmp_path / ".wikibricks").exists()
