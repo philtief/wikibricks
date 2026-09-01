@@ -39,6 +39,17 @@ def test_base_package_pins_the_serverless_postgres_driver():
     assert "psycopg[binary]==3.2.13" in dependencies
 
 
+def test_public_ci_uses_public_packages_and_installs_postgres():
+    lockfile = (ROOT / "uv.lock").read_text()
+
+    assert "pypi-proxy.cloud.databricks.com" not in lockfile
+    for name in ("ci.yml", "release.yml"):
+        workflow = (ROOT / ".github" / "workflows" / name).read_text()
+        assert "Install PostgreSQL" in workflow
+        assert "uv sync --locked --all-extras --dev" in workflow
+        assert "uv run --locked pytest -q" in workflow
+
+
 def test_base_modules_import_when_databricks_is_blocked():
     code = """
 import importlib.abc

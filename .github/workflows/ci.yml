@@ -15,9 +15,14 @@ jobs:
         uses: astral-sh/setup-uv@v5
       - name: Set up Python
         run: uv python install 3.14
+      - name: Install PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes postgresql
+          echo "$(pg_config --bindir)" >> "$GITHUB_PATH"
       - name: Sync dependencies
-        run: uv sync --all-extras --dev
+        run: uv sync --locked --all-extras --dev
       - name: Ruff
-        run: uv run ruff check src tests
+        run: uv run --locked ruff check src tests
       - name: Pytest
-        run: uv run pytest -q
+        run: uv run --locked pytest -q
