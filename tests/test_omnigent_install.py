@@ -6,7 +6,9 @@ from subprocess import CompletedProcess
 import pytest
 import yaml
 
+from wikibricks import cli as cli_module
 from wikibricks import omnigent_install as install_module
+from wikibricks.config import load_config
 
 
 def _runner(calls: list[list[str]], version: str = "0.11.0"):
@@ -215,6 +217,20 @@ def test_install_integrations_configures_every_omnigent_harness_idempotently(
         "legacy_default_unset": False,
     }
     assert {path: path.read_bytes() for path in tracked} == first_bytes
+
+
+def test_install_command_defaults_to_universal_mode_and_keeps_omnigent_alias(
+    tmp_path: Path,
+):
+    parser = cli_module.build_parser(load_config(home=tmp_path, environ={}))
+
+    universal = parser.parse_args(["install"])
+    compatibility = parser.parse_args(["install", "omnigent"])
+
+    assert universal.install_target is None
+    assert universal.handler is cli_module._command_install
+    assert compatibility.install_target == "omnigent"
+    assert compatibility.handler is cli_module._command_install
 
 
 def test_install_integrations_with_only_codex_does_not_create_other_client_configs(

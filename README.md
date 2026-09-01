@@ -1,9 +1,13 @@
 # WikiBricks
 
-WikiBricks is one local memory shared by Codex, Claude Code, Kimi, and other
-agent harnesses. Omnigent manages the sessions and launches the native harness.
-A shared WikiBricks skill tells that harness when to recall and save context;
-standard MCP provides the memory tools. There is no separate WikiBricks agent.
+WikiBricks gives Codex, Claude Code, Kimi, and other agent harnesses one local
+memory. Each client connects through MCP and reads or writes the same database.
+The shared WikiBricks skill tells the active agent when to recall and save
+context. There is no separate WikiBricks agent.
+
+Omnigent is the primary interface for choosing a harness and managing sessions,
+but it is optional. A standalone Codex or Claude Code installation uses the
+same memory and the same setup command.
 
 The active memory is a SQLite database at `~/.wikibricks/wikibricks.db`.
 Search, recall, writes, and maintenance work without Databricks, PostgreSQL,
@@ -14,11 +18,11 @@ local database.
 ## The architecture
 
 ```text
-                  Omnigent
-         UI, sessions, runtime selection
+            Omnigent (optional)
+        UI, sessions, runtime selection
                        |
-          Codex  Claude Code  Kimi
-             native harness process
+ Codex  Claude  Debby  Goose  Hermes  Kimi
+ Kiro   OpenCode  Pi   Polly  Qwen
                        |
        WikiBricks shared skill + MCP
                        |
@@ -34,97 +38,90 @@ optional, once a week:
 local SQLite <---- guarded sync ----> Lakebase <---- Databricks curation job
 ```
 
-After installation, use the normal `omnigent codex`, `omnigent claude`, or
-`omnigent kimi` command. The selected harness loads the WikiBricks skill and
-MCP server from its user-level configuration. A Codex session can therefore
-inform later Claude Code or Kimi work without selecting a memory agent or
-running a memory command.
+After installation, the selected harness loads the WikiBricks skill and MCP
+server from its user configuration. A Codex session can inform later Claude
+Code, Kimi, or Goose work without selecting a memory agent or running a memory
+command.
 
 WikiBricks uses agent-driven curation. It stores findings, decisions,
 comparisons, and reusable answers that the agent judges useful instead of
 copying every message. This keeps the maintained wiki smaller than the chat
 history and follows the LLM Wiki pattern.
 
-The integration uses the public configuration interfaces of Omnigent 0.11.0,
-Codex, Claude Code, and Kimi. WikiBricks does not patch, import, or require the
-Omnigent source tree. Generic MCP has no portable session lifecycle, so
-WikiBricks does not claim automatic transcript recording.
+The integration uses public client configuration and the Omnigent 0.11 harness
+configuration. WikiBricks does not patch or import the Omnigent source tree.
+Generic MCP has no portable session lifecycle, so WikiBricks does not claim
+automatic transcript recording.
 
 ## Install
 
-SQLite is included with Python. WikiBricks has no local database service to
-install. Omnigent 0.11.0 or newer is required for the native installer.
+WikiBricks requires Python 3.10 or newer. SQLite is included with Python, so
+there is no local database service to install.
 
-Install the official Omnigent release with Homebrew:
+```bash
+uv tool install wikibricks
+wikibricks install
+```
+
+`wikibricks install` initializes `~/.wikibricks/wikibricks.db`, installs the
+shared memory skill, and detects supported clients on `PATH`. If Omnigent is
+absent, it configures only the clients it finds. This is enough for a machine
+that has only Codex or only Claude Code.
+
+To test unreleased changes from `main`, replace the first command with:
+
+```bash
+uv tool install --force "wikibricks @ git+https://github.com/philtief/wikibricks.git"
+```
+
+### Omnigent
+
+Install Omnigent 0.11.0 or newer with Homebrew, then run the same WikiBricks
+installer:
 
 ```bash
 brew tap omnigent-ai/tap
 brew install omnigent-ai/tap/omnigent
 omnigent --version
+
+uv tool install wikibricks
+wikibricks install
 ```
 
-The Homebrew tap currently publishes Omnigent 0.10.0. Until it publishes
-0.11.0, unlink that formula and install the official PyPI release:
+When Omnigent is present, the installer prepares all of its bundled harnesses:
 
 ```bash
-brew unlink omnigent
-uv tool install --force omnigent==0.11.0
-```
-
-Install WikiBricks once, then use the usual Omnigent commands:
-
-```bash
-uv tool install "wikibricks @ git+https://github.com/philtief/wikibricks.git"
-wikibricks install omnigent
-
+omnigent claude
 omnigent codex
-# or: omnigent claude
-# or: omnigent kimi
+omnigent debby
+omnigent goose
+omnigent hermes
+omnigent kimi
+omnigent kiro
+omnigent opencode
+omnigent pi
+omnigent polly
+omnigent qwen
 ```
 
-The installer:
+Codex and Claude Code use their native user-level MCP commands. Goose, Hermes,
+Kimi, Kiro, OpenCode, and Qwen use their standard configuration files. Pi gets
+a user extension that forwards the same five tools over MCP. Debby and Polly
+reuse Claude's user MCP settings. Small launch wrappers make WikiBricks visible
+inside the isolated OpenCode and Hermes sessions created by Omnigent.
 
-- initializes `~/.wikibricks/wikibricks.db`;
-- installs the same `wikibricks-memory` skill in the shared, Codex, and Claude
-  Code user skill directories;
-- registers `wikibricks-mcp` through the Codex and Claude Code user-level
-  configuration commands when those clients are installed;
-- prepares Kimi's user-level `~/.kimi/mcp.json`;
-- removes the previous WikiBricks agent profile when it is still selected.
-
-The command preserves unrelated MCP servers and Omnigent settings, including a
-configured remote server. Rerun it after installing a previously missing
-Codex or Claude Code binary.
-
-This native installer currently covers Codex, Claude Code, and Kimi. Other
-Omnigent launchers can use `wikibricks-mcp`, but they are not yet part of the
-zero-configuration installation contract.
+The installer validates existing JSON and YAML before writing, changes only
+WikiBricks-owned keys, and preserves unrelated MCP servers and Omnigent
+settings. Run it again after adding a client. `wikibricks install omnigent`
+remains available as a compatibility alias that requires Omnigent.
 
 Set `WIKIBRICKS_DATABASE_PATH` only when you want a non-default database path.
+All configured clients use the same path.
 
-The same Codex, Claude Code, and Kimi configuration also works when those
-clients run outside Omnigent. For another MCP client, install WikiBricks and
-register `wikibricks-mcp` once:
+### Other MCP clients
 
-```bash
-uv tool install "wikibricks @ git+https://github.com/philtief/wikibricks.git"
-```
-
-Register `wikibricks-mcp` in the client.
-
-Codex:
-
-```bash
-codex mcp add wikibricks -- wikibricks-mcp
-```
-
-Claude Code:
-
-```bash
-claude mcp add --scope user wikibricks -- wikibricks-mcp
-```
-
-Generic MCP configuration, including clients that use JSON configuration:
+Clients outside Omnigent use the same installation. For an MCP client that the
+installer does not detect, register `wikibricks-mcp` in its user configuration:
 
 ```json
 {
@@ -136,8 +133,8 @@ Generic MCP configuration, including clients that use JSON configuration:
 }
 ```
 
-Restart the client after registration. All clients that use the default path
-now share the same database.
+Restart the client after registration. It will share the default database with
+every other configured client.
 
 ## Memory model
 
@@ -206,8 +203,7 @@ archive and a weekly semantic cleanup pass.
 Reinstall WikiBricks with the Lakebase extra. Omnigent remains unchanged:
 
 ```bash
-uv tool install --force \
-  "wikibricks[lakebase] @ git+https://github.com/philtief/wikibricks.git"
+uv tool install --force "wikibricks[lakebase]"
 ```
 
 Create `~/.wikibricks/config.yml`:

@@ -130,13 +130,14 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
     init = commands.add_parser("init", help="Initialize the local memory database")
     init.set_defaults(handler=_command_init)
 
-    install = commands.add_parser("install", help="Install a harness integration")
-    install_targets = install.add_subparsers(dest="install_target", required=True)
-    omnigent_install = install_targets.add_parser(
-        "omnigent",
-        help="Configure shared memory for Omnigent's native harnesses",
+    install = commands.add_parser("install", help="Configure detected MCP clients")
+    install.add_argument(
+        "install_target",
+        nargs="?",
+        choices=("omnigent",),
+        help="Compatibility alias that requires Omnigent 0.11.0 or newer",
     )
-    omnigent_install.set_defaults(handler=_command_install_omnigent)
+    install.set_defaults(handler=_command_install)
 
     search = commands.add_parser("search", help="Search local memory")
     search.add_argument("query")
@@ -258,12 +259,17 @@ def _command_init(args: argparse.Namespace) -> int:
     return 0
 
 
-def _command_install_omnigent(args: argparse.Namespace) -> int:
+def _command_install(args: argparse.Namespace) -> int:
     from wikibricks.maintenance import initialize_database
-    from wikibricks.omnigent_install import install_omnigent
+    from wikibricks.omnigent_install import install_integrations, install_omnigent
 
     initialize_database(_target(args))
-    _print_json(install_omnigent())
+    result = (
+        install_omnigent()
+        if args.install_target == "omnigent"
+        else install_integrations()
+    )
+    _print_json(result)
     return 0
 
 

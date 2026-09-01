@@ -7,11 +7,11 @@ and usage are documented in `README.md`.
 
 WikiBricks is shared memory for multiple agent harnesses.
 
-- Omnigent is the primary interface. Its native Codex, Claude Code, and Kimi
-  launchers use one shared WikiBricks skill and user-level MCP configuration.
-  Do not create a separate memory agent or patch Omnigent source code.
-- Codex, Claude Code, Kimi, and other clients used outside Omnigent connect to
-  the same local database through standard MCP.
+- Omnigent is the primary interface. Its Claude, Codex, Debby, Goose, Hermes,
+  Kimi, Kiro, OpenCode, Pi, Polly, and Qwen harnesses use one shared WikiBricks
+  skill and MCP server. Do not create a separate memory agent or patch Omnigent
+  source code.
+- Standalone clients connect to the same local database through standard MCP.
 - SQLite at `~/.wikibricks/wikibricks.db` is the default active store.
 - Lakebase is an optional archive and curation exchange. Local memory must work
   when Lakebase, Databricks credentials, and the network are absent.
@@ -50,7 +50,8 @@ src/wikibricks/
   storage/                  Shared storage contracts and optional PostgreSQL code
   curation/                 Guarded patch planning and application
   automation.py             Daily local and optional weekly remote scheduler
-  omnigent_install.py       Native skill and MCP installer for Omnigent
+  omnigent_install.py       Universal skill and MCP installer
+  harness_launchers.py      OpenCode and Hermes isolated-runtime adapters
   remote/lakebase.py        Optional Lakebase exchange
   resources/                MCP instructions and JSON contracts
   sql/sqlite/               Forward-only SQLite migrations
@@ -105,6 +106,8 @@ Do not add client-specific names or schemas. Generic MCP has no portable
 session lifecycle, so it must not claim automatic transcript capture. The
 Omnigent integration must use public harness configuration. It must not set a
 WikiBricks default agent. Preserve unrelated user settings when installing.
+Keep `wikibricks install` as the primary setup command. Keep
+`wikibricks install omnigent` as a strict compatibility alias.
 
 ## Curation and synchronization
 
