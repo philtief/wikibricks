@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import UUID, uuid4, uuid5
 
 from psycopg import Connection
 from psycopg.types.json import Jsonb
 
-from wikibricks.models import SessionEvent, SessionRecord
+from wikibricks.models import IngestResult, SessionEvent, SessionRecord
 from wikibricks.session_ingest import (
     session_content_hash,
     session_identity,
@@ -19,13 +18,6 @@ from wikibricks.storage.content import canonical_hash, insert_search_chunks
 
 if TYPE_CHECKING:
     from wikibricks.storage.store import PostgresStore
-
-
-@dataclass(frozen=True, slots=True)
-class IngestResult:
-    created_events: int
-    updated_events: int
-    unchanged_events: int
 
 
 class SessionRepository:

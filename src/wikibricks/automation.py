@@ -9,12 +9,14 @@ import os
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
-from typing import Any, Iterator
+from typing import TYPE_CHECKING, Any, Iterator
 from uuid import UUID
 
 from wikibricks.config import WikiBricksConfig, load_config
-from wikibricks.postgres_store import PostgresStore
 from wikibricks.storage.sqlite_store import SQLiteStore
+
+if TYPE_CHECKING:
+    from wikibricks.postgres_store import PostgresStore
 
 _LOGGER = logging.getLogger(__name__)
 _LOCK_NAME = "wikibricks:background-automation"
@@ -83,7 +85,7 @@ def _pending_run_ids(store: PostgresStore) -> list[Any]:
 
 
 def run_remote_cycle(
-    local: PostgresStore,
+    local: PostgresStore | SQLiteStore,
     config: WikiBricksConfig,
     *,
     remote_url_factory: Callable[[Any], str] | None = None,
@@ -159,10 +161,12 @@ def run_background_cycle(
     current_time = time.time() if now is None else now
     database_target: str | Any = active.database_url or active.database_path
     store = (
-        PostgresStore(active.database_url)
-        if active.database_url
-        else SQLiteStore(active.database_path)
+        SQLiteStore(active.database_path)
     )
+    if active.database_url:
+        from wikibricks.postgres_store import PostgresStore
+
+        store = PostgresStore(active.database_url)
     store.migrate()
     result: dict[str, Any] = {"status": "complete"}
     with _single_runner(store) as acquired:

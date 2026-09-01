@@ -16,13 +16,25 @@ from wikibricks.adapters.omnigent import (
     is_syncable_conversation,
     load_conversations,
 )
-from wikibricks.postgres_store import PostgresStore
 from wikibricks.storage.sqlite_store import SQLiteStore
+from wikibricks.storage.targets import is_postgres_target
 
 if TYPE_CHECKING:
     from wikibricks.config import WikiBricksConfig
 
 DEFAULT_OMNIGENT_DB = Path.home() / ".omnigent" / "chat.db"
+
+
+def _store(target: str | Path | None):
+    if is_postgres_target(target):
+        from wikibricks.postgres_store import PostgresStore
+
+        return PostgresStore(target)
+    return SQLiteStore(target)
+
+
+def _target(args: argparse.Namespace) -> str | Path:
+    return args.database_url or args.database_path
 
 
 def import_omnigent(
@@ -35,12 +47,7 @@ def import_omnigent(
 ) -> dict[str, int]:
     if not db_path.exists():
         raise FileNotFoundError(f"Omnigent store not found: {db_path}")
-    store = (
-        PostgresStore(database_url)
-        if isinstance(database_url, str)
-        and database_url.startswith(("postgresql://", "postgres://"))
-        else SQLiteStore(database_url)
-    )
+    store = _store(database_url)
     store.migrate()
     target = f"omnigent:{db_path.resolve()}"
     saved = store.get_sync_cursor(target)
@@ -85,10 +92,10 @@ def import_omnigent(
 
 def import_jsonl(
     *,
-    database_url: str | None,
+    database_url: str | Path | None,
     source: Path,
 ) -> dict[str, int]:
-    store = PostgresStore(database_url)
+    store = _store(database_url)
     store.migrate()
     result = {"scanned": 0, "imported": 0, "errors": 0}
     with source.open() as handle:
@@ -117,6 +124,7 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
         config = load_config()
     parser = argparse.ArgumentParser(prog="wikibricks")
     parser.add_argument("--database-url", help="PostgreSQL connection URL")
+    parser.add_argument("--database-path", type=Path, default=config.database_path)
     commands = parser.add_subparsers(dest="command", required=True)
 
     init = commands.add_parser("init", help="Apply local PostgreSQL migrations")
@@ -149,6 +157,14 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
 
     vacuum = commands.add_parser("vacuum", help="Vacuum and analyze local memory")
     vacuum.set_defaults(handler=_command_vacuum)
+
+    migrate = commands.add_parser(
+        "migrate-postgres",
+        help="Copy an existing PostgreSQL memory database into SQLite",
+    )
+    migrate.add_argument("--source-url", required=True)
+    migrate.add_argument("destination", type=Path)
+    migrate.set_defaults(handler=_command_migrate_postgres)
 
     importer = commands.add_parser("import", help="Import harness sessions")
     formats = importer.add_subparsers(dest="format", required=True)
@@ -229,14 +245,13 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
 def _command_init(args: argparse.Namespace) -> int:
     from wikibricks.maintenance import initialize_database
 
-    database_url = args.database_url or PostgresStore().database_url
-    initialize_database(database_url)
-    print("WikiBricks PostgreSQL schema is ready.")
+    initialize_database(_target(args))
+    print("WikiBricks local schema is ready.")
     return 0
 
 
 def _command_search(args: argparse.Namespace) -> int:
-    store = PostgresStore(args.database_url)
+    store = _store(_target(args))
     store.migrate()
     _print_json(store.search(args.query, num_results=args.k))
     return 0
@@ -245,8 +260,7 @@ def _command_search(args: argparse.Namespace) -> int:
 def _command_check(args: argparse.Namespace) -> int:
     from wikibricks.maintenance import check_database
 
-    database_url = args.database_url or PostgresStore().database_url
-    result = check_database(database_url)
+    result = check_database(_target(args))
     _print_json(result)
     return 0 if result["ok"] else 1
 
@@ -254,9 +268,8 @@ def _command_check(args: argparse.Namespace) -> int:
 def _command_curate(args: argparse.Namespace) -> int:
     from wikibricks.maintenance import curate_database
 
-    database_url = args.database_url or PostgresStore().database_url
     result = curate_database(
-        database_url,
+        _target(args),
         prune_archived_sessions_after_days=args.prune_archived_sessions_after_days,
     )
     _print_json(result)
@@ -266,8 +279,7 @@ def _command_curate(args: argparse.Namespace) -> int:
 def _command_backup(args: argparse.Namespace) -> int:
     from wikibricks.maintenance import backup_database
 
-    database_url = args.database_url or PostgresStore().database_url
-    backup_database(database_url, args.output)
+    backup_database(_target(args), args.output)
     print(args.output)
     return 0
 
@@ -275,8 +287,7 @@ def _command_backup(args: argparse.Namespace) -> int:
 def _command_restore(args: argparse.Namespace) -> int:
     from wikibricks.maintenance import restore_database
 
-    database_url = args.database_url or PostgresStore().database_url
-    restore_database(args.source, database_url)
+    restore_database(args.source, _target(args))
     print("WikiBricks backup restored and ready.")
     return 0
 
@@ -284,15 +295,23 @@ def _command_restore(args: argparse.Namespace) -> int:
 def _command_vacuum(args: argparse.Namespace) -> int:
     from wikibricks.maintenance import vacuum_database
 
-    database_url = args.database_url or PostgresStore().database_url
-    vacuum_database(database_url)
-    print("WikiBricks PostgreSQL vacuum complete.")
+    vacuum_database(_target(args))
+    print("WikiBricks vacuum complete.")
+    return 0
+
+
+def _command_migrate_postgres(args: argparse.Namespace) -> int:
+    from dataclasses import asdict
+
+    from wikibricks.migrate_postgres import migrate_postgres
+
+    _print_json(asdict(migrate_postgres(args.source_url, args.destination)))
     return 0
 
 
 def _command_import_omnigent(args: argparse.Namespace) -> int:
     result = import_omnigent(
-        database_url=args.database_url,
+        database_url=_target(args),
         db_path=args.db,
         user_id=args.user_id,
         since_days=args.since_days,
@@ -303,7 +322,7 @@ def _command_import_omnigent(args: argparse.Namespace) -> int:
 
 
 def _command_import_jsonl(args: argparse.Namespace) -> int:
-    result = import_jsonl(database_url=args.database_url, source=args.source)
+    result = import_jsonl(database_url=_target(args), source=args.source)
     _print_json(result)
     return 1 if result["errors"] else 0
 
@@ -316,7 +335,7 @@ def _command_sync_lakebase(args: argparse.Namespace) -> int:
         sync_to_archive,
     )
 
-    local = PostgresStore(args.database_url)
+    local = _store(_target(args))
     local.migrate()
     target = LakebaseTarget(
         project=args.project,
@@ -346,7 +365,7 @@ def _command_sync_lakebase(args: argparse.Namespace) -> int:
 def _command_sync_replica(args: argparse.Namespace) -> int:
     from wikibricks.curation_sync import get_or_create_replica_id
 
-    store = PostgresStore(args.database_url)
+    store = _store(_target(args))
     _print_json({"replica_id": str(get_or_create_replica_id(store))})
     return 0
 
@@ -354,7 +373,7 @@ def _command_sync_replica(args: argparse.Namespace) -> int:
 def _command_sync_plan(args: argparse.Namespace) -> int:
     from wikibricks.curation_sync import plan_run
 
-    store = PostgresStore(args.database_url)
+    store = _store(_target(args))
     _print_json(plan_run(store, args.run_id, policy=args.policy))
     return 0
 
@@ -362,7 +381,7 @@ def _command_sync_plan(args: argparse.Namespace) -> int:
 def _command_sync_apply(args: argparse.Namespace) -> int:
     from wikibricks.curation_sync import apply_run
 
-    store = PostgresStore(args.database_url)
+    store = _store(_target(args))
     _print_json(apply_run(store, args.run_id, policy=args.policy))
     return 0
 
@@ -370,7 +389,7 @@ def _command_sync_apply(args: argparse.Namespace) -> int:
 def _command_sync_conflicts(args: argparse.Namespace) -> int:
     from wikibricks.curation_sync import list_conflicts
 
-    store = PostgresStore(args.database_url)
+    store = _store(_target(args))
     _print_json(list_conflicts(store))
     return 0
 
@@ -378,7 +397,7 @@ def _command_sync_conflicts(args: argparse.Namespace) -> int:
 def _command_sync_resolve(args: argparse.Namespace) -> int:
     from wikibricks.curation_sync import resolve_conflict
 
-    store = PostgresStore(args.database_url)
+    store = _store(_target(args))
     _print_json(
         resolve_conflict(
             store,

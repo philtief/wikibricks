@@ -12,6 +12,7 @@ from typing import Any
 
 from wikibricks.models import MemoryItem, MemoryPacket, MemoryQuery, SessionRecord
 from wikibricks.storage.sqlite_store import SQLiteStore
+from wikibricks.storage.targets import is_postgres_target
 
 
 class WikiClient:
@@ -22,9 +23,7 @@ class WikiClient:
         migrate: bool = True,
     ) -> None:
         configured = database_path or os.environ.get("WIKIBRICKS_DATABASE_URL")
-        if isinstance(configured, str) and configured.startswith(
-            ("postgresql://", "postgres://")
-        ):
+        if is_postgres_target(configured):
             from wikibricks.postgres_store import PostgresStore
 
             self.store = PostgresStore(configured)

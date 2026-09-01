@@ -6,13 +6,13 @@ import hashlib
 import json
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from psycopg.conninfo import make_conninfo
-from psycopg.types.json import Jsonb
+from wikibricks.storage.sqlite_store import SQLiteStore
 
-from wikibricks.postgres_store import PostgresStore
+if TYPE_CHECKING:
+    from wikibricks.postgres_store import PostgresStore
 
 SYNC_SCHEMA_VERSION = 2
 
@@ -47,6 +47,7 @@ class LakebaseTarget:
         if not self.profile:
             raise ValueError("Databricks profile is required for Lakebase sync")
         from databricks.sdk import WorkspaceClient
+        from psycopg.conninfo import make_conninfo
 
         client = WorkspaceClient(profile=self.profile)
         endpoint_name = (
@@ -85,11 +86,12 @@ def _canonical_json(value: Any) -> str:
 
 
 def _resolve_event(
-    store: PostgresStore,
+    store: PostgresStore | SQLiteStore,
     row: dict[str, Any],
     *,
     replica_id: UUID,
 ) -> ArchiveEvent:
+    placeholder = "?" if isinstance(store, SQLiteStore) else "%s"
     with store.connection() as conn:
         if row["entity_kind"] == "page_version":
             payload_row = conn.execute(
@@ -97,7 +99,7 @@ def _resolve_event(
                 "v.tags, v.source_ids, v.parent_id, v.chunk_index, v.created_by, v.created_at, "
                 "v.curation_patch_id "
                 "FROM page_versions v JOIN pages p ON p.page_id = v.page_id "
-                "WHERE v.version_id = %s",
+                f"WHERE v.version_id = {placeholder}",
                 (row["version_id"],),
             ).fetchone()
             if not payload_row:
@@ -125,7 +127,7 @@ def _resolve_event(
                 "FROM session_event_versions v "
                 "JOIN session_events e ON e.event_id = v.event_id "
                 "JOIN sessions s ON s.session_id = e.session_id "
-                "WHERE v.version_id = %s",
+                f"WHERE v.version_id = {placeholder}",
                 (row["version_id"],),
             ).fetchone()
             if not payload_row:
@@ -149,7 +151,8 @@ def _resolve_event(
         elif row["entity_kind"] == "curation_receipt":
             payload_row = conn.execute(
                 "SELECT run_id, patch_id, status, result_version_id, local_content_hash, "
-                "details, applied_at FROM curation_receipts WHERE patch_id = %s",
+                "details, applied_at FROM curation_receipts "
+                f"WHERE patch_id = {placeholder}",
                 (row["version_id"],),
             ).fetchone()
             if not payload_row:
@@ -165,6 +168,14 @@ def _resolve_event(
             }
         else:
             raise ValueError(f"unsupported outbox entity kind: {row['entity_kind']}")
+    json_fields = {
+        "page_version": ("content", "tags", "source_ids"),
+        "session_event_version": ("metadata",),
+        "curation_receipt": ("details",),
+    }[row["entity_kind"]]
+    for key in json_fields:
+        if key in payload and isinstance(payload[key], str):
+            payload[key] = json.loads(payload[key])
     return ArchiveEvent(
         replica_id=replica_id,
         sequence=int(row["sequence"]),
@@ -177,7 +188,11 @@ def _resolve_event(
     )
 
 
-def build_batch(store: PostgresStore, *, limit: int = 1000) -> SyncBatch | None:
+def build_batch(
+    store: PostgresStore | SQLiteStore,
+    *,
+    limit: int = 1000,
+) -> SyncBatch | None:
     if limit < 1:
         raise ValueError("archive batch limit must be positive")
     from wikibricks.curation import get_or_create_replica_id
@@ -207,7 +222,9 @@ def build_batch(store: PostgresStore, *, limit: int = 1000) -> SyncBatch | None:
         NAMESPACE_URL,
         f"wikibricks:archive-batch:{replica_id}:{digest}",
     )
-    existing_batch_ids = {row["batch_id"] for row in pending if row["batch_id"]}
+    existing_batch_ids = {
+        UUID(str(row["batch_id"])) for row in pending if row["batch_id"]
+    }
     if existing_batch_ids and existing_batch_ids != {batch_id}:
         raise RuntimeError("pending outbox batch identity does not match its content digest")
     store.assign_outbox_batch([event.sequence for event in events], batch_id)
@@ -224,6 +241,10 @@ def build_batch(store: PostgresStore, *, limit: int = 1000) -> SyncBatch | None:
 
 
 def _push_batch(batch: SyncBatch, remote_url: str) -> dict[str, Any]:
+    from psycopg.types.json import Jsonb
+
+    from wikibricks.postgres_store import PostgresStore
+
     remote = PostgresStore(remote_url)
     remote.migrate()
     batch_id = UUID(batch.manifest["batch_id"])
@@ -307,7 +328,7 @@ def _push_batch(batch: SyncBatch, remote_url: str) -> dict[str, Any]:
 
 
 def sync_to_archive(
-    local: PostgresStore,
+    local: PostgresStore | SQLiteStore,
     remote_url: str,
     *,
     limit: int = 1000,
@@ -357,6 +378,10 @@ def sync_to_archive(
 
 
 def pull_curated_snapshot(local: PostgresStore, remote_url: str) -> int:
+    from psycopg.types.json import Jsonb
+
+    from wikibricks.postgres_store import PostgresStore
+
     remote = PostgresStore(remote_url)
     remote.migrate()
     with remote.connection() as conn:
@@ -400,6 +425,7 @@ def pull_curated_snapshot(local: PostgresStore, remote_url: str) -> int:
 def pull_curation_patches(local: PostgresStore, remote_url: str) -> dict[str, int]:
     """Copy immutable patch manifests into the local inbox without applying them."""
     from wikibricks.curation import get_or_create_replica_id, pull_manifests
+    from wikibricks.postgres_store import PostgresStore
 
     remote = PostgresStore(remote_url)
     replica_id = get_or_create_replica_id(local)

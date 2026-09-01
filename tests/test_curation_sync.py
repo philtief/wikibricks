@@ -21,6 +21,7 @@ from wikibricks.curation_sync import (
 from wikibricks.maintenance import curate_database, initialize_database
 from wikibricks.postgres_store import PostgresStore
 from wikibricks.remote.lakebase import pull_curation_patches, sync_to_archive
+from wikibricks.storage.sqlite_store import SQLiteStore
 
 
 def _database_url(base_url: str, database: str) -> str:
@@ -113,12 +114,13 @@ def _publish_and_pull(
 
 
 def test_remote_update_becomes_a_versioned_local_write_and_is_idempotent(
-    postgres_url: str,
+    tmp_path,
     curation_remote_url: str,
 ):
-    local = PostgresStore(postgres_url)
+    local = SQLiteStore(tmp_path / "local.db")
     remote = PostgresStore(curation_remote_url)
-    _reset(local, remote)
+    local.migrate()
+    _reset(remote)
     local.write_page(
         "topics/local-memory",
         "Local memory",
@@ -149,13 +151,13 @@ def test_remote_update_becomes_a_versioned_local_write_and_is_idempotent(
     with local.connection() as conn:
         version = conn.execute(
             "SELECT created_by, curation_patch_id FROM page_versions "
-            "WHERE version_id = (SELECT current_version_id FROM pages WHERE path = %s)",
+            "WHERE version_id = (SELECT current_version_id FROM pages WHERE path = ?)",
             ("topics/local-memory",),
         ).fetchone()
         receipt_events = conn.execute(
             "SELECT count(*) FROM sync_outbox WHERE entity_kind = 'curation_receipt'"
         ).fetchone()[0]
-    assert version == ("remote-curator", UUID(patch["patch_id"]))
+    assert tuple(version) == ("remote-curator", patch["patch_id"])
     assert receipt_events == 1
 
 
@@ -191,12 +193,13 @@ def test_applied_page_hash_matches_the_exact_remote_proposal(
 
 
 def test_divergent_local_edit_creates_a_three_way_conflict_and_keep_local_receipt(
-    postgres_url: str,
+    tmp_path,
     curation_remote_url: str,
 ):
-    local = PostgresStore(postgres_url)
+    local = SQLiteStore(tmp_path / "conflict.db")
     remote = PostgresStore(curation_remote_url)
-    _reset(local, remote)
+    local.migrate()
+    _reset(remote)
     local.write_page("topics/conflict", "Conflict", {"summary": "Conflict", "body": "base"})
     base = local.current_page_state("topics/conflict")
     patch = create_patch(
@@ -234,12 +237,13 @@ def test_divergent_local_edit_creates_a_three_way_conflict_and_keep_local_receip
 
 
 def test_accept_remote_resolves_a_conflict_as_a_new_local_version(
-    postgres_url: str,
+    tmp_path,
     curation_remote_url: str,
 ):
-    local = PostgresStore(postgres_url)
+    local = SQLiteStore(tmp_path / "accept-remote.db")
     remote = PostgresStore(curation_remote_url)
-    _reset(local, remote)
+    local.migrate()
+    _reset(remote)
     local.write_page("topics/accepted", "Accepted", {"summary": "Accepted", "body": "base"})
     base = local.current_page_state("topics/accepted")
     patch = create_patch(
@@ -268,23 +272,24 @@ def test_accept_remote_resolves_a_conflict_as_a_new_local_version(
 
 
 def test_duplicate_cleanup_group_updates_links_aliases_and_search_atomically(
-    postgres_url: str,
+    tmp_path,
     curation_remote_url: str,
 ):
-    local = PostgresStore(postgres_url)
+    local = SQLiteStore(tmp_path / "cleanup.db")
     remote = PostgresStore(curation_remote_url)
-    _reset(local, remote)
+    local.migrate()
+    _reset(remote)
     local.write_page("topics/canonical", "Canonical", {"summary": "Canonical", "body": "short"})
     local.write_page("topics/duplicate", "Duplicate", {"summary": "Duplicate", "body": "duplicate-only phrase"})
     local.write_page("topics/referrer", "Referrer", {"summary": "Referrer", "body": "links"})
     canonical = local.current_page_state("topics/canonical")
     duplicate = local.current_page_state("topics/duplicate")
     referrer = local.current_page_state("topics/referrer")
-    with local.connection() as conn, conn.transaction():
+    with local.connection(write=True) as conn:
         conn.execute(
-            "INSERT INTO links (link_id, source_page_id, target_page_id, link_type) "
-            "VALUES (%s, %s, %s, 'related')",
-            (uuid4(), UUID(referrer["page_id"]), UUID(duplicate["page_id"])),
+            "INSERT INTO links (link_id, source_page_id, target_page_id, link_type, "
+            "origin, metadata, created_at) VALUES (?, ?, ?, 'related', 'test', '{}', datetime('now'))",
+            (str(uuid4()), referrer["page_id"], duplicate["page_id"]),
         )
     group_id = uuid4()
     patches = [
@@ -357,13 +362,13 @@ def test_duplicate_cleanup_group_updates_links_aliases_and_search_atomically(
         ).fetchone()[0]
         link_target = conn.execute(
             "SELECT p.path FROM links l JOIN pages p ON p.page_id = l.target_page_id "
-            "WHERE l.source_page_id = %s",
-            (UUID(referrer["page_id"]),),
+            "WHERE l.source_page_id = ?",
+            (referrer["page_id"],),
         ).fetchone()[0]
     assert status == "superseded"
     assert alias == "topics/canonical"
     assert link_target == "topics/canonical"
-    maintenance = curate_database(postgres_url)
+    maintenance = curate_database(local.database_path)
     assert "topics/duplicate" not in maintenance["orphan_pages"]
     assert all(
         "topics/duplicate" not in group["paths"]
@@ -372,12 +377,13 @@ def test_duplicate_cleanup_group_updates_links_aliases_and_search_atomically(
 
 
 def test_cleanup_group_rolls_back_when_one_participant_changed(
-    postgres_url: str,
+    tmp_path,
     curation_remote_url: str,
 ):
-    local = PostgresStore(postgres_url)
+    local = SQLiteStore(tmp_path / "rollback.db")
     remote = PostgresStore(curation_remote_url)
-    _reset(local, remote)
+    local.migrate()
+    _reset(remote)
     local.write_page("topics/canonical", "Canonical", {"summary": "Canonical", "body": "base"})
     local.write_page("topics/duplicate", "Duplicate", {"summary": "Duplicate", "body": "base"})
     canonical = local.current_page_state("topics/canonical")

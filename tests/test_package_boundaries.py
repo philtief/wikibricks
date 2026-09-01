@@ -32,11 +32,15 @@ def test_base_package_excludes_incompatible_mcp_major_version():
     assert "mcp>=1.0,<2" in dependencies
 
 
-def test_base_package_pins_the_serverless_postgres_driver():
+def test_postgres_driver_is_optional():
     with (ROOT / "pyproject.toml").open("rb") as handle:
-        dependencies = tomllib.load(handle)["project"]["dependencies"]
+        project = tomllib.load(handle)["project"]
 
-    assert "psycopg[binary]==3.2.13" in dependencies
+    assert not any(item.startswith("psycopg") for item in project["dependencies"])
+    assert "psycopg[binary]==3.2.13" in project["optional-dependencies"]["lakebase"]
+    assert "psycopg[binary]==3.2.13" in project["optional-dependencies"][
+        "postgres-migration"
+    ]
 
 
 def test_public_ci_uses_public_packages_and_installs_postgres():
@@ -50,14 +54,14 @@ def test_public_ci_uses_public_packages_and_installs_postgres():
         assert "uv run --locked pytest -q" in workflow
 
 
-def test_base_modules_import_when_databricks_is_blocked():
+def test_base_modules_import_when_postgres_and_databricks_are_blocked():
     code = """
 import importlib.abc
 import sys
 
 class BlockDatabricks(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname == 'databricks' or fullname.startswith('databricks.'):
+        if fullname in {'databricks', 'psycopg'} or fullname.startswith(('databricks.', 'psycopg.')):
             raise ModuleNotFoundError(fullname)
         return None
 
@@ -65,8 +69,9 @@ sys.meta_path.insert(0, BlockDatabricks())
 import wikibricks
 import wikibricks.client
 import wikibricks.automation
-import wikibricks.curation_sync
-import wikibricks.postgres_store
+import wikibricks.cli
+import wikibricks.curation
+import wikibricks.maintenance
 import wikibricks.remote.lakebase
 print('ok')
 """

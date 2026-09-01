@@ -52,6 +52,15 @@ class MemoryPacket:
 
 
 @dataclass(frozen=True, slots=True)
+class IngestResult:
+    """Counts from one idempotent session snapshot import."""
+
+    created_events: int
+    updated_events: int
+    unchanged_events: int
+
+
+@dataclass(frozen=True, slots=True)
 class SessionEvent:
     """One ordered, source-addressable event from an agent session."""
 

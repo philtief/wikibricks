@@ -9,14 +9,10 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-import psycopg
-from psycopg import sql
-from psycopg.conninfo import conninfo_to_dict, make_conninfo
-
 from wikibricks.client import WikiClient
-from wikibricks.postgres_store import PostgresStore
 from wikibricks.storage.content import insert_search_chunks
 from wikibricks.storage.sqlite_store import SQLiteStore
+from wikibricks.storage.targets import is_postgres_target
 
 _FINGERPRINT_TABLES = (
     "pages",
@@ -45,26 +41,31 @@ _FINGERPRINT_TABLES = (
 
 
 def _database_params(database_url: str) -> tuple[dict[str, str], str]:
+    from psycopg.conninfo import conninfo_to_dict
+
     params = conninfo_to_dict(database_url)
     database = params.get("dbname") or "wikibricks"
     return params, database
 
 
-def _is_postgres_target(target: str | Path) -> bool:
-    return isinstance(target, str) and (
-        target.startswith(("postgresql://", "postgres://"))
-        or ("dbname=" in target and ("host=" in target or "user=" in target))
-    )
+def _postgres_store(database_url: str):
+    from wikibricks.postgres_store import PostgresStore
+
+    return PostgresStore(database_url)
 
 
 def initialize_database(database_url: str | Path, *, migrate: bool = True) -> bool:
     """Create the target database when absent, then apply migrations."""
-    if not _is_postgres_target(database_url):
+    if not is_postgres_target(database_url):
         path = Path(database_url)
         created = not path.exists()
         if migrate:
             SQLiteStore(path).migrate()
         return created
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import make_conninfo
+
     params, database = _database_params(database_url)
     admin_params = dict(params)
     admin_params["dbname"] = "postgres"
@@ -75,12 +76,12 @@ def initialize_database(database_url: str | Path, *, migrate: bool = True) -> bo
         if not exists:
             conn.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(database)))
     if migrate:
-        PostgresStore(database_url).migrate()
+        _postgres_store(database_url).migrate()
     return not bool(exists)
 
 
 def check_database(database_url: str | Path) -> dict[str, Any]:
-    if not _is_postgres_target(database_url):
+    if not is_postgres_target(database_url):
         store = SQLiteStore(database_url)
         store.migrate()
         with store.connection() as conn:
@@ -106,7 +107,7 @@ def check_database(database_url: str | Path) -> dict[str, Any]:
             "broken_session_pointers": broken_sessions,
             "pending_outbox": store.outbox_count(),
         }
-    store = PostgresStore(database_url)
+    store = _postgres_store(database_url)
     store.migrate()
     with store.connection() as conn:
         pg_trgm = bool(
@@ -154,7 +155,7 @@ def curate_database(
     ):
         raise ValueError("session retention must be at least one day")
 
-    if not _is_postgres_target(database_url):
+    if not is_postgres_target(database_url):
         store = SQLiteStore(database_url)
         store.migrate()
         repaired_pages, repaired_sessions = store.repair_search_indexes()
@@ -188,7 +189,7 @@ def curate_database(
         store.log("curate_local", details=result)
         return result
 
-    store = PostgresStore(database_url)
+    store = _postgres_store(database_url)
     store.migrate()
     repaired_pages = repaired_sessions = 0
     with store.connection() as conn, conn.transaction():
@@ -285,7 +286,7 @@ def curate_database(
 
 
 def backup_database(database_url: str | Path, output: Path) -> Path:
-    if not _is_postgres_target(database_url):
+    if not is_postgres_target(database_url):
         source = SQLiteStore(database_url)
         source.migrate()
         output.parent.mkdir(parents=True, exist_ok=True)
@@ -315,7 +316,7 @@ def backup_database(database_url: str | Path, output: Path) -> Path:
 
 
 def restore_database(backup: Path, database_url: str | Path) -> None:
-    if not _is_postgres_target(database_url):
+    if not is_postgres_target(database_url):
         target = Path(database_url)
         if target.exists() and target.stat().st_size:
             raise RuntimeError("restore target database already exists")
@@ -361,7 +362,7 @@ def restore_database(backup: Path, database_url: str | Path) -> None:
 
 
 def database_fingerprint(database_url: str | Path) -> dict[str, dict[str, Any]]:
-    if not _is_postgres_target(database_url):
+    if not is_postgres_target(database_url):
         store = SQLiteStore(database_url)
         store.migrate()
         result: dict[str, dict[str, Any]] = {}
@@ -377,7 +378,9 @@ def database_fingerprint(database_url: str | Path) -> dict[str, dict[str, Any]]:
                 count = int(conn.execute(f'SELECT count(*) FROM "{table}"').fetchone()[0])
                 result[table] = {"count": count}
         return result
-    store = PostgresStore(database_url)
+    store = _postgres_store(database_url)
+    from psycopg import sql
+
     result: dict[str, dict[str, Any]] = {}
     with store.connection() as conn:
         for table in _FINGERPRINT_TABLES:
@@ -392,11 +395,13 @@ def database_fingerprint(database_url: str | Path) -> dict[str, dict[str, Any]]:
 
 
 def vacuum_database(database_url: str | Path) -> None:
-    if not _is_postgres_target(database_url):
+    if not is_postgres_target(database_url):
         store = SQLiteStore(database_url)
         store.migrate()
         with store.connection() as conn:
             conn.execute("VACUUM")
         return
+    import psycopg
+
     with psycopg.connect(database_url, autocommit=True) as conn:
         conn.execute("VACUUM (ANALYZE)")

@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
+import sqlite3
 from collections import Counter
 from collections.abc import Iterable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
-
-from psycopg import Connection
 
 from wikibricks.curation.repository import (
     page_state,
@@ -15,7 +14,12 @@ from wikibricks.curation.repository import (
     receipt_count,
     target_page,
 )
-from wikibricks.postgres_store import PostgresStore
+from wikibricks.storage.sqlite_store import SQLiteStore
+
+if TYPE_CHECKING:
+    from psycopg import Connection
+
+    from wikibricks.postgres_store import PostgresStore
 
 
 def grouped(
@@ -110,8 +114,9 @@ def preflight_group(
                 )
             continue
         if operation == "add_alias":
+            placeholder = "?" if isinstance(conn, sqlite3.Connection) else "%s"
             alias = conn.execute(
-                "SELECT target_page_id FROM page_aliases WHERE alias_path = %s",
+                f"SELECT target_page_id FROM page_aliases WHERE alias_path = {placeholder}",
                 (patch["path"],),
             ).fetchone()
             if alias and target and str(alias[0]) == target["page_id"]:
@@ -185,7 +190,7 @@ def preflight_group(
 
 
 def plan_run(
-    store: PostgresStore,
+    store: PostgresStore | SQLiteStore,
     run_id: UUID,
     *,
     policy: str = "safe",

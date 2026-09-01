@@ -14,6 +14,7 @@ from wikibricks.remote.lakebase import (
     pull_curated_snapshot,
     sync_to_archive,
 )
+from wikibricks.storage.sqlite_store import SQLiteStore
 
 
 def _database_url(base_url: str, database: str) -> str:
@@ -43,9 +44,10 @@ def archive_url(postgres_url: str) -> str:
     return target
 
 
-def _seed_local(store: PostgresStore) -> None:
+def _seed_local(store: PostgresStore | SQLiteStore) -> None:
     store.migrate()
-    store.clear_all()
+    if isinstance(store, PostgresStore):
+        store.clear_all()
     store.write_page(
         "topics/monthly-archive",
         "Monthly archive",
@@ -63,10 +65,24 @@ def _seed_local(store: PostgresStore) -> None:
 
 
 def test_batch_manifest_is_deterministic_and_references_immutable_rows(
-    postgres_url: str,
+    tmp_path,
 ):
-    store = PostgresStore(postgres_url)
-    _seed_local(store)
+    store = SQLiteStore(tmp_path / "local.db")
+    store.migrate()
+    store.write_page(
+        "topics/monthly-archive",
+        "Monthly archive",
+        {"summary": "remote", "body": "copy this page"},
+    )
+    store.ingest_session(
+        SessionRecord(
+            harness="omnigent",
+            external_id="archive-session",
+            user_id="u",
+            agent="codex",
+            events=[SessionEvent("0", "tool_result", "large session content")],
+        )
+    )
     replica_id = get_or_create_replica_id(store)
 
     first = build_batch(store, limit=100)
@@ -85,10 +101,10 @@ def test_batch_manifest_is_deterministic_and_references_immutable_rows(
 
 
 def test_retry_after_remote_commit_is_idempotent_and_acknowledges_locally(
-    postgres_url: str,
+    tmp_path,
     archive_url: str,
 ):
-    local = PostgresStore(postgres_url)
+    local = SQLiteStore(tmp_path / "retry.db")
     remote = PostgresStore(archive_url)
     _seed_local(local)
     remote.migrate()
@@ -122,13 +138,12 @@ def test_retry_after_remote_commit_is_idempotent_and_acknowledges_locally(
 
 
 def test_drain_stops_at_the_batch_bound_and_can_resume(
-    postgres_url: str,
+    tmp_path,
     archive_url: str,
 ):
-    local = PostgresStore(postgres_url)
+    local = SQLiteStore(tmp_path / "drain.db")
     remote = PostgresStore(archive_url)
     local.migrate()
-    local.clear_all()
     remote.migrate()
     remote.clear_all()
     for number in range(5):
@@ -176,6 +191,8 @@ def test_curated_snapshot_is_versioned_and_never_overwrites_local_pages(
 ):
     local = PostgresStore(postgres_url)
     remote = PostgresStore(archive_url)
+    local.migrate()
+    remote.migrate()
     local.clear_all()
     remote.clear_all()
     local.write_page("topics/conflict", "Local", {"summary": "local", "body": "keep"})

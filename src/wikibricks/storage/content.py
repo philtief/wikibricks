@@ -5,10 +5,11 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Iterator
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 from uuid import UUID
 
-from psycopg import Connection
+if TYPE_CHECKING:
+    from psycopg import Connection
 
 MAX_SEARCH_CHUNK_BYTES = 64 * 1024
 

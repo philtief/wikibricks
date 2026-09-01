@@ -20,6 +20,10 @@ def store(tmp_path: Path) -> SQLiteStore:
 def test_sqlite_defaults_and_migrations_are_idempotent(tmp_path: Path):
     store = SQLiteStore(tmp_path / "memory.db")
     store.migrate()
+    with store.connection() as conn:
+        first_migration_count = conn.execute(
+            "SELECT count(*) FROM schema_migrations"
+        ).fetchone()[0]
     store.migrate()
 
     with store.connection() as conn:
@@ -33,7 +37,8 @@ def test_sqlite_defaults_and_migrations_are_idempotent(tmp_path: Path):
         ).fetchone()[0]
 
     assert pragmas == ("wal", 1, 5000)
-    assert migrations == 1
+    assert migrations == first_migration_count
+    assert migrations >= 1
 
 
 def test_page_history_and_outbox_commit_atomically(store: SQLiteStore):

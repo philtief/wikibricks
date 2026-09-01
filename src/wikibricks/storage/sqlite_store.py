@@ -11,9 +11,9 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import NAMESPACE_URL, uuid4, uuid5
+from uuid import NAMESPACE_URL, UUID, uuid4, uuid5
 
-from wikibricks.models import SessionEvent, SessionRecord
+from wikibricks.models import IngestResult, SessionEvent, SessionRecord
 from wikibricks.session_ingest import (
     session_content_hash,
     session_identity,
@@ -24,9 +24,9 @@ from wikibricks.storage.content import (
     iter_search_chunks,
     page_content_hash,
 )
-from wikibricks.storage.sessions import IngestResult
 
 DEFAULT_DATABASE_PATH = Path.home() / ".wikibricks" / "wikibricks.db"
+_UNSET = object()
 
 
 def _now() -> str:
@@ -226,6 +226,111 @@ class SQLiteStore:
             self._failpoint("before_commit")
         return f"Wrote wiki page: {path}"
 
+    def write_page_in_connection(
+        self,
+        conn: sqlite3.Connection,
+        path: str,
+        title: str,
+        content: dict[str, Any],
+        *,
+        page_type: str,
+        created_by: str,
+        tags: list[str],
+        source_ids: list[str] | None,
+        parent_id: str | None,
+        chunk_index: int | None,
+        content_text: str,
+        curation_patch_id: str,
+        expected_base_content_hash: str | None | object = _UNSET,
+    ) -> tuple[str, str]:
+        """Write one curated page version inside an existing transaction."""
+        existing = conn.execute(
+            "SELECT p.page_id, p.status, v.version, v.content_hash "
+            "FROM pages p LEFT JOIN page_versions v "
+            "ON v.version_id = p.current_version_id WHERE p.path = ?",
+            (path,),
+        ).fetchone()
+        if expected_base_content_hash is not _UNSET:
+            if expected_base_content_hash is None and existing:
+                raise RuntimeError(f"curation create path already exists: {path}")
+            if expected_base_content_hash is not None and (
+                not existing or existing["content_hash"] != expected_base_content_hash
+            ):
+                raise RuntimeError(f"curation base changed: {path}")
+        page_hash = page_content_hash(
+            title=title,
+            page_type=page_type,
+            content=content,
+            content_text=content_text,
+            tags=tags,
+            source_ids=source_ids,
+            parent_id=parent_id,
+            chunk_index=chunk_index,
+        )
+        timestamp = _now()
+        if existing:
+            if existing["status"] != "active":
+                raise RuntimeError(f"curation target is not active: {path}")
+            if existing["content_hash"] == page_hash:
+                current = conn.execute(
+                    "SELECT current_version_id FROM pages WHERE page_id = ?",
+                    (existing["page_id"],),
+                ).fetchone()[0]
+                return f"Wiki page unchanged: {path}", str(current)
+            page_id = existing["page_id"]
+            version = int(existing["version"]) + 1
+        else:
+            page_id = str(uuid4())
+            version = 1
+            conn.execute(
+                "INSERT INTO pages(page_id, path, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?)",
+                (page_id, path, timestamp, timestamp),
+            )
+        version_id = str(uuid4())
+        conn.execute(
+            "INSERT INTO page_versions("
+            "version_id, page_id, version, title, page_type, content, content_text, "
+            "tags, source_ids, parent_id, chunk_index, created_by, content_hash, "
+            "curation_patch_id, created_at) VALUES "
+            "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                version_id,
+                page_id,
+                version,
+                title,
+                page_type,
+                _json(content),
+                content_text,
+                _json(tags),
+                _json(source_ids) if source_ids is not None else None,
+                parent_id,
+                chunk_index,
+                created_by,
+                page_hash,
+                curation_patch_id,
+                timestamp,
+            ),
+        )
+        conn.execute(
+            "UPDATE pages SET current_version_id = ?, updated_at = ? WHERE page_id = ?",
+            (version_id, timestamp, page_id),
+        )
+        _insert_chunks(
+            conn,
+            table="page_search_chunks",
+            fts_table="page_search_fts",
+            version_id=version_id,
+            text=content_text,
+        )
+        conn.execute(
+            "INSERT INTO sync_outbox("
+            "event_id, entity_kind, entity_id, version_id, payload_hash, created_at"
+            ") VALUES (?, 'page_version', ?, ?, ?, ?)",
+            (str(uuid4()), page_id, version_id, page_hash, timestamp),
+        )
+        return f"Wrote wiki page: {path}", version_id
+
     def read_page(self, path: str) -> dict[str, Any] | None:
         with self.connection() as conn:
             row = conn.execute(
@@ -233,8 +338,11 @@ class SQLiteStore:
                 "v.content_text, v.tags, v.created_by, p.created_at, p.updated_at, "
                 "v.version FROM pages p JOIN page_versions v "
                 "ON v.version_id = p.current_version_id "
-                "WHERE p.path = ? AND p.status = 'active'",
-                (path,),
+                "WHERE p.page_id = COALESCE("
+                "(SELECT page_id FROM pages WHERE path = ? AND status = 'active'), "
+                "(SELECT target_page_id FROM page_aliases WHERE alias_path = ?)) "
+                "AND p.status = 'active'",
+                (path, path),
             ).fetchone()
             if row:
                 return {
@@ -319,6 +427,40 @@ class SQLiteStore:
             for row in rows
         ]
 
+    def current_page_state(self, path: str) -> dict[str, Any] | None:
+        with self.connection() as conn:
+            row = conn.execute(
+                "SELECT p.page_id, p.path, p.status, p.superseded_by_page_id, "
+                "v.version_id, v.version, v.title, v.page_type, v.content, "
+                "v.content_text, v.tags, v.source_ids, v.parent_id, v.chunk_index, "
+                "v.content_hash FROM pages p JOIN page_versions v "
+                "ON v.version_id = p.current_version_id WHERE p.path = ?",
+                (path,),
+            ).fetchone()
+        if not row:
+            return None
+        return {
+            "page_id": row["page_id"],
+            "path": row["path"],
+            "status": row["status"],
+            "superseded_by_page_id": row["superseded_by_page_id"],
+            "version_id": row["version_id"],
+            "version": row["version"],
+            "title": row["title"],
+            "page_type": row["page_type"],
+            "content": json.loads(row["content"]),
+            "content_text": row["content_text"],
+            "tags": json.loads(row["tags"]),
+            "source_ids": (
+                json.loads(row["source_ids"])
+                if row["source_ids"] is not None
+                else None
+            ),
+            "parent_id": row["parent_id"],
+            "chunk_index": row["chunk_index"],
+            "content_hash": row["content_hash"],
+        }
+
     def outbox_count(self) -> int:
         with self.connection() as conn:
             return int(
@@ -326,6 +468,40 @@ class SQLiteStore:
                     "SELECT count(*) FROM sync_outbox WHERE acknowledged_at IS NULL"
                 ).fetchone()[0]
             )
+
+    def pending_outbox(self, limit: int = 1000) -> list[dict[str, Any]]:
+        if limit < 1:
+            raise ValueError("outbox limit must be positive")
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT sequence, event_id, entity_kind, entity_id, version_id, "
+                "payload_hash, batch_id, created_at FROM sync_outbox "
+                "WHERE acknowledged_at IS NULL ORDER BY sequence LIMIT ?",
+                (limit,),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def assign_outbox_batch(self, sequences: list[int], batch_id: UUID) -> None:
+        if not sequences:
+            return
+        placeholders = ",".join("?" for _ in sequences)
+        with self.connection(write=True) as conn:
+            conn.execute(
+                "UPDATE sync_outbox SET batch_id = ? "
+                f"WHERE sequence IN ({placeholders}) AND acknowledged_at IS NULL "
+                "AND (batch_id IS NULL OR batch_id = ?)",
+                (str(batch_id), *sequences, str(batch_id)),
+            )
+
+    def acknowledge_outbox_batch(self, batch_id: UUID) -> int:
+        with self.connection(write=True) as conn:
+            before = conn.total_changes
+            conn.execute(
+                "UPDATE sync_outbox SET acknowledged_at = ? "
+                "WHERE batch_id = ? AND acknowledged_at IS NULL",
+                (_now(), str(batch_id)),
+            )
+            return conn.total_changes - before
 
     def get_sync_cursor(self, target: str) -> dict[str, Any]:
         with self.connection() as conn:
