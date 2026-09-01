@@ -257,6 +257,22 @@ def install_integrations(
         / "extensions"
         / "wikibricks-mcp.js",
     }
+    existing_manifest = load_json_object(paths["manifest"])
+    existing_launchers = existing_manifest.get("launchers", {})
+    if not isinstance(existing_launchers, dict):
+        raise RuntimeError("Cannot update WikiBricks installer manifest: launchers must be an object")
+    previous_harness_commands = existing_manifest.get(
+        "previous_harness_commands", {}
+    )
+    if not isinstance(previous_harness_commands, dict) or not all(
+        isinstance(name, str) and isinstance(value, str)
+        for name, value in previous_harness_commands.items()
+    ):
+        raise RuntimeError(
+            "Cannot update WikiBricks installer manifest: "
+            "previous_harness_commands must be an object of strings"
+        )
+    previous_harness_commands = dict(previous_harness_commands)
 
     configs: dict[str, dict[str, Any]] = {}
     for name in ("kimi", "kiro", "qwen", "opencode"):
@@ -286,8 +302,23 @@ def install_integrations(
         for name in ("opencode", "hermes"):
             downstream = executables[name]
             if downstream:
-                wrapper_paths[f"{name}-native"] = resolved_home / ".wikibricks" / "bin" / name
+                harness_name = f"{name}-native"
+                wrapper = resolved_home / ".wikibricks" / "bin" / name
+                if Path(downstream).expanduser().resolve() == wrapper.resolve():
+                    downstream = existing_launchers.get(name)
+                    if not isinstance(downstream, str) or not downstream:
+                        raise RuntimeError(
+                            f"Cannot update {name} launcher: original executable is missing"
+                        )
+                wrapper_paths[harness_name] = wrapper
                 launchers[name] = os.path.abspath(Path(downstream).expanduser())
+                harnesses = omnigent_config.get("harness")
+                if isinstance(harnesses, dict):
+                    existing = harnesses.get(harness_name)
+                    if isinstance(existing, dict):
+                        previous = existing.get("command")
+                        if isinstance(previous, str) and previous != str(wrapper):
+                            previous_harness_commands[harness_name] = previous
         _omnigent_harness_config(omnigent_config, wrapper_paths=wrapper_paths)
         if default_was_legacy:
             omnigent_config.pop("default_agent", None)
@@ -428,6 +459,7 @@ def install_integrations(
         "owned_files": sorted(owned_files),
         "owned_settings": owned_settings,
         "launchers": launchers,
+        "previous_harness_commands": previous_harness_commands,
     }
     write_json_atomic(paths["manifest"], manifest)
 
