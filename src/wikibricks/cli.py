@@ -130,6 +130,16 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
     init = commands.add_parser("init", help="Initialize the local memory database")
     init.set_defaults(handler=_command_init)
 
+    install = commands.add_parser("install", help="Install a harness integration")
+    install_targets = install.add_subparsers(dest="install_target", required=True)
+    omnigent_install = install_targets.add_parser(
+        "omnigent",
+        help="Configure the WikiBricks companion agent in Omnigent",
+    )
+    omnigent_install.add_argument("--agent-path", type=Path)
+    omnigent_install.add_argument("--harness", default="codex")
+    omnigent_install.set_defaults(handler=_command_install_omnigent)
+
     search = commands.add_parser("search", help="Search local memory")
     search.add_argument("query")
     search.add_argument("-k", type=int, default=config.search_default_results)
@@ -247,6 +257,15 @@ def _command_init(args: argparse.Namespace) -> int:
 
     initialize_database(_target(args))
     print("WikiBricks local schema is ready.")
+    return 0
+
+
+def _command_install_omnigent(args: argparse.Namespace) -> int:
+    from wikibricks.maintenance import initialize_database
+    from wikibricks.omnigent_install import install_omnigent
+
+    initialize_database(_target(args))
+    _print_json(install_omnigent(args.agent_path, harness=args.harness))
     return 0
 
 

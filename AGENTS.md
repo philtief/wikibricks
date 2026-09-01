@@ -7,8 +7,8 @@ and usage are documented in `README.md`.
 
 WikiBricks is shared memory for multiple agent harnesses.
 
-- Omnigent-managed sessions use the native integration for automatic capture,
-  bounded pre-turn recall, local tools, and scheduler lifecycle.
+- Omnigent is the primary interface. A companion agent uses public agent YAML,
+  instructions, and MCP. Do not patch or import Omnigent source code.
 - Codex, Claude Code, Kimi, and other clients used outside Omnigent connect to
   the same local database through standard MCP.
 - SQLite at `~/.wikibricks/wikibricks.db` is the default active store.
@@ -49,6 +49,7 @@ src/wikibricks/
   storage/                  Shared storage contracts and optional PostgreSQL code
   curation/                 Guarded patch planning and application
   automation.py             Daily local and optional weekly remote scheduler
+  omnigent_install.py       Public Omnigent companion installer
   remote/lakebase.py        Optional Lakebase exchange
   resources/                MCP instructions and JSON contracts
   sql/sqlite/               Forward-only SQLite migrations
@@ -91,7 +92,7 @@ optional agent and workspace, source timestamps, metadata, and ordered events.
 Session identity is `(harness, external_id)`. Exact re-imports are no-ops.
 Changed source events create immutable versions.
 
-The MCP server and Omnigent relay expose exactly these tools:
+The MCP server exposes exactly these tools to Omnigent and direct clients:
 
 - `wiki_search`
 - `wiki_read_full`
@@ -100,7 +101,8 @@ The MCP server and Omnigent relay expose exactly these tools:
 - `wiki_promote_answer`
 
 Do not add client-specific names or schemas. Generic MCP has no portable
-session lifecycle, so it must not claim automatic transcript capture.
+session lifecycle, so it must not claim automatic transcript capture. The
+Omnigent integration must remain a readable agent YAML plus public CLI calls.
 
 ## Curation and synchronization
 

@@ -2,13 +2,14 @@
 
 ## Unreleased
 
-- Added native Omnigent capture, bounded pre-turn recall, local tool relay, and
-  background maintenance for Codex, Claude Code, Kimi, and other managed
-  sessions.
-- Removed periodic scraping of the Omnigent database. The importer remains a
-  recovery command.
-- Updated installation and agent guidance for SQLite-first local memory and
-  optional weekly Lakebase curation.
+- Added a source-free Omnigent 0.11 companion installer based on public agent
+  YAML, MCP, and `omnigent config` interfaces.
+- Made Codex the configurable default harness while keeping the installed
+  memory agent usable with other Omnigent harnesses.
+- Removed native-integration and automatic-transcript claims. The Omnigent
+  importer remains an optional recovery command.
+- Updated installation guidance for SQLite-first local memory and optional
+  weekly Lakebase curation.
 
 ## 0.9.0 - 2026-09-01
 
