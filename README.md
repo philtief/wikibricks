@@ -1,18 +1,37 @@
 # WikiBricks
 
-WikiBricks gives AI agents durable memory in local PostgreSQL. Recording,
-search, reads, writes, history, and maintenance work without Databricks or a
-network connection.
+WikiBricks gives AI agents persistent local memory backed by PostgreSQL. It
+connects through MCP and stores raw sessions plus maintained wiki pages. Codex,
+Claude Code, Omnigent, and other MCP clients can share the same memory.
 
-Lakebase is optional. It stores an archive and can run a weekly curation job,
-but it is never part of the local read or write path.
+The complete read and write path works offline. Databricks and Lakebase are
+optional and are used only for archive storage and weekly curation.
 
-After the one-time install, WikiBricks runs behind the agent. The MCP process
-captures Omnigent sessions, performs local maintenance, retrieves relevant
-memory, and applies safe remote curation. Normal use requires no WikiBricks
-commands.
+## How it works
 
-## Install
+```text
+agent <--> wikibricks-mcp <--> local PostgreSQL
+              |                       |
+              |                       +-- daily local maintenance
+              +-- imports Omnigent sessions every five minutes
+
+optional remote maintenance:
+
+local PostgreSQL <-- daily push/pull --> Lakebase <-- weekly --> Databricks job
+```
+
+Raw sessions remain immutable evidence. The agent maintains a smaller set of
+topic, entity, comparison, and synthesis pages. This follows Andrej Karpathy's
+[LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f):
+search the existing wiki, integrate useful knowledge, and preserve links to
+the source material.
+
+The MCP process initializes PostgreSQL, imports live Omnigent conversations,
+runs local maintenance, and performs optional Lakebase synchronization. Its
+instructions tell the connected agent to search relevant pages before
+answering and to save reusable knowledge.
+
+## Install once
 
 WikiBricks supports PostgreSQL 16 and 17. On macOS:
 
@@ -30,20 +49,14 @@ export WIKIBRICKS_DATABASE_URL=postgresql://user:password@localhost/wikibricks
 ```
 
 The MCP server creates the database, enables `pg_trgm`, and applies migrations
-when the agent starts. `wikibricks init` remains available for diagnostics.
+when the agent starts. You do not need a configuration file for local use.
 
-For development from a checkout:
-
-```bash
-git clone https://github.com/philtief/wikibricks.git
-cd wikibricks
-uv sync --extra dev
-```
-
-## Connect an agent
+## Connect an agent once
 
 `wikibricks-mcp` is a local stdio MCP server. It works with Codex, Claude Code,
 Omnigent, and other MCP clients.
+
+Register it in each harness that should share the memory.
 
 Codex:
 
@@ -76,7 +89,7 @@ Generic MCP configuration:
 }
 ```
 
-The server exposes five tools:
+The server exposes the same five tools to every harness:
 
 - `wiki_search`
 - `wiki_read_full`
@@ -84,20 +97,28 @@ The server exposes five tools:
 - `wiki_write_page`
 - `wiki_promote_answer`
 
-Their names, descriptions, and schemas do not depend on an agent harness.
-The server tells the agent to search relevant memory at the start of a task and
-read the best pages before answering. This is part of the MCP contract, so the
-user does not need to request a memory lookup.
+Their names, descriptions, and schemas do not depend on the harness.
 
-## Import sessions
+## Daily use
+
+Restart the agent after registering the MCP server, then work as usual. You do
+not need to mention WikiBricks in prompts or run import, maintenance, or
+synchronization commands. WikiBricks runs those tasks in the MCP background
+process.
+
+When prior work is relevant, the agent searches the wiki and reads the best
+pages before answering. It updates existing pages or creates new ones when a
+conversation produces knowledge that will be useful again. Raw session capture
+does not create a curated page for every chat.
+
+## Session capture and other imports
 
 Omnigent stores conversations in `~/.omnigent/chat.db`. While an agent is
 connected, WikiBricks reads new and changed conversations in the background.
 The importer is read-only, supports a live SQLite WAL, and preserves agent
 metadata, including Codex sessions.
 
-The command below is a recovery and bulk-import tool. It is not part of normal
-use:
+The command below is only for recovery or a bulk import:
 
 ```bash
 wikibricks import omnigent --user-id "$USER"
@@ -116,33 +137,10 @@ wikibricks import jsonl examples/session-v1.jsonl
 The optional Claude Code plugin adds automatic session capture. See
 [`plugin/README.md`](plugin/README.md).
 
-## How the memory works
+## Storage and search
 
-WikiBricks follows Andrej Karpathy's
-[LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
-Raw sessions remain evidence. The active agent maintains a smaller set of
-linked topic, entity, comparison, and synthesis pages.
-
-```text
-Codex / Claude / Omnigent / another harness
-                    |
-             MCP or session import
-                    v
-        local PostgreSQL active memory
-          |                       |
-    immutable evidence       maintained pages
-          |                       |
-          +--------- search ------+
-                    |
-        deterministic local maintenance
-                    |
-          optional background archive sync
-                    v
-             Lakebase (optional)
-```
-
-The library does not call a language model. The connected agent decides what
-to search, write, link, merge, or promote.
+WikiBricks does not call a language model. The connected agent decides what to
+search, write, link, merge, or promote.
 
 PostgreSQL `text` and TOAST store long session events. Search uses built-in
 `tsvector` values, GIN indexes, and bounded 64 KiB UTF-8 chunks. `pg_trgm`
@@ -244,7 +242,8 @@ and content hash still match. A divergent local edit wins automatically and is
 recorded as `keep_local`. Remote failures are logged and never block an agent.
 
 The weekly Databricks job reads the archive and publishes manifests. The next
-local cycle applies them to local PostgreSQL. Lakebase never connects to the
+local cycle applies them to local PostgreSQL. The local MCP process initiates
+both directions of the exchange; the Databricks job never connects to the
 laptop. The guarded exchange is documented in
 [`docs/curation-sync.md`](docs/curation-sync.md), including manual recovery
 commands.
@@ -265,7 +264,11 @@ databricks bundle deploy -t personal --profile PROFILE \
 
 ## Develop
 
+From a checkout:
+
 ```bash
+git clone https://github.com/philtief/wikibricks.git
+cd wikibricks
 uv sync --extra dev
 uv run ruff check src tests
 uv run pytest
