@@ -13,6 +13,45 @@ _HARNESS_RE = re.compile(r"^[a-z0-9][a-z0-9-]*$")
 
 
 @dataclass(frozen=True, slots=True)
+class MemoryQuery:
+    """A bounded request for memory relevant to one agent turn."""
+
+    text: str
+    user_id: str
+    workspace: str | None = None
+    current_session_id: str | None = None
+    max_chars: int = 6000
+
+    def __post_init__(self) -> None:
+        if not self.text.strip():
+            raise ValueError("memory query text must not be empty")
+        if not self.user_id:
+            raise ValueError("memory query user_id must not be empty")
+        if self.max_chars < 1:
+            raise ValueError("memory query max_chars must be positive")
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryItem:
+    """One page or raw-session excerpt selected for a memory packet."""
+
+    path: str
+    title: str
+    text: str
+    kind: str
+    score: float
+
+
+@dataclass(frozen=True, slots=True)
+class MemoryPacket:
+    """Rendered context and its structured source items."""
+
+    items: tuple[MemoryItem, ...]
+    rendered: str
+    truncated: bool
+
+
+@dataclass(frozen=True, slots=True)
 class SessionEvent:
     """One ordered, source-addressable event from an agent session."""
 

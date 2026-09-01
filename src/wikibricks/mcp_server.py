@@ -1,4 +1,4 @@
-"""Harness-neutral stdio MCP server backed by local PostgreSQL."""
+"""Harness-neutral stdio MCP server backed by local SQLite."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ def _build_tools() -> dict[str, Any]:
     from wikibricks import WikiClient, make_agent_tools
 
     client = WikiClient()
-    write_tools = make_agent_tools(database_url=client.database_url)
+    write_tools = make_agent_tools(database_path=str(client.database_path))
     return {
         "wiki_search": lambda query, k=5: client.search(query, num_results=k),
         "wiki_read_full": client.read_page,

@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from uuid import uuid4, uuid5
+from uuid import NAMESPACE_URL, uuid4, uuid5
 
 from wikibricks.models import SessionEvent, SessionRecord
 from wikibricks.session_ingest import (
@@ -71,7 +71,8 @@ class SQLiteStore:
         *,
         failpoint: Callable[[str], None] | None = None,
     ) -> None:
-        self.database_path = Path(database_path or DEFAULT_DATABASE_PATH).expanduser()
+        configured = database_path or os.environ.get("WIKIBRICKS_DATABASE_PATH")
+        self.database_path = Path(configured or DEFAULT_DATABASE_PATH).expanduser()
         self._failpoint = failpoint or (lambda _stage: None)
 
     def _open(self) -> sqlite3.Connection:
@@ -326,6 +327,131 @@ class SQLiteStore:
                 ).fetchone()[0]
             )
 
+    def log(
+        self,
+        op_type: str,
+        *,
+        path: str | None = None,
+        query: str | None = None,
+        details: Any = None,
+    ) -> None:
+        with self.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO operations(operation_id, op_type, path, query, details, created_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    str(uuid4()),
+                    op_type,
+                    path,
+                    query,
+                    _json(details) if details is not None else None,
+                    _now(),
+                ),
+            )
+
+    def ingest_source(
+        self,
+        uri: str,
+        *,
+        title: str | None = None,
+        content_text: str | None = None,
+        source_type: str = "manual",
+    ) -> str:
+        source_id = str(uuid5(NAMESPACE_URL, f"wikibricks:source:{source_type}:{uri}"))
+        with self.connection(write=True) as conn:
+            conn.execute(
+                "INSERT INTO sources(source_id, source_type, uri, metadata, created_at) "
+                "VALUES (?, ?, ?, ?, ?) ON CONFLICT(source_id) DO UPDATE SET "
+                "metadata = excluded.metadata",
+                (
+                    source_id,
+                    source_type,
+                    uri,
+                    _json({"title": title, "content_text": content_text}),
+                    _now(),
+                ),
+            )
+        return source_id
+
+    def commit_edges(self, edges: list[dict[str, Any]]) -> int:
+        written = 0
+        with self.connection(write=True) as conn:
+            for edge in edges:
+                source_id = edge.get("source_page_id")
+                target_id = edge.get("target_page_id")
+                if edge.get("source_path"):
+                    row = conn.execute(
+                        "SELECT page_id FROM pages WHERE path = ?",
+                        (edge["source_path"],),
+                    ).fetchone()
+                    source_id = row[0] if row else None
+                if edge.get("target_path"):
+                    row = conn.execute(
+                        "SELECT page_id FROM pages WHERE path = ?",
+                        (edge["target_path"],),
+                    ).fetchone()
+                    target_id = row[0] if row else None
+                if not source_id or not target_id:
+                    continue
+                before = conn.total_changes
+                conn.execute(
+                    "INSERT INTO links(link_id, source_page_id, target_page_id, link_type, "
+                    "origin, metadata, created_at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+                    "ON CONFLICT(source_page_id, target_page_id, link_type) DO UPDATE SET "
+                    "origin = excluded.origin, metadata = excluded.metadata",
+                    (
+                        str(uuid4()),
+                        str(source_id),
+                        str(target_id),
+                        str(edge.get("link_type") or "related"),
+                        str(edge.get("origin") or "manual"),
+                        _json(
+                            {
+                                key: edge[key]
+                                for key in ("confidence", "evidence")
+                                if key in edge
+                            }
+                        ),
+                        _now(),
+                    ),
+                )
+                written += int(conn.total_changes > before)
+        return written
+
+    def graph_neighbors(
+        self,
+        path: str,
+        *,
+        depth: int = 1,
+        link_types: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        if depth != 1:
+            raise ValueError("local graph traversal currently supports depth=1")
+        params: list[Any] = [path]
+        filter_sql = ""
+        if link_types:
+            filter_sql = f" AND l.link_type IN ({','.join('?' for _ in link_types)})"
+            params.extend(link_types)
+        with self.connection() as conn:
+            rows = conn.execute(
+                "SELECT target.path, v.title, l.link_type, l.origin, l.metadata "
+                "FROM pages source JOIN links l ON l.source_page_id = source.page_id "
+                "JOIN pages target ON target.page_id = l.target_page_id "
+                "JOIN page_versions v ON v.version_id = target.current_version_id "
+                "WHERE source.path = ?" + filter_sql + " ORDER BY target.path",
+                params,
+            ).fetchall()
+        return [
+            {
+                "path": row[0],
+                "title": row[1],
+                "link_type": row[2],
+                "origin": row[3],
+                "metadata": json.loads(row[4]),
+            }
+            for row in rows
+        ]
+
     @staticmethod
     def _session_title(record: SessionRecord) -> str:
         configured = record.metadata.get("title")
@@ -526,7 +652,7 @@ class SQLiteStore:
         tokens = re.findall(r"[\w-]+", query, flags=re.UNICODE)
         if not tokens:
             return []
-        match = " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+        match = " OR ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
         pattern = f"%{query}%"
         with self.connection() as conn:
             rows = conn.execute(

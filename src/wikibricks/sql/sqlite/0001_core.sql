@@ -80,6 +80,34 @@ CREATE TABLE IF NOT EXISTS session_event_versions (
     UNIQUE(event_id, version)
 );
 
+CREATE TABLE IF NOT EXISTS links (
+    link_id TEXT PRIMARY KEY,
+    source_page_id TEXT NOT NULL REFERENCES pages(page_id) ON DELETE CASCADE,
+    target_page_id TEXT NOT NULL REFERENCES pages(page_id) ON DELETE CASCADE,
+    link_type TEXT NOT NULL,
+    origin TEXT NOT NULL,
+    metadata TEXT NOT NULL,
+    created_at TEXT NOT NULL,
+    UNIQUE(source_page_id, target_page_id, link_type)
+);
+
+CREATE TABLE IF NOT EXISTS sources (
+    source_id TEXT PRIMARY KEY,
+    source_type TEXT NOT NULL,
+    uri TEXT NOT NULL,
+    metadata TEXT NOT NULL,
+    created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS operations (
+    operation_id TEXT PRIMARY KEY,
+    op_type TEXT NOT NULL,
+    path TEXT,
+    query TEXT,
+    details TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS page_search_chunks (
     chunk_id INTEGER PRIMARY KEY AUTOINCREMENT,
     version_id TEXT NOT NULL REFERENCES page_versions(version_id) ON DELETE CASCADE,

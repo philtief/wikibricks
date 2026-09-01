@@ -11,7 +11,7 @@ from mcp.client.stdio import stdio_client
 
 from wikibricks.mcp_server import get_server_instructions, get_tool_schemas
 from wikibricks.models import SessionEvent, SessionRecord
-from wikibricks.postgres_store import PostgresStore
+from wikibricks.storage.sqlite_store import SQLiteStore
 
 EXPECTED_TOOLS = {
     "wiki_search",
@@ -58,12 +58,11 @@ def test_server_instructions_preserve_the_compounding_wiki_workflow():
 
 
 def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
-    postgres_url: str,
     tmp_path: Path,
 ):
-    store = PostgresStore(postgres_url)
+    database_path = tmp_path / "wikibricks.db"
+    store = SQLiteStore(database_path)
     store.migrate()
-    store.clear_all()
     store.ingest_session(
         SessionRecord(
             harness="test-harness",
@@ -87,7 +86,7 @@ def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
         for key, value in os.environ.items()
         if not key.startswith("DATABRICKS_")
     }
-    environment["WIKIBRICKS_DATABASE_URL"] = postgres_url
+    environment["WIKIBRICKS_DATABASE_PATH"] = str(database_path)
     environment["WIKIBRICKS_AUTOMATION_ENABLED"] = "false"
     environment["PYTHONPATH"] = os.pathsep.join(
         [str(tmp_path), str(Path(__file__).resolve().parents[1] / "src")]
@@ -113,7 +112,7 @@ def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
                             "path": "topics/mcp-local",
                             "title": "MCP local",
                             "summary": "Offline memory",
-                            "body": "Stored in local PostgreSQL",
+                            "body": "Stored in local SQLite",
                         },
                     )
                 )
@@ -132,7 +131,7 @@ def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
                 read = _result_json(
                     await session.call_tool("wiki_read_full", {"path": "topics/mcp-local"})
                 )
-                assert read["content"]["body"] == "Stored in local PostgreSQL"
+                assert read["content"]["body"] == "Stored in local SQLite"
 
                 indexed = _result_json(await session.call_tool("wiki_index", {}))
                 assert [page["path"] for page in indexed] == ["topics/mcp-local"]
@@ -142,7 +141,7 @@ def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
                         "wiki_promote_answer",
                         {
                             "question": "Where is memory stored?",
-                            "answer": "In PostgreSQL.",
+                            "answer": "In SQLite.",
                             "source_paths": ["topics/mcp-local"],
                         },
                     )

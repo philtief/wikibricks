@@ -1,4 +1,4 @@
-"""Harness-neutral write tools backed by local PostgreSQL.
+"""Harness-neutral write tools backed by local SQLite.
 
 Register the returned Python callables with Codex, Claude Code, LangChain,
 LlamaIndex, or any MCP implementation that supports Python tools.
@@ -18,7 +18,7 @@ Usage::
 from wikibricks.client import WikiClient
 
 
-def make_agent_tools(database_url: str | None = None) -> dict:
+def make_agent_tools(database_path: str | None = None) -> dict:
     """Return a dict of write-capable agent tools bound to a WikiClient.
 
     Each value is a plain Python callable whose docstring describes the
@@ -27,7 +27,7 @@ def make_agent_tools(database_url: str | None = None) -> dict:
     Returns:
         ``{"wiki_write_page": callable, "wiki_promote_answer": callable}``.
     """
-    client = WikiClient(database_url)
+    client = WikiClient(database_path)
 
     def wiki_write_page(
         path: str,

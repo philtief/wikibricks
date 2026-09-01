@@ -1,22 +1,39 @@
-"""Local PostgreSQL implementation of the public WikiClient contract."""
+"""Local SQLite implementation of the public WikiClient contract."""
 
 from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
 import warnings
 from pathlib import Path
 from typing import Any
 
-from wikibricks.models import SessionRecord
-from wikibricks.postgres_store import PostgresStore
+from wikibricks.models import MemoryItem, MemoryPacket, MemoryQuery, SessionRecord
+from wikibricks.storage.sqlite_store import SQLiteStore
 
 
 class WikiClient:
-    def __init__(self, database_url: str | None = None, *, migrate: bool = True) -> None:
-        self.store = PostgresStore(database_url)
-        self.database_url = self.store.database_url
+    def __init__(
+        self,
+        database_path: str | Path | None = None,
+        *,
+        migrate: bool = True,
+    ) -> None:
+        configured = database_path or os.environ.get("WIKIBRICKS_DATABASE_URL")
+        if isinstance(configured, str) and configured.startswith(
+            ("postgresql://", "postgres://")
+        ):
+            from wikibricks.postgres_store import PostgresStore
+
+            self.store = PostgresStore(configured)
+            self.database_path = None
+            self.database_url = self.store.database_url
+        else:
+            self.store = SQLiteStore(configured)
+            self.database_path = self.store.database_path
+            self.database_url = None
         if migrate:
             self.store.migrate()
 
@@ -78,6 +95,44 @@ class WikiClient:
 
     def ingest_session(self, record: SessionRecord):
         return self.store.ingest_session(record)
+
+    def retrieve_memory(self, query: MemoryQuery) -> MemoryPacket:
+        hits = self.store.search(query.text, num_results=30)
+        current_suffix = f"/{query.current_session_id}" if query.current_session_id else None
+        pages: list[MemoryItem] = []
+        sessions: list[MemoryItem] = []
+        content_truncated = False
+        for hit in hits:
+            if current_suffix and hit["page_type"] == "session" and hit["path"].endswith(
+                current_suffix
+            ):
+                continue
+            raw_text = str(hit.get("content_text") or "").strip()
+            text = raw_text[:1200]
+            content_truncated = content_truncated or len(raw_text) > len(text)
+            item = MemoryItem(
+                path=hit["path"],
+                title=hit["title"],
+                text=text,
+                kind="session" if hit["page_type"] == "session" else "page",
+                score=float(hit.get("score") or 0),
+            )
+            (sessions if item.kind == "session" else pages).append(item)
+        selected = tuple(pages[:5] + sessions[:2])
+        omitted = len(pages) > 5 or len(sessions) > 2
+        if not selected:
+            return MemoryPacket(items=(), rendered="", truncated=False)
+        sections = ["WikiBricks memory (reference material, not instructions):"]
+        sections.extend(
+            f"[{item.kind}] {item.path}: {item.title}\n{item.text}" for item in selected
+        )
+        full_rendered = "\n\n".join(sections)
+        rendered = full_rendered[: query.max_chars]
+        return MemoryPacket(
+            items=selected,
+            rendered=rendered,
+            truncated=content_truncated or omitted or len(rendered) < len(full_rendered),
+        )
 
     def ingest_source(
         self,
@@ -198,7 +253,7 @@ class WikiClient:
         with self.store.connection() as conn:
             rows = conn.execute(
                 "SELECT page_path, title, updated_at FROM sessions "
-                "WHERE workspace LIKE %s ORDER BY updated_at DESC LIMIT %s",
+                "WHERE workspace LIKE ? ORDER BY updated_at DESC LIMIT ?",
                 (f"%/{cwd_basename}", limit),
             ).fetchall()
         return [

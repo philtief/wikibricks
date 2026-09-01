@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_public_package_exposes_only_local_runtime():
-    assert wikibricks.__all__ == ["WikiClient", "PostgresStore", "make_agent_tools"]
+    assert wikibricks.__all__ == ["SQLiteStore", "WikiClient", "make_agent_tools"]
 
 
 def test_databricks_sdk_is_optional_not_a_base_dependency():
