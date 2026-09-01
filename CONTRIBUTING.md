@@ -1,12 +1,12 @@
 # Contributing to WikiBricks
 
-WikiBricks is local PostgreSQL memory for AI agents. Read [`AGENTS.md`](AGENTS.md)
-before changing code; it defines the storage, MCP, sync, and release contracts.
+WikiBricks is local PostgreSQL memory for AI agents. Read
+[`AGENTS.md`](AGENTS.md) before changing code.
 
-## Set up the repository
+## Set up
 
-PostgreSQL 16 or 17 must be running. Integration tests create disposable test
-databases, so never point them at a database that contains user data.
+PostgreSQL 16 or 17 must be running. Tests create disposable databases, so
+never point them at user data.
 
 ```bash
 git clone https://github.com/philtief/wikibricks.git
@@ -17,65 +17,51 @@ uv run pytest
 
 ## Development loop
 
-The repository uses the overnight-dev hook and test-driven development. Add a
-failing behavior test, confirm the expected failure, implement the smallest
-change, then run the focused and full gates.
+This repository uses overnight-dev hooks and test-driven development.
+
+1. Write one failing behavior test.
+2. Confirm that it fails for the intended reason.
+3. Implement the smallest change.
+4. Run the focused test, Ruff, and the full suite.
 
 ```bash
-uv run pytest tests/test_postgres_store.py -q
 uv run ruff check src tests
 uv run pytest
 UV_OFFLINE=1 uv run pytest
 uv build
 ```
 
-The pre-commit hook runs Ruff and all tests. Fix a blocked commit and create a
-new commit. Do not use `--no-verify` or amend a checked commit.
+Do not bypass the pre-commit hook or amend a checked commit.
 
-## Code boundaries
+## Boundaries
 
-- `WikiClient()` and `wikibricks-mcp` must work without network access,
-  Databricks credentials, or the Databricks SDK.
-- Keep model calls out of `src/wikibricks/`. The connected agent owns semantic
-  decisions.
-- Preserve immutable page and event versions, write/outbox atomicity, 64 KiB
-  search chunks, and the five MCP tool names.
-- `pg_trgm` is the only required PostgreSQL extension. Do not make embeddings
-  part of the base runtime.
-- Lakebase access belongs only in `wikibricks.remote.lakebase` and the explicit
-  `wikibricks sync lakebase` command. Import the Databricks SDK lazily.
+- Local APIs and MCP must work without a network or Databricks dependency.
+- The connected agent, not the library, makes semantic curation decisions.
+- Preserve immutable versions, transactionally coupled outbox writes, and the
+  five MCP tool names.
+- `pg_trgm` is the only required PostgreSQL extension.
+- Keep Lakebase access behind the explicit sync command.
 - Use the Databricks SDK for control-plane work and SQL for data operations.
-  Do not add raw REST calls.
-- Do not hardcode workspace IDs, user paths, credentials, or tokens.
+- Do not hardcode credentials, workspace IDs, or user paths.
 
 ## Pull requests
 
-Target `main` and keep each pull request focused on one behavior or refactor.
-Every changed line should trace to the request. Update tests for behavior
-changes and add an entry under `[Unreleased]` in `CHANGELOG.md`.
+Target `main` and keep each pull request focused. Add an entry under
+`Unreleased` in `CHANGELOG.md`. If remote resources changed, also run:
 
-Before opening the pull request, run Ruff, the full suite, the offline suite,
-and `uv build`. Changes to MCP packaging or storage also require an installed
-wheel smoke test.
+```bash
+databricks bundle validate --strict -t staging --profile PROFILE
+```
 
-## Bugs and feature requests
-
-A bug report should include expected and observed behavior, a minimal
-reproduction, Python and PostgreSQL versions, and whether the failure occurs
-offline. A failing test is preferred.
-
-Feature requests should lead with the use case and the proposed public API.
-Changes to `WikiClient`, the session JSON schema, curation manifests, or MCP
-tool names are compatibility changes and need explicit review.
+Update README and agent guidance when a public command, configuration surface,
+or architectural boundary changes.
 
 ## Releases
 
-WikiBricks follows Semantic Versioning. A version change updates
-`pyproject.toml`, `uv.lock`, `plugin/.claude-plugin/plugin.json`,
-`CHANGELOG.md`, and the README wheel/test references together. Build the wheel,
-run the local release gate, and publish only after the release candidate is
-approved.
+WikiBricks follows Semantic Versioning. Update the package version, lockfile,
+plugin manifest, changelog, and installation examples together. Publish only
+after the clean-install and local release gates pass.
 
 ## Code of conduct
 
-Be kind. Assume good intent. Disagree on substance, not on people.
+Be kind. Disagree on substance, not on people.

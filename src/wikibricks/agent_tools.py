@@ -9,9 +9,9 @@ Usage::
 
     tools = make_agent_tools()
     tools["wiki_promote_answer"](
-        question="What is a Delta table?",
-        answer="A Delta table is ...",
-        source_paths=["topics/delta", "topics/acid"],
+        question="How does local curation stay safe?",
+        answer="It checks immutable base versions before applying a patch.",
+        source_paths=["topics/local-curation", "topics/version-history"],
     )
 """
 

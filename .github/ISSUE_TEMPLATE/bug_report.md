@@ -23,12 +23,13 @@ labels: bug
 
 - WikiBricks version: `uv run python -c "import wikibricks; print(wikibricks.__version__)"`
 - Python: `python --version`
-- Databricks runtime (if deployed): e.g. 15.4 LTS
+- PostgreSQL: `psql --version`
+- Lakebase / Databricks profile (only if remote sync is involved):
 - OS: macOS / Linux / Windows
 
 ## Logs / traceback
 
-<!-- Paste any relevant error output inside a code block. Redact workspace URLs, warehouse IDs, and tokens. -->
+<!-- Paste relevant output inside a code block. Redact database URLs, workspace URLs, and tokens. -->
 
 ```
 ```

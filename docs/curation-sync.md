@@ -211,8 +211,8 @@ replica. A run with no proposals records its watermark, so the next run does
 not analyze the same evidence again. Remote analysis never connects to the
 local database.
 
-Change Data Feed and a Lakehouse history layer are optional later additions.
-The weekly job does not require either one.
+The weekly job reads the Lakebase archive directly. It does not require a
+second storage system.
 
 ## Recovery properties
 
@@ -227,11 +227,9 @@ The weekly job does not require either one.
 The first remote deployment should use an isolated Lakebase Autoscaling branch.
 Run the publisher against copied archive data, pull its manifest into a staging
 local database, and compare page hashes, aliases, links, search results, and
-receipts before enabling the production weekly schedule. Keep the current
-FEVM tables unchanged as rollback evidence during migration.
+receipts before enabling the production weekly schedule.
 
 ## References
 
 1. [Andrej Karpathy, LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
-2. [Databricks, Lakebase Change Data Feed](https://docs.databricks.com/aws/en/oltp/projects/quickstart-lakebase-cdf)
-3. [PostgreSQL, TOAST storage](https://www.postgresql.org/docs/current/storage-toast.html)
+2. [PostgreSQL, TOAST storage](https://www.postgresql.org/docs/current/storage-toast.html)

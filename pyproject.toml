@@ -23,7 +23,7 @@ lakebase = [
 wikibricks = "wikibricks.cli:main"
 wiki-init = "wikibricks.cli:init_main"
 wikibricks-mcp = "wikibricks.mcp_server:main"
-wikibricks-recorder-hook = "wikibricks.adapters.claude_code_hook:main"
+wikibricks-hook = "wikibricks.adapters.claude_code_hook:main"
 wikibricks-remote-maintenance = "wikibricks_remote.main:main"
 
 [build-system]

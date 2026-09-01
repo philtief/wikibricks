@@ -10,7 +10,7 @@ labels: enhancement
 
 ## Proposed API
 
-<!-- Sketch the new function, UC tool, or notebook parameter. -->
+<!-- Sketch the client method, MCP tool, CLI command, or configuration key. -->
 
 ```python
 ```

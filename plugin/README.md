@@ -1,28 +1,47 @@
-# WikiBricks Claude Code adapter
+# WikiBricks for Claude Code
 
 This optional plugin records Claude Code sessions in local PostgreSQL and
-registers the harness-neutral WikiBricks MCP server. Databricks is not needed.
+registers the same stdio MCP server used by other agent harnesses. It does not
+require Databricks.
 
 ## Prerequisites
 
-- PostgreSQL 16 or 17 is running.
-- `uv` is on `PATH`.
-- The local database is initialized.
+PostgreSQL 16 or 17 must be running, and `uv` must be on `PATH`.
 
 ```bash
 export WIKIBRICKS_DATABASE_URL=postgresql:///wikibricks
 wikibricks init
 ```
 
-## What the plugin runs
+## Install this branch
 
-Five hooks call `wikibricks-recorder-hook`:
+Clone the public feature branch:
+
+```bash
+git clone --branch feat/lakebase-remote-maintenance \
+  https://github.com/philtief/wikibricks.git
+```
+
+Then run these commands inside Claude Code, replacing the path with the clone's
+absolute path:
+
+```text
+/plugin marketplace add /absolute/path/to/wikibricks
+/plugin install wikibricks@wikibricks
+```
+
+Restart Claude Code after installation. The launcher installs WikiBricks from
+that checkout into the plugin data directory on first use.
+
+## What it runs
+
+Five hooks call `wikibricks-hook`:
 
 | Event | Timeout | Stored data |
 |---|---:|---|
 | `SessionStart` | 60s | Session time, workspace, and model |
 | `UserPromptSubmit` | 5s | User prompt |
-| `PostToolUse` | 5s | Tool call and tool result |
+| `PostToolUse` | 5s | Tool call and result |
 | `Stop` | 30s | Normalized session flush |
 | `SessionEnd` | 30s | Idempotent final flush |
 
@@ -30,51 +49,21 @@ The plugin also starts `wikibricks-mcp`, which exposes `wiki_search`,
 `wiki_read_full`, `wiki_index`, `wiki_write_page`, and
 `wiki_promote_answer`.
 
-## Install after the 0.8.0 tag is published
+Set `WIKIBRICKS_USER_ID` to override the recorded user. Without it, the
+adapter uses `git config user.email`, then the operating-system user.
 
-In Claude Code:
+Temporary directories and system-prompt-only utility sessions are skipped.
+Repeated flushes do not duplicate events.
 
-```text
-/plugin marketplace add https://github.com/philtief/wikibricks.git
-/plugin install wikibricks-recorder@wikibricks
-```
+## Use MCP without session capture
 
-The launcher installs the tagged Python package into the plugin data
-directory on first use. The current release-candidate branch keeps the
-launcher on the last published tag. Do not change its default to `v0.8.0`
-until that tag exists.
-
-## Test this local release candidate
-
-Install the worktree and use the manual hook example:
-
-```bash
-cd /absolute/path/to/wikibricks
-uv sync --extra dev
-cp examples/claude-settings.json /tmp/wikibricks-claude-settings.json
-```
-
-Merge the `hooks` object from that file into `~/.claude/settings.json` and
-replace `/PATH/TO/wikibricks` with the absolute checkout path. Register the
-same checkout's MCP server:
+The plugin is optional. Claude Code can connect to WikiBricks directly:
 
 ```bash
 claude mcp add --scope user \
   -e WIKIBRICKS_DATABASE_URL=postgresql:///wikibricks \
-  wikibricks -- /absolute/path/to/wikibricks/.venv/bin/wikibricks-mcp
+  wikibricks -- wikibricks-mcp
 ```
-
-Set `WIKIBRICKS_USER_ID` to override the recorded user. Without it, the
-adapter uses `git config user.email`, then the operating-system user.
-
-## Local files
-
-Hook events are buffered under `~/.wikibricks_recorder/` by default. Set
-`WIKIBRICKS_RECORDER_DIR` to change this path. PostgreSQL stores the durable
-session after `Stop` or `SessionEnd`.
-
-Temporary directories and system-prompt-only utility sessions are skipped.
-A repeated flush is idempotent.
 
 ## License
 

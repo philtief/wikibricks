@@ -7,11 +7,11 @@
   },
   "plugins": [
     {
-      "name": "wikibricks-recorder",
+      "name": "wikibricks",
       "source": "./plugin",
       "description": "Records Claude Code sessions in local PostgreSQL and exposes five local tools over stdio MCP.",
-      "homepage": "https://github.com/philtief/wikibricks-dev",
-      "repository": "https://github.com/philtief/wikibricks-dev.git",
+      "homepage": "https://github.com/philtief/wikibricks",
+      "repository": "https://github.com/philtief/wikibricks.git",
       "license": "Apache-2.0",
       "keywords": [
         "postgresql",

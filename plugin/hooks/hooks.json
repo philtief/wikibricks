@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh wikibricks-recorder-hook",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh wikibricks-hook",
             "timeout": 60
           }
         ]
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh wikibricks-recorder-hook",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh wikibricks-hook",
             "timeout": 5
           }
         ]
@@ -27,7 +27,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh wikibricks-recorder-hook",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh wikibricks-hook",
             "timeout": 5
           }
         ]
@@ -38,7 +38,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh wikibricks-recorder-hook",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh wikibricks-hook",
             "timeout": 30
           }
         ]
@@ -49,7 +49,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh wikibricks-recorder-hook",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh wikibricks-hook",
             "timeout": 30
           }
         ]

@@ -167,7 +167,7 @@ def test_bundle_defines_one_bounded_weekly_serverless_wheel_job():
     assert bundle["variables"]["schedule_pause_status"]["default"] == "PAUSED"
     assert bundle["targets"]["personal"]["variables"][
         "schedule_pause_status"
-    ] == "UNPAUSED"
+    ] == "PAUSED"
     assert job["schedule"] == {
         "quartz_cron_expression": "0 0 4 ? * SUN",
         "timezone_id": "UTC",

@@ -50,4 +50,4 @@ targets:
       root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
     variables:
       lakebase_branch: production
-      schedule_pause_status: UNPAUSED
+      schedule_pause_status: PAUSED

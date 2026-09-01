@@ -1,49 +1,50 @@
 # WikiBricks
 
-WikiBricks gives AI coding agents durable local memory in PostgreSQL.
+WikiBricks gives AI agents durable memory in local PostgreSQL. Recording,
+search, reads, writes, history, and maintenance work without Databricks or a
+network connection.
+
+Lakebase is optional. It stores an archive and can run a weekly curation job,
+but it is never part of the local read or write path.
+
+## Install
+
+WikiBricks supports PostgreSQL 16 and 17. On macOS:
 
 ```bash
-pip install wikibricks
-wikibricks init
-wikibricks-mcp
-```
-
-PostgreSQL is the only runtime for recording, search, reads, writes, history,
-and MCP tools. Databricks credentials and network access are not required.
-Lakebase is an optional archive used only by an explicit sync command.
-
-## Install locally
-
-WikiBricks supports PostgreSQL 16 and 17. Start PostgreSQL before running the
-three commands above. On macOS:
-
-```bash
-brew install postgresql@17
+brew install uv postgresql@17
 brew services start postgresql@17
-```
-
-The default connection is `postgresql:///wikibricks`. Override it when needed:
-
-```bash
-export WIKIBRICKS_DATABASE_URL=postgresql://user:password@localhost/wikibricks
+uv tool install "wikibricks @ git+https://github.com/philtief/wikibricks.git@feat/lakebase-remote-maintenance"
 wikibricks init
 wikibricks check
 ```
 
-`wikibricks init` creates the database, installs the `pg_trgm` extension, and
-applies forward-only migrations. It is safe to run again.
+The default database URL is `postgresql:///wikibricks`. Set another URL before
+initialization if needed:
+
+```bash
+export WIKIBRICKS_DATABASE_URL=postgresql://user:password@localhost/wikibricks
+wikibricks init
+```
+
+`wikibricks init` creates the database, enables `pg_trgm`, and applies the
+forward-only migrations. You can run it again after an upgrade.
+
+For development from a checkout:
+
+```bash
+git clone --branch feat/lakebase-remote-maintenance https://github.com/philtief/wikibricks.git
+cd wikibricks
+uv sync --extra dev
+uv run wikibricks init
+```
 
 ## Connect an agent
 
-`wikibricks-mcp` is a local stdio server with five tools:
+`wikibricks-mcp` is a local stdio MCP server. It works with Codex, Claude Code,
+Omnigent, and other MCP clients.
 
-- `wiki_search`
-- `wiki_read_full`
-- `wiki_index`
-- `wiki_write_page`
-- `wiki_promote_answer`
-
-Codex can register the server directly:
+Codex:
 
 ```bash
 codex mcp add wikibricks \
@@ -51,7 +52,7 @@ codex mcp add wikibricks \
   -- wikibricks-mcp
 ```
 
-Claude Code uses the same server:
+Claude Code:
 
 ```bash
 claude mcp add --scope user \
@@ -59,109 +60,94 @@ claude mcp add --scope user \
   wikibricks -- wikibricks-mcp
 ```
 
-For Omnigent or any other MCP client, configure a stdio server with command
-`wikibricks-mcp` and pass `WIKIBRICKS_DATABASE_URL` in its environment. The
-tool names and schemas do not depend on a specific agent harness.
+Generic MCP configuration:
 
-Python callers use the same local store:
-
-```python
-from wikibricks import WikiClient
-
-wiki = WikiClient()
-wiki.write_page(
-    "topics/local-memory",
-    "Local memory",
-    {
-        "summary": "PostgreSQL is the active memory store.",
-        "body": "Databricks is not part of the local read or write path.",
-    },
-    tags=["architecture"],
-)
-
-print(wiki.search("active memory"))
-print(wiki.read_page("topics/local-memory"))
+```json
+{
+  "mcpServers": {
+    "wikibricks": {
+      "command": "wikibricks-mcp",
+      "env": {
+        "WIKIBRICKS_DATABASE_URL": "postgresql:///wikibricks"
+      }
+    }
+  }
+}
 ```
 
-## How memory compounds
+The server exposes five tools:
+
+- `wiki_search`
+- `wiki_read_full`
+- `wiki_index`
+- `wiki_write_page`
+- `wiki_promote_answer`
+
+Their names, descriptions, and schemas do not depend on an agent harness.
+
+## Import sessions
+
+Omnigent stores conversations in `~/.omnigent/chat.db`. WikiBricks reads that
+database without modifying it and preserves agent metadata, including Codex
+sessions:
+
+```bash
+wikibricks import omnigent --user-id "$USER"
+```
+
+Use `--since-days` or `--limit` for a bounded first import. Re-importing an
+unchanged event is a no-op. If a source event changes, WikiBricks writes a new
+immutable version.
+
+Any harness can export the versioned JSONL contract:
+
+```bash
+wikibricks import jsonl examples/session-v1.jsonl
+```
+
+The optional Claude Code plugin adds automatic session capture. See
+[`plugin/README.md`](plugin/README.md).
+
+## How the memory works
 
 WikiBricks follows Andrej Karpathy's
 [LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f).
-Recorded sessions remain raw evidence. The active agent searches that evidence
-and maintains a smaller wiki of topic, entity, comparison, and synthesis pages.
-Those pages carry links and source IDs, so later sessions can refine knowledge
-instead of appending another transcript summary.
-
-The MCP server sends this workflow to every connected harness. The core library
-does not call a language model. Curation decisions stay with Codex, Claude,
-Omnigent, or whichever agent uses the tools.
+Raw sessions remain evidence. The active agent maintains a smaller set of
+linked topic, entity, comparison, and synthesis pages.
 
 ```text
 Codex / Claude / Omnigent / another harness
                     |
-           MCP tools or session import
-                    |
+             MCP or session import
                     v
         local PostgreSQL active memory
           |                       |
-    raw session evidence     maintained wiki pages
+    immutable evidence       maintained pages
           |                       |
-          +-------- search -------+
+          +--------- search ------+
                     |
-          deterministic local curate
+        deterministic local maintenance
                     |
           explicit archive sync only
                     v
              Lakebase (optional)
 ```
 
-## Import sessions
+The library does not call a language model. The connected agent decides what
+to search, write, link, merge, or promote.
 
-Omnigent stores conversations in `~/.omnigent/chat.db`. WikiBricks opens the
-file read-only and keeps a local cursor:
-
-```bash
-wikibricks import omnigent --user-id "$USER"
-```
-
-Use `--since-days` or `--limit` for a bounded first import. Agent metadata is
-preserved, including Codex sessions. Re-importing unchanged events is a no-op;
-changed source events create immutable event versions.
-
-The optional Claude Code plugin records lifecycle, prompt, tool-call, and
-tool-result events into local PostgreSQL. Installation instructions are in
-[`plugin/README.md`](plugin/README.md).
-
-Other harnesses can emit the versioned JSONL contract:
-
-```json
-{"schema_version":1,"session":{"harness":"my-harness","external_id":"session-42","user_id":"philipp","agent":"my-agent","workspace":"/work/project","events":[{"external_id":"0","kind":"user","content":"Remember this"},{"external_id":"1","kind":"assistant","content":"Stored"}],"metadata":{}}}
-```
-
-```bash
-wikibricks import jsonl examples/session-v1.jsonl
-```
-
-Event kinds are `user`, `assistant`, `tool_call`, `tool_result`, `error`, and
-`lifecycle`.
-
-## Long sessions and search
-
-PostgreSQL `text` and TOAST store large event content without a custom text
-extension. Each session is an ordered sequence of immutable event versions, so
-adding an event does not rewrite the transcript.
-
-Built-in `tsvector` values and GIN indexes provide full-text search. WikiBricks
-splits long events into 64 KiB UTF-8 search chunks and reconstructs reads from
-the original text. `pg_trgm` indexes paths and titles. It is the only required
-PostgreSQL extension. The base package does not install `pgvector`, create
-embeddings, or contact an embedding service.
+PostgreSQL `text` and TOAST store long session events. Search uses built-in
+`tsvector` values, GIN indexes, and bounded 64 KiB UTF-8 chunks. `pg_trgm`
+indexes paths and titles. WikiBricks does not require embeddings or
+`pgvector`.
 
 ## Keep local memory clean
 
-The active agent handles semantic maintenance while it works: search before
-writing, update an existing page when possible, preserve evidence, and record
-contradictions. Local deterministic maintenance handles database hygiene:
+The active agent handles semantic maintenance during normal work: search
+before writing, update an existing page when possible, cite its evidence, and
+record contradictions.
+
+Local maintenance is deterministic and offline:
 
 ```bash
 wikibricks curate
@@ -169,9 +155,9 @@ wikibricks check
 wikibricks vacuum
 ```
 
-`wikibricks curate` repairs missing search chunks, rebuilds `_meta/index`, and
-reports duplicate or orphan pages. It does not call a model or use the network.
-Run it after a large import or on a local schedule.
+Run `wikibricks curate` after a large import or from a daily local scheduler.
+It repairs search chunks, rebuilds `_meta/index`, and reports duplicates and
+orphans. It does not call a model.
 
 Back up before retention or a large curation apply:
 
@@ -181,16 +167,18 @@ wikibricks --database-url postgresql:///wikibricks_restored \
   restore backups/wikibricks.dump
 ```
 
-Old sessions can be pruned only after every immutable event version has a
-committed archive acknowledgement:
+Retention is archive-gated:
 
 ```bash
 wikibricks curate --prune-archived-sessions-after-days 90
 ```
 
-## Readable configuration and contracts
+A session is eligible only after every immutable event version has a committed
+archive acknowledgement.
 
-Create `~/.wikibricks/config.yml` to override packaged defaults:
+## Configuration
+
+Create `~/.wikibricks/config.yml` to override the packaged defaults:
 
 ```yaml
 version: 1
@@ -206,26 +194,20 @@ sync:
   apply_policy: safe
 ```
 
-Precedence is packaged defaults, the user file, `WIKIBRICKS_CONFIG`, environment
-variables, then explicit API or CLI arguments. Unknown YAML keys and invalid
-values fail during startup.
-
-Agent guidance and interchange contracts ship as editable text files:
-
-- `src/wikibricks/resources/agent-instructions.md`
-- `src/wikibricks/resources/mcp-tools.json`
-- `src/wikibricks/resources/schemas/session-record.schema.json`
-- `src/wikibricks/resources/schemas/curation-manifest-v1.schema.json`
+Unknown keys and invalid values fail during startup. Explicit CLI or API
+arguments take precedence over environment variables, the user file, and the
+packaged defaults.
 
 ## Optional Lakebase archive
 
-Install the extra only on a machine that runs archive sync:
+Install the Lakebase extra on the machine that runs archive sync:
 
 ```bash
-pip install "wikibricks[lakebase]"
+uv tool install --force \
+  "wikibricks[lakebase] @ git+https://github.com/philtief/wikibricks.git@feat/lakebase-remote-maintenance"
 ```
 
-Archive a bounded batch explicitly:
+Push a bounded archive batch explicitly:
 
 ```bash
 wikibricks sync lakebase \
@@ -236,16 +218,12 @@ wikibricks sync lakebase \
   --database wikibricks
 ```
 
-Add `--drain` to send consecutive batches. A drain stops after 100 batches by
-default; set a lower ceiling with `--max-batches`.
+Add `--drain` to send consecutive batches. Immutable IDs and hashes make a
+retry idempotent.
 
-The command obtains a short-lived Lakebase credential, copies immutable page
-and session versions, commits by ID and hash, then acknowledges local outbox
-rows. Interrupted syncs retry the same batch without duplicating remote data.
-Normal WikiBricks commands never invoke this adapter.
-
-A weekly remote job can publish curation manifests back to a local inbox.
-Pulling a manifest does not change active pages:
+The optional weekly job reads archived evidence and publishes immutable
+curation manifests. It cannot update a local database directly. Pulling a
+manifest also leaves active pages unchanged:
 
 ```bash
 wikibricks sync lakebase --profile PROFILE --project PROJECT --pull-patches
@@ -254,34 +232,36 @@ wikibricks sync apply RUN_ID --policy safe
 wikibricks sync conflicts
 ```
 
-Updates apply only when the local base version ID and content hash still match.
-Conflicting local edits remain active until an explicit resolution. Duplicate
-cleanup updates pages, links, aliases, and receipts in one transaction. See
-[`docs/curation-sync.md`](docs/curation-sync.md) for the protocol and runbook.
+An update applies only when its base version ID and content hash still match.
+Local edits win conflicts until you resolve them explicitly. The full protocol
+is in [`docs/curation-sync.md`](docs/curation-sync.md).
 
-The repository includes a paused-by-default Databricks bundle for the weekly
-job. Validate and deploy it only after creating the Lakebase staging branch:
+Every bundle target keeps the weekly schedule paused by default:
 
 ```bash
 databricks bundle validate --strict -t staging --profile PROFILE
 databricks bundle deploy -t staging --profile PROFILE
 ```
 
+Enable the production schedule only after reviewing a staging manifest:
+
+```bash
+databricks bundle deploy -t personal --profile PROFILE \
+  --var="schedule_pause_status=UNPAUSED"
+```
+
 ## Develop
 
 ```bash
-git clone https://github.com/philtief/wikibricks.git
-cd wikibricks
 uv sync --extra dev
-uv run pytest                     # 88 tests
 uv run ruff check src tests
-uv build
+uv run pytest
 UV_OFFLINE=1 uv run pytest
+uv build
 ```
 
-The overnight-dev pre-commit hook runs Ruff and the full test suite before each
-commit. Contributors should read [`AGENTS.md`](AGENTS.md) and
-[`CONTRIBUTING.md`](CONTRIBUTING.md).
+The overnight-dev pre-commit hook runs Ruff and the full suite. Contributor
+rules are in [`AGENTS.md`](AGENTS.md) and [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## License
 

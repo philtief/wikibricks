@@ -20,9 +20,9 @@ jobs:
       - name: Sync dependencies
         run: uv sync --all-extras --dev
       - name: Ruff
-        run: uv run ruff check src/ app/ tests/ scripts/
+        run: uv run ruff check src tests
       - name: Pytest
-        run: uv run pytest tests/ -q
+        run: uv run pytest -q
       - name: Build wheel + sdist
         run: uv build
       - name: Create GitHub Release
