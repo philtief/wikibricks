@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -24,6 +25,7 @@ from wikibricks.install_io import (
     write_text_atomic,
     write_yaml_atomic,
 )
+from wikibricks.resources import get_tool_schemas
 
 _MINIMUM_VERSION = (0, 11, 0)
 _VERSION_PATTERN = re.compile(r"\b(\d+)\.(\d+)\.(\d+)(?:[^\s]*)?")
@@ -186,6 +188,16 @@ def _wrapper_source(kind: str) -> str:
     return f"#!/bin/sh\nexec {python} -m wikibricks.harness_launchers {kind} \"$@\"\n"
 
 
+def _pi_extension_source(config_path: Path) -> str:
+    source = files("wikibricks.resources").joinpath("pi-mcp-extension.js").read_text(
+        encoding="utf-8"
+    )
+    marker = "__WIKIBRICKS_PI_CONFIG_PATH__"
+    if source.count(marker) != 1:
+        raise RuntimeError("invalid Pi MCP extension resource")
+    return source.replace(marker, json.dumps(str(config_path)))
+
+
 def _config_root(home: Path, environ: Mapping[str, str], *, explicit_home: bool) -> Path:
     if not explicit_home and environ.get("XDG_CONFIG_HOME"):
         return Path(environ["XDG_CONFIG_HOME"]).expanduser().resolve()
@@ -238,6 +250,12 @@ def install_integrations(
         "claude": resolved_home / ".claude.json",
         "omnigent": resolved_home / ".omnigent" / "config.yaml",
         "manifest": resolved_home / ".wikibricks" / "omnigent-install.json",
+        "pi_config": resolved_home / ".wikibricks" / "pi-mcp.json",
+        "pi_extension": resolved_home
+        / ".pi"
+        / "agent"
+        / "extensions"
+        / "wikibricks-mcp.js",
     }
 
     configs: dict[str, dict[str, Any]] = {}
@@ -250,6 +268,12 @@ def install_integrations(
             configs[name] = load_yaml_mapping(paths[name], parent=parent)
     if prepare_all and executables["claude"] is None:
         configs["claude"] = load_json_object(paths["claude"], parent="mcpServers")
+
+    pi_config: dict[str, Any] | None = None
+    pi_extension: str | None = None
+    if selected["pi"]:
+        pi_config = {"mcpCommand": mcp_command, "tools": get_tool_schemas()}
+        pi_extension = _pi_extension_source(paths["pi_config"])
 
     omnigent_config: dict[str, Any] = {}
     legacy_agents: list[Path] = []
@@ -351,6 +375,10 @@ def install_integrations(
     )
     _install_skills(skill_paths)
 
+    if pi_config is not None and pi_extension is not None:
+        write_json_atomic(paths["pi_config"], pi_config)
+        write_text_atomic(paths["pi_extension"], pi_extension)
+
     for name in ("kimi", "kiro", "qwen", "opencode"):
         if name in configs:
             write_json_atomic(paths[name], configs[name])
@@ -368,6 +396,8 @@ def install_integrations(
             path.unlink()
 
     owned_files = [str(path) for path in skill_paths]
+    if selected["pi"]:
+        owned_files.extend((str(paths["pi_config"]), str(paths["pi_extension"])))
     owned_files.extend(str(resolved_home / ".wikibricks" / "bin" / name) for name in launchers)
     owned_files.append(str(paths["manifest"]))
     owned_settings: dict[str, list[str]] = {}
