@@ -85,3 +85,14 @@ print('ok')
 
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "ok"
+
+
+def test_distribution_has_no_claude_only_recorder():
+    with (ROOT / "pyproject.toml").open("rb") as handle:
+        scripts = tomllib.load(handle)["project"]["scripts"]
+
+    assert "wikibricks-hook" not in scripts
+    assert not (ROOT / "plugin").exists()
+    assert not (ROOT / ".claude-plugin").exists()
+    assert not (ROOT / "src/wikibricks/adapters/claude_code_hook.py").exists()
+    assert not (ROOT / "src/wikibricks/adapters/claude_code_buffer.py").exists()

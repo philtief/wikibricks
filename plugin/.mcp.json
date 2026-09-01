@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "wiki": {
-      "command": "${CLAUDE_PLUGIN_ROOT}/bin/launch.sh",
-      "args": ["wikibricks-mcp"]
-    }
-  }
-}
