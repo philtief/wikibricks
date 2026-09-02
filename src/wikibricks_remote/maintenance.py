@@ -18,8 +18,13 @@ from wikibricks_remote.resources import (
     load_prompt,
     load_schema,
 )
+from wikibricks_remote.search import CandidateSelection
 
 Proposer = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
+CandidateProvider = Callable[
+    [UUID, int, list[dict[str, Any]]],
+    CandidateSelection,
+]
 _UNKNOWN_REPLICA = UUID(int=0)
 _PROPOSAL_REQUIRED_FIELDS = {
     "group",
@@ -85,7 +90,8 @@ def _bounded_evidence(
     policy: RemotePolicy,
 ) -> list[dict[str, Any]]:
     rows = conn.execute(
-        "SELECT event_id, local_sequence, entity_kind, version_id, payload_hash, payload "
+        "SELECT event_id, local_sequence, entity_kind, entity_id, version_id, "
+        "payload_hash, payload "
         "FROM archive_events WHERE replica_id = %s AND local_sequence > %s "
         "AND local_sequence <= %s ORDER BY local_sequence LIMIT %s",
         (replica_id, after, through, policy.max_events_per_replica),
@@ -97,9 +103,10 @@ def _bounded_evidence(
             "evidence_id": f"archive-event:{row[0]}",
             "sequence": int(row[1]),
             "entity_kind": row[2],
-            "version_id": str(row[3]),
-            "payload_hash": row[4],
-            "payload": dict(row[5]),
+            "entity_id": str(row[3]),
+            "version_id": str(row[4]),
+            "payload_hash": row[5],
+            "payload": dict(row[6]),
         }
         encoded = _canonical_json(item)
         if used + len(encoded) > policy.max_input_chars:
@@ -280,8 +287,9 @@ def _record_run(
     status: str,
     proposal_count: int,
     manifest_hash: str | None,
+    report: dict[str, Any] | None = None,
 ) -> None:
-    report = {"proposal_count": proposal_count}
+    report = {"proposal_count": proposal_count, **(report or {})}
     with store.connection() as conn, conn.transaction():
         conn.execute(
             "INSERT INTO remote_maintenance_runs "
@@ -313,6 +321,7 @@ def run_maintenance(
     *,
     policy: RemotePolicy,
     proposer: Proposer,
+    candidate_provider: CandidateProvider | None = None,
 ) -> dict[str, Any]:
     store.migrate()
     with store.connection() as conn:
@@ -325,6 +334,15 @@ def run_maintenance(
         "no_changes": 0,
         "replica_ids": [],
     }
+    if candidate_provider is not None:
+        result.update(
+            search_status="unavailable",
+            projected_documents=0,
+            embedded_documents=0,
+            search_queries=0,
+            vector_matches=0,
+            keyword_matches=0,
+        )
     for replica_id, previous_watermark, available_watermark in candidates:
         with store.connection() as conn:
             evidence = _bounded_evidence(
@@ -343,12 +361,41 @@ def run_maintenance(
                 watermark=watermark,
                 maximum=policy.max_current_pages,
             )
+        similarity_candidates: list[dict[str, Any]] = []
+        search_report: dict[str, Any] = {"search_status": "disabled"}
+        if candidate_provider is not None:
+            selection = candidate_provider(replica_id, watermark, evidence)
+            if not isinstance(selection, CandidateSelection):
+                raise TypeError("candidate provider must return CandidateSelection")
+            if selection.search_status not in {"available", "unavailable"}:
+                raise ValueError("candidate provider returned an invalid search status")
+            search_report = {
+                "search_status": selection.search_status,
+                "projected_documents": selection.projected_documents,
+                "embedded_documents": selection.embedded_documents,
+                "search_queries": selection.query_count,
+                "vector_matches": selection.vector_matches,
+                "keyword_matches": selection.keyword_matches,
+            }
+            if selection.search_status == "available":
+                pages = list(selection.pages)
+                similarity_candidates = list(selection.similarity_candidates)
+                result["search_status"] = "available"
+            for field in (
+                "projected_documents",
+                "embedded_documents",
+                "search_queries",
+                "vector_matches",
+                "keyword_matches",
+            ):
+                result[field] += int(search_report[field])
         request = {
             "replica_id": str(replica_id),
             "previous_watermark": previous_watermark,
             "input_watermark": watermark,
             "current_pages": pages,
             "evidence": evidence,
+            "similarity_candidates": similarity_candidates,
         }
         input_digest = hashlib.sha256(_canonical_json(request).encode()).hexdigest()
         run_id = uuid5(
@@ -387,6 +434,7 @@ def run_maintenance(
             status=status,
             proposal_count=len(patches),
             manifest_hash=manifest_hash,
+            report=search_report,
         )
         result["replicas"] += 1
         result["proposals"] += len(patches)
@@ -396,4 +444,4 @@ def run_maintenance(
     return result
 
 
-__all__ = ["build_patches", "run_maintenance"]
+__all__ = ["CandidateProvider", "build_patches", "run_maintenance"]

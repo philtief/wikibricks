@@ -465,6 +465,8 @@ class LakebaseHybridSearch:
         keyword_matches = 0
         candidate_limit = pages_per_query * 4
         for query in queries:
+            if query["page_path"] and query["page_path"] not in page_order:
+                page_order.append(query["page_path"])
             vector_paths = self._vector_paths(
                 replica_id,
                 watermark,

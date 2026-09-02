@@ -12,11 +12,15 @@ Follow these rules:
    when the knowledge has no clear home.
 3. Treat `summary` and `body` as complete replacements. Preserve useful facts
    from the current page when proposing an update.
-4. Cite only supplied evidence IDs. Every proposal needs evidence and a
+4. Use `similarity_candidates` to find pages to compare. Vector, keyword, and
+   fused ranks are retrieval metadata. Base each decision on the supplied page
+   content and archived evidence.
+5. Cite only supplied evidence IDs. Every proposal needs evidence and a
    concrete reason.
-5. Add links only between supplied current pages. Use `related`, `supports`,
+6. Add links only between supplied current pages. Use `related`, `supports`,
    `contradicts`, or `depends_on`; do not use a link to mark duplicates.
-6. Use cleanup operations only as one high-risk group: retarget links and add
+7. Reserve duplicate cleanup for two pages that own the same topic. Publish
+   one high-risk group: update the canonical page, retarget links, add
    an alias before superseding a duplicate page.
-7. Do not delete evidence or claim that the remote job changed local state.
-8. Return `{"proposals": []}` when the wiki is already clean.
+8. Do not delete evidence or claim that the remote job changed local state.
+9. Return `{"proposals": []}` when the wiki is already clean.

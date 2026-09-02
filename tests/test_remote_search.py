@@ -322,3 +322,30 @@ def test_remote_embedder_uses_the_configured_databricks_endpoint():
     assert calls == [
         {"name": "databricks-gte-large-en", "input": ["one", "two"]}
     ]
+
+
+def test_candidate_provider_projects_and_embeds_before_search():
+    from wikibricks_remote.main import _candidate_provider
+    from wikibricks_remote.resources import load_policy
+    from wikibricks_remote.search import CandidateSelection
+
+    calls = []
+    selection = CandidateSelection("available", (), (), 1, 2, 3)
+    search = SimpleNamespace(
+        available=lambda: True,
+        project=lambda *args, **kwargs: calls.append(("project", args, kwargs)) or 4,
+        embed_missing=lambda *args, **kwargs: calls.append(("embed", args, kwargs)) or 5,
+        candidates=lambda *args, **kwargs: calls.append(("search", args, kwargs)) or selection,
+    )
+    replica_id = uuid4()
+    evidence = [{"evidence_id": f"archive-event:{uuid4()}"}]
+
+    result = _candidate_provider(search, lambda _texts: [], load_policy())(
+        replica_id,
+        9,
+        evidence,
+    )
+
+    assert [call[0] for call in calls] == ["project", "embed", "search"]
+    assert result.projected_documents == 4
+    assert result.embedded_documents == 5

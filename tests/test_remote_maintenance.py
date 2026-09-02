@@ -267,6 +267,131 @@ def test_no_change_run_advances_the_remote_watermark(
     assert calls == 1
 
 
+def test_remote_maintenance_curates_from_hybrid_candidates(
+    postgres_url: str,
+    maintenance_url: str,
+):
+    from wikibricks_remote.maintenance import run_maintenance
+    from wikibricks_remote.resources import load_policy
+    from wikibricks_remote.search import CandidateSelection
+
+    local = PostgresStore(postgres_url)
+    remote = PostgresStore(maintenance_url)
+    local.migrate()
+    remote.migrate()
+    local.clear_all()
+    remote.clear_all()
+    for path in ("topics/source", "topics/target"):
+        local.write_page(
+            path,
+            path.rsplit("/", 1)[1].title(),
+            {"summary": path, "body": f"Evidence for {path}."},
+        )
+    assert sync_to_archive(local, maintenance_url, drain=True)["acknowledged"] == 2
+    captured = {}
+
+    def candidates(_replica_id, _watermark, evidence):
+        pages = []
+        for item in evidence:
+            payload = item["payload"]
+            pages.append(
+                {
+                    "evidence_id": item["evidence_id"],
+                    "path": payload["path"],
+                    "title": payload["title"],
+                    "page_type": payload["page_type"],
+                    "content": payload["content"],
+                    "tags": payload["tags"],
+                    "source_ids": payload["source_ids"],
+                    "base_version_id": item["version_id"],
+                    "base_content_hash": item["payload_hash"],
+                }
+            )
+        similarity = (
+            {
+                "query_evidence_id": pages[0]["evidence_id"],
+                "query_document_id": str(uuid4()),
+                "candidates": [
+                    {
+                        "path": pages[1]["path"],
+                        "evidence_id": pages[1]["evidence_id"],
+                        "vector_rank": 1,
+                        "keyword_rank": 2,
+                        "rrf_score": 0.03,
+                    }
+                ],
+            },
+        )
+        return CandidateSelection("available", tuple(pages), similarity, 1, 1, 1)
+
+    def propose(_system, request, _schema):
+        captured.update(request)
+        pages = {page["path"]: page for page in request["current_pages"]}
+        return {
+            "proposals": [
+                {
+                    "group": "relationship",
+                    "operation": "add_link",
+                    "path": "topics/source",
+                    "title": None,
+                    "page_type": None,
+                    "summary": None,
+                    "body": None,
+                    "tags": [],
+                    "source_ids": [],
+                    "target_path": "topics/target",
+                    "link_type": "related",
+                    "evidence_ids": [
+                        pages["topics/source"]["evidence_id"],
+                        pages["topics/target"]["evidence_id"],
+                    ],
+                    "reason": "The archived pages describe related concepts.",
+                    "risk_class": "low",
+                }
+            ]
+        }
+
+    result = run_maintenance(
+        remote,
+        policy=replace(load_policy(), max_replicas_per_run=1),
+        proposer=propose,
+        candidate_provider=candidates,
+    )
+
+    assert result["search_status"] == "available"
+    assert len(captured["similarity_candidates"]) == 1
+    with remote.connection() as conn:
+        operation = conn.execute("SELECT operation FROM curation_patches").fetchone()[0]
+    assert operation == "add_link"
+
+
+def test_search_failure_does_not_advance_the_maintenance_watermark(
+    postgres_url: str,
+    maintenance_url: str,
+):
+    from wikibricks_remote.maintenance import run_maintenance
+    from wikibricks_remote.resources import load_policy
+
+    local = PostgresStore(postgres_url)
+    remote = PostgresStore(maintenance_url)
+    _archive_page(local, maintenance_url, "search-failure")
+
+    def fail_search(_replica_id, _watermark, _evidence):
+        raise RuntimeError("embedding endpoint failed")
+
+    with pytest.raises(RuntimeError, match="embedding endpoint failed"):
+        run_maintenance(
+            remote,
+            policy=replace(load_policy(), max_replicas_per_run=1),
+            proposer=lambda *_args: {"proposals": []},
+            candidate_provider=fail_search,
+        )
+    with remote.connection() as conn:
+        runs = conn.execute("SELECT count(*) FROM remote_maintenance_runs").fetchone()[0]
+        manifests = conn.execute("SELECT count(*) FROM curation_runs").fetchone()[0]
+    assert (runs, manifests) == (0, 0)
+
+
 def test_bundle_defines_one_bounded_weekly_serverless_wheel_job():
     bundle = yaml.safe_load((ROOT / "databricks.yml").read_text())
     job_file = ROOT / "resources" / "wikibricks_remote.job.yml"

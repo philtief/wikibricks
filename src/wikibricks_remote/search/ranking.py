@@ -23,6 +23,8 @@ class CandidateSelection:
     query_count: int
     vector_matches: int
     keyword_matches: int
+    projected_documents: int = 0
+    embedded_documents: int = 0
 
 
 def reciprocal_rank_fusion(

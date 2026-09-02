@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+from dataclasses import replace
 from typing import Any
 
 from psycopg.conninfo import make_conninfo
@@ -11,6 +12,7 @@ from psycopg.conninfo import make_conninfo
 from wikibricks.postgres_store import PostgresStore
 from wikibricks_remote.maintenance import run_maintenance
 from wikibricks_remote.resources import RemotePolicy, load_policy
+from wikibricks_remote.search import CandidateSelection, LakebaseHybridSearch
 
 
 def _database_url(workspace: Any, args: argparse.Namespace) -> str:
@@ -92,6 +94,37 @@ def _embedder(workspace: Any, endpoint: str):
     return embed
 
 
+def _candidate_provider(search: LakebaseHybridSearch, embedder, policy: RemotePolicy):
+    def provide(replica_id, watermark, evidence) -> CandidateSelection:
+        if not search.available():
+            return CandidateSelection("unavailable", (), (), 0, 0, 0)
+        projected = search.project(
+            replica_id,
+            watermark,
+            evidence,
+            max_pages=policy.max_index_pages,
+        )
+        embedded = search.embed_missing(
+            embedder,
+            maximum=policy.max_embedding_documents,
+            batch_size=policy.embedding_batch_size,
+        )
+        selection = search.candidates(
+            replica_id,
+            watermark,
+            evidence,
+            maximum_queries=policy.max_query_documents,
+            pages_per_query=policy.pages_per_query,
+        )
+        return replace(
+            selection,
+            projected_documents=projected,
+            embedded_documents=embedded,
+        )
+
+    return provide
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wikibricks-remote-maintenance")
     parser.add_argument("--project", required=True)
@@ -99,6 +132,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--endpoint", default="primary")
     parser.add_argument("--database", default="wikibricks")
     parser.add_argument("--model-endpoint", required=True)
+    parser.add_argument(
+        "--embedding-endpoint",
+        default="databricks-gte-large-en",
+    )
     parser.add_argument("--policy")
     return parser
 
@@ -110,10 +147,21 @@ def main(argv: list[str] | None = None) -> int:
     policy = load_policy(args.policy)
     workspace = WorkspaceClient()
     store = PostgresStore(_database_url(workspace, args))
+    search = LakebaseHybridSearch(
+        store,
+        embedding_model=args.embedding_endpoint,
+        embedding_dimension=policy.embedding_dimension,
+        max_chunk_chars=policy.max_search_chunk_chars,
+    )
     result = run_maintenance(
         store,
         policy=policy,
         proposer=_proposer(workspace, args.model_endpoint, policy),
+        candidate_provider=_candidate_provider(
+            search,
+            _embedder(workspace, args.embedding_endpoint),
+            policy,
+        ),
     )
     print(json.dumps(result, indent=2))
     return 0
