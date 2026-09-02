@@ -328,6 +328,16 @@ def _search_state(remote: PostgresStore, replica_id: UUID) -> dict[str, int]:
     }
 
 
+def _processed_watermark(remote: PostgresStore, replica_id: UUID) -> int:
+    with remote.connection() as conn:
+        row = conn.execute(
+            "SELECT coalesce(max(input_watermark), 0) "
+            "FROM remote_maintenance_runs WHERE replica_id = %s",
+            (replica_id,),
+        ).fetchone()
+    return int(row[0])
+
+
 def _archive_evidence(
     remote: PostgresStore,
     replica_id: UUID,
@@ -467,8 +477,21 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
             if archive["acknowledged"] != expected_events or local.outbox_count() != 0:
                 raise AssertionError("the acceptance corpus was not fully archived")
 
-            first_run = _run_job(workspace, args.job_id, args.timeout_minutes)
             watermark, evidence, evidence_to_path = _archive_evidence(remote, replica_id)
+            maintenance_runs = []
+            for _ in range(args.maximum_maintenance_runs):
+                before = _processed_watermark(remote, replica_id)
+                if before >= watermark:
+                    break
+                maintenance_runs.append(
+                    _run_job(workspace, args.job_id, args.timeout_minutes)
+                )
+                after = _processed_watermark(remote, replica_id)
+                if after <= before:
+                    raise AssertionError("bounded maintenance made no watermark progress")
+            if _processed_watermark(remote, replica_id) != watermark:
+                raise AssertionError("bounded maintenance did not finish the acceptance corpus")
+
             search_state = _search_state(remote, replica_id)
             if search_state["documents"] < expected_events:
                 raise AssertionError("remote search did not project the full corpus")
@@ -569,7 +592,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
                     "long_event_chars": args.long_event_chars,
                 },
                 archive=archive,
-                first_job_run=first_run,
+                maintenance_job_runs=maintenance_runs,
                 repeated_job_run=second_run,
                 search=search_state,
                 retrieval=metrics,
@@ -610,6 +633,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--minimum-vector-recall", default=0.5, type=float)
     parser.add_argument("--minimum-keyword-recall", default=0.8, type=float)
     parser.add_argument("--timeout-minutes", default=30, type=int)
+    parser.add_argument("--maximum-maintenance-runs", default=5, type=int)
     return parser
 
 
