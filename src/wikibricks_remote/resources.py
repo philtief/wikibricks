@@ -20,6 +20,8 @@ class RemotePolicy:
     max_proposals_per_replica: int
     allowed_operations: tuple[str, ...]
     allowed_link_types: tuple[str, ...]
+    max_search_chunk_chars: int
+    max_index_pages: int
     temperature: float
     max_output_tokens: int
 
@@ -39,9 +41,15 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         raise ValueError("remote policy must be a version 1 object")
     selection = value.get("selection")
     publishing = value.get("publishing")
+    search = value.get("search")
     model = value.get("model")
-    if not all(isinstance(item, dict) for item in (selection, publishing, model)):
-        raise ValueError("remote policy requires selection, publishing, and model sections")
+    if not all(
+        isinstance(item, dict)
+        for item in (selection, publishing, search, model)
+    ):
+        raise ValueError(
+            "remote policy requires selection, publishing, search, and model sections"
+        )
     policy = RemotePolicy(
         max_replicas_per_run=int(selection["max_replicas_per_run"]),
         max_events_per_replica=int(selection["max_events_per_replica"]),
@@ -50,6 +58,8 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         max_proposals_per_replica=int(publishing["max_proposals_per_replica"]),
         allowed_operations=tuple(publishing["allowed_operations"]),
         allowed_link_types=tuple(publishing["allowed_link_types"]),
+        max_search_chunk_chars=int(search["max_chunk_chars"]),
+        max_index_pages=int(search["max_index_pages"]),
         temperature=float(model["temperature"]),
         max_output_tokens=int(model["max_output_tokens"]),
     )
@@ -59,6 +69,8 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         policy.max_input_chars,
         policy.max_current_pages,
         policy.max_proposals_per_replica,
+        policy.max_search_chunk_chars,
+        policy.max_index_pages,
         policy.max_output_tokens,
     )
     if any(value < 1 for value in numeric_limits):

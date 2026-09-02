@@ -21,6 +21,10 @@ publishing:
     - contradicts
     - depends_on
 
+search:
+  max_chunk_chars: 12000
+  max_index_pages: 500
+
 model:
   temperature: 0
   max_output_tokens: 8192
