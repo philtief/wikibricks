@@ -86,6 +86,11 @@ def test_remote_resources_are_readable_and_schema_validates_proposals():
     )
     assert policy.max_search_chunk_chars == 12000
     assert policy.max_index_pages == 500
+    assert policy.embedding_dimension == 1024
+    assert policy.max_embedding_documents == 500
+    assert policy.embedding_batch_size == 32
+    assert policy.max_query_documents == 50
+    assert policy.pages_per_query == 10
     assert "immutable manifest" in prompt
 
 

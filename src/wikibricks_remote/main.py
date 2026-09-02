@@ -77,6 +77,21 @@ def _proposer(workspace: Any, endpoint: str, policy: RemotePolicy):
     return propose
 
 
+def _embedder(workspace: Any, endpoint: str):
+    def embed(texts: list[str]) -> list[list[float]]:
+        response = workspace.serving_endpoints.query(
+            name=endpoint,
+            input=texts,
+        )
+        data = response.data
+        if data is None:
+            raise RuntimeError("embedding model returned no data")
+        ordered = sorted(data, key=lambda item: item.index)
+        return [list(item.embedding) for item in ordered]
+
+    return embed
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wikibricks-remote-maintenance")
     parser.add_argument("--project", required=True)

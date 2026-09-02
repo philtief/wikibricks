@@ -24,6 +24,11 @@ publishing:
 search:
   max_chunk_chars: 12000
   max_index_pages: 500
+  embedding_dimension: 1024
+  max_embedding_documents: 500
+  embedding_batch_size: 32
+  max_query_documents: 50
+  pages_per_query: 10
 
 model:
   temperature: 0

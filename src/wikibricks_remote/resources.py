@@ -22,6 +22,11 @@ class RemotePolicy:
     allowed_link_types: tuple[str, ...]
     max_search_chunk_chars: int
     max_index_pages: int
+    embedding_dimension: int
+    max_embedding_documents: int
+    embedding_batch_size: int
+    max_query_documents: int
+    pages_per_query: int
     temperature: float
     max_output_tokens: int
 
@@ -60,6 +65,11 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         allowed_link_types=tuple(publishing["allowed_link_types"]),
         max_search_chunk_chars=int(search["max_chunk_chars"]),
         max_index_pages=int(search["max_index_pages"]),
+        embedding_dimension=int(search["embedding_dimension"]),
+        max_embedding_documents=int(search["max_embedding_documents"]),
+        embedding_batch_size=int(search["embedding_batch_size"]),
+        max_query_documents=int(search["max_query_documents"]),
+        pages_per_query=int(search["pages_per_query"]),
         temperature=float(model["temperature"]),
         max_output_tokens=int(model["max_output_tokens"]),
     )
@@ -71,6 +81,11 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         policy.max_proposals_per_replica,
         policy.max_search_chunk_chars,
         policy.max_index_pages,
+        policy.embedding_dimension,
+        policy.max_embedding_documents,
+        policy.embedding_batch_size,
+        policy.max_query_documents,
+        policy.pages_per_query,
         policy.max_output_tokens,
     )
     if any(value < 1 for value in numeric_limits):
