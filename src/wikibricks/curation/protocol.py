@@ -15,11 +15,13 @@ _HASH = re.compile(r"^[0-9a-f]{64}$")
 _OPERATIONS = {
     "create_page",
     "update_page",
+    "add_link",
     "retarget_links",
     "add_alias",
     "supersede_page",
 }
 _CLEANUP_OPERATIONS = {"retarget_links", "add_alias", "supersede_page"}
+_LINK_TYPES = {"related", "supports", "contradicts", "depends_on"}
 _RISK_CLASSES = {"low", "medium", "high"}
 _PAGE_FIELDS = {
     "title",
@@ -78,6 +80,13 @@ def _proposal_hash(operation: str, proposal: dict[str, Any]) -> str:
             parent_id=proposal["parent_id"],
             chunk_index=proposal["chunk_index"],
         )
+    if operation == "add_link":
+        if set(proposal) != {"target_path", "link_type"}:
+            raise ValueError("add_link proposal requires target_path and link_type")
+        _validate_path(str(proposal["target_path"]))
+        if proposal["link_type"] not in _LINK_TYPES:
+            raise ValueError(f"unsupported curation link type: {proposal['link_type']}")
+        return content_hash(proposal)
     if set(proposal) != {"target_path"}:
         raise ValueError(f"{operation} proposal must contain only target_path")
     _validate_path(str(proposal["target_path"]))

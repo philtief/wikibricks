@@ -192,6 +192,51 @@ def test_applied_page_hash_matches_the_exact_remote_proposal(
     assert current["content_hash"] == patch["proposed_hash"]
 
 
+def test_remote_link_patch_applies_once_with_remote_provenance(
+    tmp_path,
+    curation_remote_url: str,
+):
+    local = SQLiteStore(tmp_path / "links.db")
+    remote = PostgresStore(curation_remote_url)
+    local.migrate()
+    _reset(remote)
+    local.write_page(
+        "topics/source",
+        "Source",
+        {"summary": "Source", "body": "First concept."},
+    )
+    local.write_page(
+        "topics/target",
+        "Target",
+        {"summary": "Target", "body": "Related concept."},
+    )
+    source = local.current_page_state("topics/source")
+    patch = create_patch(
+        operation="add_link",
+        path="topics/source",
+        proposal={"target_path": "topics/target", "link_type": "related"},
+        base_version_id=source["version_id"],
+        base_content_hash=source["content_hash"],
+        evidence_ids=["archive-event:test"],
+        reason="The pages cover related but distinct concepts.",
+    )
+    manifest = _publish_and_pull(local, remote, [patch])
+
+    assert apply_run(local, UUID(manifest["run_id"]))["counts"] == {"applied": 1}
+    assert apply_run(local, UUID(manifest["run_id"]))["counts"] == {
+        "already_processed": 1
+    }
+    assert local.graph_neighbors("topics/source") == [
+        {
+            "path": "topics/target",
+            "title": "Target",
+            "link_type": "related",
+            "origin": "remote-curator",
+            "metadata": {"curation_patch_id": patch["patch_id"]},
+        }
+    ]
+
+
 def test_divergent_local_edit_creates_a_three_way_conflict_and_keep_local_receipt(
     tmp_path,
     curation_remote_url: str,

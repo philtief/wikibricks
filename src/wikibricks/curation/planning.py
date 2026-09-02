@@ -54,6 +54,22 @@ def _conflict_detail(
     }
 
 
+def _link_exists(
+    conn: Connection,
+    source: dict[str, Any],
+    target: dict[str, Any],
+    link_type: str,
+) -> bool:
+    placeholder = "?" if isinstance(conn, sqlite3.Connection) else "%s"
+    row = conn.execute(
+        "SELECT 1 FROM links WHERE source_page_id = "
+        f"{placeholder} AND target_page_id = {placeholder} "
+        f"AND link_type = {placeholder}",
+        (source["page_id"], target["page_id"], link_type),
+    ).fetchone()
+    return row is not None
+
+
 def preflight_group(
     conn: Connection,
     patches: list[dict[str, Any]],
@@ -138,6 +154,13 @@ def preflight_group(
                 _conflict_detail(patch, None, "base page is missing")
             )
             continue
+        if (
+            operation == "add_link"
+            and target
+            and _link_exists(conn, local, target, patch["proposal"]["link_type"])
+        ):
+            statuses.append("already_applied")
+            continue
         base_matches = (
             local["version_id"] == patch["base_version_id"]
             and local["content_hash"] == patch["base_content_hash"]
@@ -160,7 +183,7 @@ def preflight_group(
             )
         elif (
             operation
-            in {"retarget_links", "add_alias", "supersede_page"}
+            in {"add_link", "retarget_links", "add_alias", "supersede_page"}
             and not target
         ):
             statuses.append("conflict")

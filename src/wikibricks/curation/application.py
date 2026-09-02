@@ -228,7 +228,40 @@ def _apply_patch(
             "curation cleanup precondition disappeared: "
             f"{patch['path']}"
         )
-    if operation == "retarget_links":
+    if operation == "add_link":
+        metadata = {"curation_patch_id": patch["patch_id"]}
+        if isinstance(conn, sqlite3.Connection):
+            conn.execute(
+                "INSERT INTO links "
+                "(link_id, source_page_id, target_page_id, link_type, origin, metadata, created_at) "
+                "VALUES (?, ?, ?, ?, 'remote-curator', ?, ?) "
+                "ON CONFLICT (source_page_id, target_page_id, link_type) DO NOTHING",
+                (
+                    str(uuid4()),
+                    source["page_id"],
+                    target["page_id"],
+                    proposal["link_type"],
+                    json.dumps(metadata, separators=(",", ":"), sort_keys=True),
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+        else:
+            from psycopg.types.json import Jsonb
+
+            conn.execute(
+                "INSERT INTO links "
+                "(link_id, source_page_id, target_page_id, link_type, origin, metadata) "
+                "VALUES (%s, %s, %s, %s, 'remote-curator', %s) "
+                "ON CONFLICT (source_page_id, target_page_id, link_type) DO NOTHING",
+                (
+                    uuid4(),
+                    UUID(source["page_id"]),
+                    UUID(target["page_id"]),
+                    proposal["link_type"],
+                    Jsonb(metadata),
+                ),
+            )
+    elif operation == "retarget_links":
         _retarget_links(conn, source, target)
     elif operation == "add_alias":
         if isinstance(conn, sqlite3.Connection):

@@ -11,9 +11,15 @@ publishing:
   allowed_operations:
     - create_page
     - update_page
+    - add_link
     - retarget_links
     - add_alias
     - supersede_page
+  allowed_link_types:
+    - related
+    - supports
+    - contradicts
+    - depends_on
 
 model:
   temperature: 0

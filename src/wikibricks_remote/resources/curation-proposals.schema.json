@@ -33,6 +33,7 @@
             "enum": [
               "create_page",
               "update_page",
+              "add_link",
               "retarget_links",
               "add_alias",
               "supersede_page"
@@ -53,6 +54,10 @@
               {"type": "null"},
               {"type": "string", "pattern": "^[^/]+(?:/[^/]+)+$"}
             ]
+          },
+          "link_type": {
+            "type": ["string", "null"],
+            "enum": ["related", "supports", "contradicts", "depends_on", null]
           },
           "evidence_ids": {
             "type": "array",

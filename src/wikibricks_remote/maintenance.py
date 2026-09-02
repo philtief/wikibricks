@@ -21,7 +21,7 @@ from wikibricks_remote.resources import (
 
 Proposer = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
 _UNKNOWN_REPLICA = UUID(int=0)
-_PROPOSAL_FIELDS = {
+_PROPOSAL_REQUIRED_FIELDS = {
     "group",
     "operation",
     "path",
@@ -36,6 +36,7 @@ _PROPOSAL_FIELDS = {
     "reason",
     "risk_class",
 }
+_PROPOSAL_FIELDS = _PROPOSAL_REQUIRED_FIELDS | {"link_type"}
 
 
 def _canonical_json(value: Any) -> str:
@@ -181,7 +182,11 @@ def build_patches(
     group_positions: dict[str, int] = {}
     patches = []
     for raw in proposals:
-        if not isinstance(raw, dict) or set(raw) != _PROPOSAL_FIELDS:
+        if (
+            not isinstance(raw, dict)
+            or not _PROPOSAL_REQUIRED_FIELDS <= set(raw)
+            or not set(raw) <= _PROPOSAL_FIELDS
+        ):
             raise ValueError("curation proposal fields do not match the schema")
         if not all(
             isinstance(raw[field], str) and raw[field].strip()
@@ -202,6 +207,12 @@ def build_patches(
         if not cited or not set(cited) <= known_evidence:
             raise ValueError("curation proposal cites unknown evidence")
         existing = current.get(path)
+        link_type = raw.get("link_type")
+        if operation == "add_link":
+            if not isinstance(link_type, str) or link_type not in policy.allowed_link_types:
+                raise ValueError(f"unsupported remote link type: {link_type}")
+        elif link_type is not None:
+            raise ValueError(f"link type is only valid for add_link: {operation}")
         if operation in {"create_page", "update_page"}:
             if not all(
                 isinstance(raw[field], str) and raw[field].strip()
@@ -220,6 +231,13 @@ def build_patches(
             if not existing or raw["target_path"] is not None:
                 raise ValueError(f"update_page path does not exist: {path}")
             proposal = _page_proposal(raw)
+            base_version_id = existing["base_version_id"]
+            base_content_hash = existing["base_content_hash"]
+        elif operation == "add_link":
+            target_path = raw["target_path"]
+            if not existing or target_path not in current:
+                raise ValueError(f"link paths do not exist: {path} -> {target_path}")
+            proposal = {"target_path": target_path, "link_type": link_type}
             base_version_id = existing["base_version_id"]
             base_content_hash = existing["base_content_hash"]
         else:

@@ -19,6 +19,7 @@ class RemotePolicy:
     max_current_pages: int
     max_proposals_per_replica: int
     allowed_operations: tuple[str, ...]
+    allowed_link_types: tuple[str, ...]
     temperature: float
     max_output_tokens: int
 
@@ -48,6 +49,7 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         max_current_pages=int(selection["max_current_pages"]),
         max_proposals_per_replica=int(publishing["max_proposals_per_replica"]),
         allowed_operations=tuple(publishing["allowed_operations"]),
+        allowed_link_types=tuple(publishing["allowed_link_types"]),
         temperature=float(model["temperature"]),
         max_output_tokens=int(model["max_output_tokens"]),
     )
@@ -63,6 +65,8 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         raise ValueError("remote policy limits must be positive")
     if not policy.allowed_operations:
         raise ValueError("remote policy must allow at least one operation")
+    if not policy.allowed_link_types:
+        raise ValueError("remote policy must allow at least one link type")
     return policy
 
 

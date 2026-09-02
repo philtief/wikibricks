@@ -14,7 +14,9 @@ Follow these rules:
    from the current page when proposing an update.
 4. Cite only supplied evidence IDs. Every proposal needs evidence and a
    concrete reason.
-5. Use cleanup operations only as one high-risk group: retarget links and add
+5. Add links only between supplied current pages. Use `related`, `supports`,
+   `contradicts`, or `depends_on`; do not use a link to mark duplicates.
+6. Use cleanup operations only as one high-risk group: retarget links and add
    an alias before superseding a duplicate page.
-6. Do not delete evidence or claim that the remote job changed local state.
-7. Return `{"proposals": []}` when the wiki is already clean.
+7. Do not delete evidence or claim that the remote job changed local state.
+8. Return `{"proposals": []}` when the wiki is already clean.

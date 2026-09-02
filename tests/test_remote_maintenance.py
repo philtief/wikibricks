@@ -4,6 +4,7 @@ import json
 from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
+from uuid import uuid4
 
 import pytest
 import yaml
@@ -72,11 +73,96 @@ def test_remote_resources_are_readable_and_schema_validates_proposals():
     assert policy.allowed_operations == (
         "create_page",
         "update_page",
+        "add_link",
         "retarget_links",
         "add_alias",
         "supersede_page",
     )
+    assert policy.allowed_link_types == (
+        "related",
+        "supports",
+        "contradicts",
+        "depends_on",
+    )
     assert "immutable manifest" in prompt
+
+
+def test_remote_link_proposals_are_policy_bounded():
+    from wikibricks_remote.maintenance import build_patches
+    from wikibricks_remote.resources import load_policy
+
+    source_id = uuid4()
+    target_id = uuid4()
+    pages = [
+        {
+            "evidence_id": "archive-event:source",
+            "path": "topics/source",
+            "title": "Source",
+            "page_type": "concept",
+            "content": {"summary": "Source", "body": "One"},
+            "tags": [],
+            "source_ids": [],
+            "base_version_id": str(source_id),
+            "base_content_hash": "a" * 64,
+        },
+        {
+            "evidence_id": "archive-event:target",
+            "path": "topics/target",
+            "title": "Target",
+            "page_type": "concept",
+            "content": {"summary": "Target", "body": "Two"},
+            "tags": [],
+            "source_ids": [],
+            "base_version_id": str(target_id),
+            "base_content_hash": "b" * 64,
+        },
+    ]
+    raw = {
+        "proposals": [
+            {
+                "group": "relationship",
+                "operation": "add_link",
+                "path": "topics/source",
+                "title": None,
+                "page_type": None,
+                "summary": None,
+                "body": None,
+                "tags": [],
+                "source_ids": [],
+                "target_path": "topics/target",
+                "link_type": "related",
+                "evidence_ids": [
+                    "archive-event:source",
+                    "archive-event:target",
+                ],
+                "reason": "The pages have a relationship.",
+                "risk_class": "low",
+            }
+        ]
+    }
+
+    patches = build_patches(
+        raw,
+        run_id=uuid4(),
+        pages=pages,
+        evidence_ids=set(),
+        policy=load_policy(),
+    )
+
+    assert patches[0]["proposal"] == {
+        "target_path": "topics/target",
+        "link_type": "related",
+    }
+
+    raw["proposals"][0]["link_type"] = "duplicate"
+    with pytest.raises(ValueError, match="link type"):
+        build_patches(
+            raw,
+            run_id=uuid4(),
+            pages=pages,
+            evidence_ids=set(),
+            policy=load_policy(),
+        )
 
 
 def test_remote_maintenance_publishes_once_for_one_archive_watermark(
