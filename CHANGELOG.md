@@ -1,13 +1,25 @@
 # Changelog
 
-## 0.11.0 - 2026-09-01
+## 0.11.0 - 2026-09-02
 
+- Added `wikibricks install` as the primary setup command. It configures a
+  standalone Codex or Claude Code installation without requiring Omnigent.
+- Connected all eleven Omnigent 0.11 harnesses to one shared SQLite database:
+  Claude, Codex, Debby, Goose, Hermes, Kimi, Kiro, OpenCode, Pi, Polly, and
+  Qwen.
+- Added a Pi MCP adapter and launch wrappers for the isolated OpenCode and
+  Hermes runtimes.
 - Replaced the Omnigent companion agent with one shared memory skill and native
-  MCP configuration for Codex, Claude Code, and Kimi.
-- Added an idempotent `wikibricks install omnigent` command that preserves
-  unrelated user settings and removes the recognized legacy agent profile.
-- Kept the Omnigent importer as an optional recovery command. Normal work does
-  not poll Omnigent's conversation database.
+  MCP configuration. Installation preserves unrelated client settings and
+  removes the recognized legacy agent profile.
+- Made SQLite with FTS5 and WAL the default active store. Local recall, writes,
+  and daily maintenance require no database service, network, or Databricks
+  credentials.
+- Added optional weekly Lakebase archive and curation sync. Patch application
+  is transactional and idempotent, and local edits win conflicts.
+- Kept the Omnigent importer as an optional recovery command and added a
+  PostgreSQL-to-SQLite migration path. Normal work does not poll Omnigent's
+  conversation database.
 
 ## 0.9.0 - 2026-09-01
 

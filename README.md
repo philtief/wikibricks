@@ -68,6 +68,29 @@ shared memory skill, and detects supported clients on `PATH`. If Omnigent is
 absent, it configures only the clients it finds. This is enough for a machine
 that has only Codex or only Claude Code.
 
+### Claude Code without Omnigent
+
+You do not need Omnigent to use WikiBricks. If Claude Code is your only agent
+client, run:
+
+```bash
+claude --version
+uv tool install wikibricks
+wikibricks install
+claude mcp get wikibricks
+```
+
+The installer registers `wikibricks-mcp` in Claude Code's user configuration
+and installs the `wikibricks-memory` skill. Start Claude Code as usual:
+
+```bash
+claude
+```
+
+Claude Code starts the MCP server when it needs it. WikiBricks does not create
+an Omnigent configuration or require a background daemon. On a Codex-only
+machine, the same `wikibricks install` command detects and configures Codex.
+
 To test unreleased changes from `main`, replace the first command with:
 
 ```bash

@@ -12,6 +12,8 @@ WikiBricks is shared memory for multiple agent harnesses.
   skill and MCP server. Do not create a separate memory agent or patch Omnigent
   source code.
 - Standalone clients connect to the same local database through standard MCP.
+- Without Omnigent, the installer configures only detected clients. Keep
+  standalone Claude Code and Codex installations supported.
 - SQLite at `~/.wikibricks/wikibricks.db` is the default active store.
 - Lakebase is an optional archive and curation exchange. Local memory must work
   when Lakebase, Databricks credentials, and the network are absent.
