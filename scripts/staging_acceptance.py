@@ -216,6 +216,28 @@ def retrieval_metrics(
     }
 
 
+def seed_corpus(local: SQLiteStore, corpus: AcceptanceCorpus) -> None:
+    """Place long evidence inside the bounded window without moving labeled queries."""
+    priority_pages = len(corpus.expected_partners)
+    for page in corpus.pages[:priority_pages]:
+        local.write_page(
+            page.path,
+            page.title,
+            page.content,
+            tags=list(page.tags),
+            source_ids=list(page.source_ids),
+        )
+    local.ingest_session(corpus.session)
+    for page in corpus.pages[priority_pages:]:
+        local.write_page(
+            page.path,
+            page.title,
+            page.content,
+            tags=list(page.tags),
+            source_ids=list(page.source_ids),
+        )
+
+
 def _enum_value(value: Any) -> str:
     return str(getattr(value, "value", value))
 
@@ -430,15 +452,7 @@ def run_acceptance(args: argparse.Namespace) -> dict[str, Any]:
             database_path = Path(directory) / "wikibricks.db"
             local = SQLiteStore(database_path)
             local.migrate()
-            for page in corpus.pages:
-                local.write_page(
-                    page.path,
-                    page.title,
-                    page.content,
-                    tags=list(page.tags),
-                    source_ids=list(page.source_ids),
-                )
-            local.ingest_session(corpus.session)
+            seed_corpus(local, corpus)
             replica_id = get_or_create_replica_id(local)
             if any(_replica_counts(remote, replica_id).values()):
                 raise AssertionError("new acceptance replica already exists in staging")
