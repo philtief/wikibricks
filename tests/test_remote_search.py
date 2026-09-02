@@ -173,6 +173,7 @@ def test_missing_embeddings_are_generated_once_and_reused(postgres_url: str, mon
     )
     monkeypatch.setattr(search, "migrate", lambda: True)
     with store.connection() as conn, conn.transaction():
+        conn.execute("CREATE DOMAIN vector AS text")
         conn.execute(
             "CREATE TABLE remote_search_documents ("
             "document_id uuid PRIMARY KEY, replica_id uuid NOT NULL, "
@@ -180,7 +181,7 @@ def test_missing_embeddings_are_generated_once_and_reused(postgres_url: str, mon
             "entity_kind text NOT NULL, entity_id uuid NOT NULL, version_id uuid NOT NULL, "
             "page_path text, title text, document_kind text NOT NULL, chunk_index integer NOT NULL, "
             "content_text text NOT NULL, content_hash text NOT NULL, "
-            "embedding_model text, embedding double precision[], "
+            "embedding_model text, embedding vector, "
             "UNIQUE (archive_event_id, chunk_index))"
         )
         for item in documents:
@@ -216,6 +217,7 @@ def test_missing_embeddings_are_generated_once_and_reused(postgres_url: str, mon
     finally:
         with store.connection() as conn, conn.transaction():
             conn.execute("DROP TABLE remote_search_documents")
+            conn.execute("DROP DOMAIN vector")
 
 
 def test_rrf_combines_vector_and_keyword_page_ranks_stably():

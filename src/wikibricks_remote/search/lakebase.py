@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from importlib.resources import files
 from typing import Any
 from uuid import UUID
@@ -235,11 +236,12 @@ class LakebaseHybridSearch:
                 for update in updates[offset : offset + batch_size]:
                     row = conn.execute(
                         "UPDATE remote_search_documents SET embedding_model = %s, "
-                        "embedding = %s WHERE document_id = %s AND content_hash = %s "
+                        "embedding = %s::vector WHERE document_id = %s "
+                        "AND content_hash = %s "
                         "RETURNING document_id",
                         (
                             update.model,
-                            list(update.embedding),
+                            json.dumps(list(update.embedding), separators=(",", ":")),
                             update.document_id,
                             update.content_hash,
                         ),
