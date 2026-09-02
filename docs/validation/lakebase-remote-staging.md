@@ -84,17 +84,71 @@ two search documents, two archive events, one archive batch, one curation run,
 and one maintenance run. The pre-existing staging rows remained unchanged. The
 Search table and both hybrid indexes remain available.
 
+## Scale acceptance validation, 2026-09-02
+
+The reusable runner in `scripts/staging_acceptance.py` tested a larger isolated
+replica against the same paused staging job. The corpus contained 100 pages, 10
+labeled page pairs, and two 24,000-character session events. It archived 102
+immutable events and produced 104 search documents after session chunking.
+
+```bash
+uv run --extra lakebase python scripts/staging_acceptance.py \
+  --profile pt \
+  --job-id 222630699179712
+```
+
+### Scale defect and fix
+
+Run `772537663828193` exposed a vector parameter error in both task attempts.
+Embedding JSON can contain integers and floats, but `psycopg` rejects mixed
+numeric lists. Commit `26fae9d` converts every query value to a float and sends
+the vector as a typed literal. A focused regression test covers the failing
+shape `[0, 1.5, 0]`.
+
+### Bounded maintenance and retrieval
+
+The 120,000-character input limit split the corpus across two maintenance runs.
+This confirmed that the watermark resumes from the prior bounded slice.
+
+| Run | Result | Projected | Embedded | Queries | Proposals |
+|---|---:|---:|---:|---:|---:|
+| `595222299926521` | success | 64 | 64 | 50 | 14 |
+| `325154314388536` | success | 40 | 40 | 40 | 0 |
+| `723082922198730` | idle | 0 | 0 | 0 | 0 |
+
+The third run left every replica-scoped row count unchanged. The completed
+index contained 104 documents with 1,024-dimensional embeddings.
+
+| Labeled retrieval check | Result |
+|---|---:|
+| Evaluated queries | 20 |
+| Vector recall at 10 | 100% |
+| BM25 recall at 10 | 100% |
+| Hybrid RRF recall at 10 | 100% |
+
+### Local safety and cleanup
+
+The runner published a guarded update, changed the corresponding SQLite page,
+then ran the automatic sync cycle. The conflict resolved as `keep_local`; the
+newer local title and content remained active, and no pending conflict remained.
+
+Cleanup removed 104 search documents, 103 archive events, two archive batches,
+two curation runs, and two maintenance runs for replica
+`2e6467a5-543b-444a-9073-4f60cf78e366`. The staging counts returned to one
+pre-existing row in each archive and curation table and zero search documents.
+The weekly schedule remained paused.
+
 ### Local gates
 
 | Check | Command | Result |
 |---|---|---|
-| Ruff | `uv run --no-sync ruff check src tests` | pass |
-| Full suite | `uv run --no-sync pytest -q` | 124 passed |
-| Offline suite | `UV_OFFLINE=1 uv run --no-sync pytest -q` | 124 passed |
+| Ruff | `uv run --no-sync ruff check src tests scripts` | pass |
+| Full suite | `uv run --no-sync pytest -q` | 126 passed |
+| Offline suite | `UV_OFFLINE=1 uv run --no-sync pytest -q` | 126 passed |
 | Offline build | `UV_OFFLINE=1 uv build` | wheel and source archive built |
 | Installed wheel | `tests/wheel_smoke.py` in an isolated virtual environment | MCP smoke passed |
 | Bundle | `databricks bundle validate --strict -t staging --profile pt` | pass |
 
 | File | SHA-256 |
 |---|---|
-| `wikibricks-0.11.0-py3-none-any.whl` | `204a6a4745f28c92401b13d5b3378995554ed8040c4f1b4887484114fad8371b` |
+| `wikibricks-0.11.0-py3-none-any.whl` | `8f502ea225a00db4b8a5857ca038f2b2206a6b9441260e11c5c7d05b484627a6` |
