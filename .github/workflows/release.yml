@@ -33,7 +33,9 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*
+          files: |
+            dist/*.whl
+            dist/*.tar.gz
           generate_release_notes: true
       - name: Publish to PyPI
         if: env.PYPI_API_TOKEN != ''
