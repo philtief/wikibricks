@@ -1,13 +1,90 @@
 # Lakebase remote maintenance validation
 
-## Hybrid search implementation, 2026-09-02
+## Live hybrid search validation, 2026-09-02
 
 Branch: `feat/lakebase-hybrid-curation`
 
-Commit tested: `c993586`
+Commit tested: `73b45aa`
 
-The local and non-mutating staging gates pass for the remote-only hybrid search
-implementation.
+The staging job completed an end-to-end hybrid curation run. The weekly schedule
+remained paused.
+
+### Deployed resources
+
+| Resource | Value |
+|---|---|
+| Lakebase project | `projects/wikibricks` |
+| Branch | `projects/wikibricks/branches/staging` |
+| Endpoint | `primary` |
+| Database | `wikibricks` |
+| Lakeflow Job | `222630699179712` |
+| Wheel | `wikibricks-0.11.0-py3-none-any.whl` |
+| Schedule | Sunday at 04:00 UTC, paused |
+| Embedding endpoint | `databricks-gte-large-en` |
+| Curator endpoint | `databricks-claude-sonnet-4-5` |
+
+Lakebase Search was enabled for the project. PostgreSQL loaded these extensions:
+
+| Extension | Version |
+|---|---|
+| `lakebase_text` | `0.1.1` |
+| `lakebase_vector` | `1.1.0` |
+| `vector` | `0.8.0` |
+
+`lakebase_vector` requires `vector`. The job uses the `lakebase_ann` index and
+does not use the pgvector HNSW or IVFFlat indexes.
+
+### Deployment regression
+
+Run `183582763984640` failed before database access. The serverless environment
+did not contain `psycopg`. Commit `73b45aa` added
+`psycopg[binary]==3.2.13` to the job environment and added a bundle contract
+test. The overnight-dev hook passed Ruff and all 124 tests before the commit.
+
+Run `632003367278097` then completed with an idle result. It confirmed that the
+fixed serverless environment starts when no archive replica needs maintenance.
+
+### Hybrid retrieval evidence
+
+An isolated local SQLite store synced two page versions to replica
+`f0ad0a30-1a20-42db-b8b7-0febdd8bbe01`. Run `435907047248518` processed that
+replica.
+
+The first task attempt projected and embedded the two documents. It rejected an
+invalid model proposal because the proposal had no cleanup target. The configured
+task retry reused the derived documents and completed successfully.
+
+| Check | Result |
+|---|---|
+| Search status | `available` |
+| Search documents | 2 |
+| Embedded documents | 2 |
+| Embedding dimensions | 1024 |
+| Hybrid queries | 2 |
+| ANN matches | 2 |
+| BM25 matches | 2 |
+| `lakebase_ann` index | valid and ready |
+| `lakebase_bm25` index | valid and ready |
+
+The successful attempt published manifest
+`1adda338540c6b51f70d3587acd5f140c4685f51a6ef212fe600d1d9d4c6f0e5`.
+It contained one guarded group with three patches: `update_page`, `add_alias`,
+and `supersede_page`.
+
+The isolated local store pulled one run and three patches. The safe policy
+classified the high-risk group as `review_required`. The test then used the
+explicit `all` policy. The group applied in one transaction. The canonical page
+advanced to version 2, the duplicate became superseded, and the alias resolved
+to the canonical page. The local store recorded three applied receipts.
+
+### Cleanup
+
+The test removed the isolated replica from staging after validation. It deleted
+two search documents, two archive events, one archive batch, one curation run,
+and one maintenance run. The pre-existing staging rows remained unchanged. The
+Search table and both hybrid indexes remain available.
+
+### Local gates
 
 | Check | Command | Result |
 |---|---|---|
@@ -15,109 +92,9 @@ implementation.
 | Full suite | `uv run --no-sync pytest -q` | 124 passed |
 | Offline suite | `UV_OFFLINE=1 uv run --no-sync pytest -q` | 124 passed |
 | Offline build | `UV_OFFLINE=1 uv build` | wheel and source archive built |
-| Installed wheel | `tests/wheel_smoke.py` in an isolated virtual environment | MCP smoke and packaged search SQL passed |
+| Installed wheel | `tests/wheel_smoke.py` in an isolated virtual environment | MCP smoke passed |
 | Bundle | `databricks bundle validate --strict -t staging --profile pt` | pass |
-
-Artifacts:
 
 | File | SHA-256 |
 |---|---|
 | `wikibricks-0.11.0-py3-none-any.whl` | `204a6a4745f28c92401b13d5b3378995554ed8040c4f1b4887484114fad8371b` |
-| `wikibricks-0.11.0.tar.gz` | `2f7307c4f0756468ecfd795cf713a75dd86606636b1a362b56c153ecbbfb38ee` |
-
-The first online build attempt could not reach PyPI for Hatchling. Repeating
-the locked build with `UV_OFFLINE=1` used the existing cache and passed. The
-isolated wheel environment used the machine's installed MCP dependencies
-because MCP was absent from the `uv` offline cache; WikiBricks itself came only
-from the built wheel.
-
-The read-only staging check used
-`projects/wikibricks/branches/staging/endpoints/primary` with profile `pt`.
-PostgreSQL reported version `17.11 (32e7196)`. Both Lakebase Search extensions
-appear in `pg_available_extensions`:
-
-| Extension | Installed version |
-|---|---|
-| `lakebase_text` | not installed |
-| `lakebase_vector` | not installed |
-
-No bundle was deployed, no extension was installed, no preview setting was
-changed, and no Lakebase data was written. A live ANN/BM25 staging run remains
-pending authorization to install the two extensions and deploy the paused job.
-
-Date: 2026-09-01
-
-Branch: `feat/lakebase-remote-maintenance`
-
-## Result
-
-The staging job published one immutable curation manifest from a bounded
-Lakebase archive. Its immediate rerun was idle after the archive watermark
-advanced. The local store remained authoritative throughout the test.
-
-The job publishes proposals only. It cannot connect to or update a local
-WikiBricks database.
-
-## Validated resources
-
-| Resource | Value |
-|---|---|
-| Workspace | `https://fevm-agent-marketplace.cloud.databricks.com` |
-| Lakebase project | `projects/wikibricks` |
-| Branch | `projects/wikibricks/branches/staging` |
-| Endpoint | `primary`, 0.5 to 2 CU, 300-second suspend timeout |
-| PostgreSQL | 17.11 |
-| Database | `wikibricks` |
-| Lakeflow Job | `222630699179712` |
-| Schedule | Sunday at 04:00 UTC, paused |
-| Task | one bounded serverless Python wheel task |
-| Run limit | one concurrent run, 60-minute timeout, one retry |
-
-The bundle now keeps the schedule paused in every target. Enabling it requires
-an explicit deployment override.
-
-## Manifest evidence
-
-Run `913825562725687` processed archive watermark 1 and published one
-manifest for replica `655f603e-965e-439b-933e-f02aeb1d849c`.
-
-| Field | Value |
-|---|---|
-| Manifest hash | `21e8482d165254f624693620e649c7335d44c4f0c2229a04a157528732dabff1` |
-| Patch count | 1 |
-| Patch path | `synthesis/local-first-remote-optional` |
-| Evidence | `archive-event:88fc6270-ae38-4542-a88a-8031534cb7ad` |
-| Maintenance status | `published` |
-
-Run `863652020451418` immediately returned `idle` with no new manifest or
-proposal. Three later driver-validation runs also returned `idle`, so the
-database remained at one manifest and one maintenance run.
-
-The manifest, curation row, and maintenance row had matching hashes, replica
-IDs, and watermarks.
-
-## Driver validation
-
-Fresh serverless runs exposed a native import failure in
-`psycopg-binary` 3.3.4. WikiBricks pins `psycopg` and
-`psycopg-binary` to 3.2.13.
-
-| Run | Attempt | Result |
-|---|---:|---|
-| `281962062656158` | 0 | success, idle |
-| `809325429921327` | 0 | success, idle |
-| `239700301049184` | 0 | success, idle |
-
-All three completed without a retry or process abort.
-
-## Local verification
-
-The 2026-09-01 cleanup passed Ruff, 89 tests, the 89-test offline suite, wheel
-build, and a clean installed-wheel MCP smoke test. The bundle resource test
-also confirms that every target is paused by default. Strict bundle validation
-passed for both `dev` and `staging` with the `fe-vm-agent-marketplace` profile.
-
-No Databricks resource or Lakebase data was changed during this cleanup. A
-future production run should first deploy the paused job, inspect a staging
-manifest locally, and enable the schedule only through the explicit
-`schedule_pause_status=UNPAUSED` override.
