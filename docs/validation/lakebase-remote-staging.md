@@ -1,5 +1,50 @@
 # Lakebase remote maintenance validation
 
+## Hybrid search implementation, 2026-09-02
+
+Branch: `feat/lakebase-hybrid-curation`
+
+Commit tested: `6b12264`
+
+The local and non-mutating staging gates pass for the remote-only hybrid search
+implementation.
+
+| Check | Command | Result |
+|---|---|---|
+| Ruff | `uv run --no-sync ruff check src tests` | pass |
+| Full suite | `uv run --no-sync pytest -q` | 124 passed |
+| Offline suite | `UV_OFFLINE=1 uv run --no-sync pytest -q` | 124 passed |
+| Offline build | `UV_OFFLINE=1 uv build` | wheel and source archive built |
+| Installed wheel | `tests/wheel_smoke.py` in an isolated virtual environment | MCP smoke and packaged search SQL passed |
+| Bundle | `databricks bundle validate --strict -t staging --profile pt` | pass |
+
+Artifacts:
+
+| File | SHA-256 |
+|---|---|
+| `wikibricks-0.11.0-py3-none-any.whl` | `107c46ff5a3dbf1f408cb8699d2a72a0f8864b29ff20f333c6d44e314f8de4e4` |
+| `wikibricks-0.11.0.tar.gz` | `f9a8ff6c9f58ec00d5e7092c35bf97785798178522ff15e587c25ce9f1fad83d` |
+
+The first online build attempt could not reach PyPI for Hatchling. Repeating
+the locked build with `UV_OFFLINE=1` used the existing cache and passed. The
+isolated wheel environment used the machine's installed MCP dependencies
+because MCP was absent from the `uv` offline cache; WikiBricks itself came only
+from the built wheel.
+
+The read-only staging check used
+`projects/wikibricks/branches/staging/endpoints/primary` with profile `pt`.
+PostgreSQL reported version `17.11 (32e7196)`. Both Lakebase Search extensions
+appear in `pg_available_extensions`:
+
+| Extension | Installed version |
+|---|---|
+| `lakebase_text` | not installed |
+| `lakebase_vector` | not installed |
+
+No bundle was deployed, no extension was installed, no preview setting was
+changed, and no Lakebase data was written. A live ANN/BM25 staging run remains
+pending authorization to install the two extensions and deploy the paused job.
+
 Date: 2026-09-01
 
 Branch: `feat/lakebase-remote-maintenance`
