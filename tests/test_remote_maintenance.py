@@ -431,7 +431,11 @@ def test_bundle_defines_one_bounded_weekly_serverless_wheel_job():
             "environment_key": "remote",
             "spec": {
                 "client": "4",
-                "dependencies": ["../dist/*.whl", "databricks-sdk>=0.85.0"],
+                "dependencies": [
+                    "../dist/*.whl",
+                    "databricks-sdk>=0.85.0",
+                    "psycopg[binary]==3.2.13",
+                ],
             },
         }
     ]

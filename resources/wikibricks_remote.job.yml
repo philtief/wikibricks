@@ -33,3 +33,4 @@ resources:
             dependencies:
               - ../dist/*.whl
               - databricks-sdk>=0.85.0
+              - psycopg[binary]==3.2.13
