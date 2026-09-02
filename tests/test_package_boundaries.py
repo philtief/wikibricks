@@ -3,6 +3,7 @@ from __future__ import annotations
 import subprocess
 import sys
 import tomllib
+from importlib.resources import files
 from pathlib import Path
 
 import wikibricks
@@ -96,3 +97,15 @@ def test_distribution_has_no_claude_only_recorder():
     assert not (ROOT / ".claude-plugin").exists()
     assert not (ROOT / "src/wikibricks/adapters/claude_code_hook.py").exists()
     assert not (ROOT / "src/wikibricks/adapters/claude_code_buffer.py").exists()
+
+
+def test_distribution_contains_only_remote_vector_search_resources():
+    sql = (
+        files("wikibricks_remote")
+        .joinpath("sql", "0001_lakebase_search.sql")
+        .read_text(encoding="utf-8")
+    )
+
+    assert "lakebase_vector" in sql
+    assert "lakebase_text" in sql
+    assert not (ROOT / "src/wikibricks" / "search" / "embeddings.py").exists()

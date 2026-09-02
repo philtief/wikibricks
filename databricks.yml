@@ -26,6 +26,9 @@ variables:
   model_endpoint:
     description: Databricks Foundation Model API endpoint
     default: databricks-claude-sonnet-4-5
+  embedding_endpoint:
+    description: Databricks embedding model endpoint for remote search
+    default: databricks-gte-large-en
   schedule_pause_status:
     description: Weekly schedule state
     default: PAUSED

@@ -6,6 +6,7 @@ import asyncio
 import json
 import os
 import shutil
+from importlib.resources import files
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -68,5 +69,12 @@ async def _exercise() -> None:
 
 
 if __name__ == "__main__":
+    search_sql = (
+        files("wikibricks_remote")
+        .joinpath("sql", "0001_lakebase_search.sql")
+        .read_text(encoding="utf-8")
+    )
+    assert "lakebase_vector" in search_sql
+    assert "lakebase_text" in search_sql
     asyncio.run(_exercise())
     print("installed wheel MCP smoke passed")

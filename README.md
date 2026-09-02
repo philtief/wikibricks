@@ -35,7 +35,10 @@ local database.
 
 optional, once a week:
 
-local SQLite <---- guarded sync ----> Lakebase <---- Databricks curation job
+local SQLite <---- guarded manifests ----> Lakebase archive + remote search
+                                                ^
+                                                |
+                                      Databricks curation job
 ```
 
 After installation, the selected harness loads the WikiBricks skill and MCP
@@ -221,7 +224,8 @@ wikibricks curate --prune-archived-sessions-after-days 90
 ## Optional Lakebase curation
 
 Local memory does not need Lakebase. Configure it only when you want a remote
-archive and a weekly semantic cleanup pass.
+archive and a weekly cleanup pass. Vectors are disposable remote indexes. They
+are never copied to SQLite or required by an agent harness.
 
 Reinstall WikiBricks with the Lakebase extra. Omnigent remains unchanged:
 
@@ -246,6 +250,32 @@ The local scheduler pushes immutable versions to Lakebase and pulls published
 curation manifests. The Databricks job reads the archive and writes data-only
 patches. It never connects to the laptop.
 
+When [Lakebase Search](https://docs.databricks.com/aws/en/oltp/projects/lakebase-search)
+is enabled for the project, the weekly job performs these bounded steps:
+
+1. Project page text and user or assistant session events into remote search
+   documents. Tool output stays in the archive but is not embedded.
+2. Generate 1,024-dimensional embeddings with the configured Databricks model
+   endpoint. The default is `databricks-gte-large-en`.
+3. Store and index those vectors with
+   [`lakebase_vector`](https://docs.databricks.com/aws/en/oltp/projects/lakebase-vector),
+   and index exact terms with
+   [`lakebase_text`](https://docs.databricks.com/aws/en/oltp/projects/lakebase-text).
+4. Combine vector and BM25 page ranks with Reciprocal Rank Fusion. The curator
+   reads the candidate pages and decides whether to update text, add a typed
+   link, merge a duplicate, or make no change.
+
+`lakebase_vector` stores vectors and supplies the `lakebase_ann` index. The
+embedding model endpoint generates the vectors. Repeated text reuses its remote
+embedding by content hash.
+
+Lakebase Search is a beta feature and must be enabled in the Lakebase project
+settings. Enabling it restarts project compute and cannot be reversed. The
+bundle does not enable it. Without both search extensions, the job uses the
+existing bounded curator and publishes the same guarded manifests. If an
+enabled embedding or search call fails, the job records no processed watermark
+and retries the evidence on its next run.
+
 A patch updates a local page only when its base version and content hash still
 match. If the page changed locally, the local version wins and WikiBricks
 records `keep_local`. Pull and apply are idempotent, and each patch group is
@@ -257,6 +287,11 @@ Every bundle target is paused by default:
 databricks bundle validate --strict -t staging --profile PROFILE
 databricks bundle deploy -t staging --profile PROFILE
 ```
+
+The deployment creates one paused weekly serverless task. Lakebase Autoscaling
+can suspend when idle, and the embedding endpoint is called only for new content
+within the policy limits in
+`src/wikibricks_remote/resources/remote-policy.yml`.
 
 The full protocol is in [`docs/curation-sync.md`](docs/curation-sync.md).
 

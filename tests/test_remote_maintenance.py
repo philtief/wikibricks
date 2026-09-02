@@ -423,6 +423,7 @@ def test_bundle_defines_one_bounded_weekly_serverless_wheel_job():
             "endpoint": "${var.lakebase_endpoint}",
             "database": "${var.lakebase_database}",
             "model-endpoint": "${var.model_endpoint}",
+            "embedding-endpoint": "${var.embedding_endpoint}",
         },
     }
     assert job["environments"] == [

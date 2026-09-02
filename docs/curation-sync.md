@@ -42,8 +42,9 @@ demand. Planning, application, and conflict resolution use local SQLite.
 
 ## Stored state
 
-Migrations `0003_curation_patches.sql` through
-`0005_remote_maintenance.sql` add the following records:
+Migrations `0003_curation_patches.sql` through `0006_add_link.sql` add the
+following records. The optional remote search schema lives separately in
+`src/wikibricks_remote/sql/0001_lakebase_search.sql`.
 
 | Record | Purpose |
 |---|---|
@@ -81,12 +82,13 @@ The publisher hashes canonical JSON. The local pull recalculates the manifest
 and proposal hashes before inserting anything. A run ID cannot be reused with
 different content.
 
-The first schema supports five operations:
+The first schema supports six operations:
 
 | Operation | Local effect |
 |---|---|
 | `create_page` | Creates a page only when the path is absent. |
 | `update_page` | Writes a new version after an exact base match. |
+| `add_link` | Adds an allowlisted typed edge after an exact source-base match. |
 | `retarget_links` | Moves incoming and outgoing links to a canonical page. |
 | `add_alias` | Preserves an old path. |
 | `supersede_page` | Hides a duplicate and points it at the canonical entity. |
@@ -158,6 +160,8 @@ weekly run from proposing the same work.
 | Update | Version ID and content hash match the base | Write a new version. |
 | Update | Proposed hash already present | Record `already_applied`. |
 | Update | Local page differs from base and proposal | Conflict; keep local active. |
+| Add link | Source base matches and target is active | Insert the edge once. |
+| Add link | Source changed or target is missing | Conflict; keep local active. |
 | Cleanup group | Every page and target matches | Apply the whole group. |
 | Cleanup group | Any participant changed | Apply none of the group. |
 | Supersede | Page already points to the same canonical target | Record `already_applied`. |
@@ -222,6 +226,20 @@ replica. A run with no proposals records its watermark, so the next run does
 not analyze the same evidence again. Remote analysis never connects to the
 local database.
 
+With Lakebase Search enabled, the job projects bounded page and conversation
+chunks into `remote_search_documents`. A Databricks embedding endpoint creates
+the vectors. `lakebase_vector` stores them and supplies ANN search, while
+`lakebase_text` supplies BM25 keyword search. Reciprocal Rank Fusion combines
+the two ranked lists. These ranks select pages for the curator; they do not
+authorize a patch or prove that two pages are duplicates.
+
+Remote embeddings are keyed by model and content hash and reused for repeated
+text. They are derived data and never enter a manifest. Search queries include
+only the selected replica, the latest page version at the fixed watermark, and
+pages that have not been superseded. If either extension is unavailable, the
+job uses its bounded page-selection fallback. An enabled search failure aborts
+the run before its watermark is recorded.
+
 The weekly job reads the Lakebase archive directly. It does not require a
 second storage system.
 
@@ -248,3 +266,6 @@ receipts before enabling the production weekly schedule.
 
 1. [Andrej Karpathy, LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f)
 2. [SQLite, FTS5](https://www.sqlite.org/fts5.html)
+3. [Databricks, Lakebase Search](https://docs.databricks.com/aws/en/oltp/projects/lakebase-search)
+4. [Databricks, lakebase_vector](https://docs.databricks.com/aws/en/oltp/projects/lakebase-vector)
+5. [Databricks, lakebase_text](https://docs.databricks.com/aws/en/oltp/projects/lakebase-text)

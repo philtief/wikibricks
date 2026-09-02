@@ -61,6 +61,8 @@ src/wikibricks/
   cli.py                    Local lifecycle, import, migration, and sync commands
 
 src/wikibricks_remote/      Optional weekly curation job
+  search/                   Remote projection, embeddings, BM25, ANN, and RRF
+  sql/                      Lakebase Search extension schema
 resources/                  Databricks Asset Bundle resources
 tests/                      Local, compatibility, MCP, package, and remote tests
 docs/                       Protocol and validation evidence
@@ -88,6 +90,9 @@ implementation code in `storage/` and `curation/`.
 11. Never push, deploy, publish, or modify remote data without approval.
 12. Never use `git reset --hard`, `git checkout --`, `--no-verify`, or
     `git commit --amend`.
+13. Keep vectors in remote derived state. Generate them through the configured
+    Databricks embedding endpoint; `lakebase_vector` stores and indexes them.
+14. Do not enable the irreversible Lakebase Search beta from code or a bundle.
 
 ## Session and MCP contracts
 
@@ -125,6 +130,9 @@ safe policy records `keep_local` when a local page has diverged.
 The Lakeflow Job is one bounded serverless wheel task scheduled weekly. Every
 bundle target is paused by default. Remote output is data, never SQL or
 executable code. The job never connects to a local WikiBricks database.
+Lakebase Search narrows page candidates with `lakebase_vector`, `lakebase_text`,
+and Reciprocal Rank Fusion. The curator remains responsible for every semantic
+decision. Missing search extensions use the bounded non-vector fallback.
 
 Record staging commands, resource identifiers, run results, counts, and hashes
 in `docs/validation/lakebase-remote-staging.md`.

@@ -25,6 +25,7 @@ resources:
               endpoint: ${var.lakebase_endpoint}
               database: ${var.lakebase_database}
               model-endpoint: ${var.model_endpoint}
+              embedding-endpoint: ${var.embedding_endpoint}
       environments:
         - environment_key: remote
           spec:
