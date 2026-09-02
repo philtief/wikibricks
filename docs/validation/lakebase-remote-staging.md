@@ -4,7 +4,7 @@
 
 Branch: `feat/lakebase-hybrid-curation`
 
-Commit tested: `6b12264`
+Commit tested: `c993586`
 
 The local and non-mutating staging gates pass for the remote-only hybrid search
 implementation.
@@ -22,8 +22,8 @@ Artifacts:
 
 | File | SHA-256 |
 |---|---|
-| `wikibricks-0.11.0-py3-none-any.whl` | `107c46ff5a3dbf1f408cb8699d2a72a0f8864b29ff20f333c6d44e314f8de4e4` |
-| `wikibricks-0.11.0.tar.gz` | `f9a8ff6c9f58ec00d5e7092c35bf97785798178522ff15e587c25ce9f1fad83d` |
+| `wikibricks-0.11.0-py3-none-any.whl` | `204a6a4745f28c92401b13d5b3378995554ed8040c4f1b4887484114fad8371b` |
+| `wikibricks-0.11.0.tar.gz` | `2f7307c4f0756468ecfd795cf713a75dd86606636b1a362b56c153ecbbfb38ee` |
 
 The first online build attempt could not reach PyPI for Hatchling. Repeating
 the locked build with `UV_OFFLINE=1` used the existing cache and passed. The
