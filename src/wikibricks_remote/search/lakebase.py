@@ -364,7 +364,7 @@ class LakebaseHybridSearch:
                 + where
                 + "AND d.embedding IS NOT NULL "
                 "AND d.page_path IS DISTINCT FROM %s "
-                "ORDER BY d.embedding <=> (%s::real[])::vector, "
+                "ORDER BY d.embedding <=> %s::vector, "
                 "d.page_path, d.chunk_index LIMIT %s",
                 (
                     replica_id,
@@ -373,7 +373,10 @@ class LakebaseHybridSearch:
                     watermark,
                     watermark,
                     query["page_path"],
-                    query["embedding"],
+                    json.dumps(
+                        [float(value) for value in query["embedding"]],
+                        separators=(",", ":"),
+                    ),
                     maximum,
                 ),
             ).fetchall()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import contextmanager
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -236,6 +237,37 @@ def test_rrf_combines_vector_and_keyword_page_ranks_stably():
     ]
     assert ranked[0].vector_rank == 2
     assert ranked[0].keyword_rank == 2
+
+
+def test_vector_query_serializes_mixed_numeric_embedding():
+    from wikibricks_remote.search import LakebaseHybridSearch
+
+    captured = {}
+
+    class Connection:
+        def execute(self, sql, parameters):
+            captured.update(sql=sql, parameters=parameters)
+            return SimpleNamespace(fetchall=lambda: [])
+
+    class Store:
+        @contextmanager
+        def connection(self):
+            yield Connection()
+
+    search = LakebaseHybridSearch(
+        Store(),
+        embedding_model="databricks-gte-large-en",
+        embedding_dimension=3,
+    )
+
+    assert search._vector_paths(
+        uuid4(),
+        1,
+        {"page_path": "topics/query", "embedding": [0, 1.5, 0]},
+        10,
+    ) == []
+    assert "%s::vector" in captured["sql"]
+    assert captured["parameters"][-2] == "[0.0,1.5,0.0]"
 
 
 def test_hybrid_candidates_include_ranked_current_pages(monkeypatch):
