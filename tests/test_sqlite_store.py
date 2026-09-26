@@ -147,3 +147,100 @@ def test_only_one_process_holds_the_background_lease(store: SQLiteStore):
     assert store.acquire_lease("maintenance", "worker-a", 60, now=100)
     assert not store.acquire_lease("maintenance", "worker-b", 60, now=101)
     assert store.acquire_lease("maintenance", "worker-b", 60, now=161)
+
+
+def test_search_ranks_full_matches_above_a_single_token_distractor(
+    store: SQLiteStore,
+):
+    relevant = {
+        "body": (
+            "Lakebase remote maintenance staging is the active operational topic. "
+            * 8
+        ).strip()
+    }
+    store.write_page("topics/lakebase-maintenance", "Lakebase maintenance", relevant)
+    store.write_page(
+        "synthesis/agent-atlas",
+        "Agent atlas",
+        {"body": "staging " + "unrelated atlas details " * 100},
+    )
+    store.ingest_session(
+        _session(
+            [
+                SessionEvent("0", "user", "Question about lakebase remote maintenance staging"),
+                SessionEvent("1", "assistant", "Lakebase remote maintenance staging is ready."),
+            ],
+            external_id="matching-session",
+        )
+    )
+
+    hits = store.search("lakebase remote maintenance staging")
+    paths = [hit["path"] for hit in hits]
+
+    assert paths.index("topics/lakebase-maintenance") == 0
+    session_paths = [path for path in paths if path.startswith("omnigent-sessions/")]
+    assert len(session_paths) == 1
+    assert paths.index(session_paths[0]) < paths.index("synthesis/agent-atlas")
+    scores = [hit["score"] for hit in hits[: paths.index("synthesis/agent-atlas") + 1]]
+    assert all(isinstance(score, float) and 0 <= score <= 1 for score in scores)
+    assert all(left > right for left, right in zip(scores, scores[1:]))
+
+
+def test_search_scores_exact_paths_and_bounded_snippets(store: SQLiteStore):
+    store.write_page(
+        "topics/lakebase-maintenance",
+        "Lakebase maintenance",
+        {"body": "A long introduction follows. " * 40 + "Maintenance is described here."},
+    )
+
+    exact = store.search("topics/lakebase-maintenance")
+    snippet_hits = store.search("MAINTENANCE")
+
+    assert exact[0]["path"] == "topics/lakebase-maintenance"
+    assert exact[0]["score"] == 1.0
+    assert all(0 <= hit["score"] <= 1 for hit in snippet_hits)
+    assert len(snippet_hits[0]["snippet"]) <= 300
+    assert "maintenance" in snippet_hits[0]["snippet"].lower()
+    assert all("content_text" not in hit for hit in exact + snippet_hits)
+
+
+def test_search_returns_one_session_for_multiple_event_versions(store: SQLiteStore):
+    record = _session([SessionEvent("0", "user", "lakebase maintenance question")])
+    store.ingest_session(record)
+    store.ingest_session(
+        _session(
+            [
+                SessionEvent("0", "user", "lakebase maintenance question"),
+                SessionEvent("1", "assistant", "lakebase maintenance answer"),
+            ]
+        )
+    )
+
+    hits = store.search("lakebase maintenance")
+
+    assert [hit["path"] for hit in hits if hit["page_type"] == "session"] == [
+        "omnigent-sessions/philipp/1970/01/01/conversation-1"
+    ]
+
+
+def test_search_keeps_a_title_match_when_many_sessions_rank_higher_in_fts(
+    store: SQLiteStore,
+):
+    # The title boost is applied after the SQL candidate limit, so the page must
+    # survive that limit even though every session has a stronger raw bm25.
+    store.write_page(
+        "topics/lakebase-maintenance",
+        "Lakebase remote maintenance staging",
+        {"body": "Weekly job. " * 50 + "lakebase remote maintenance staging"},
+    )
+    for index in range(20):
+        store.ingest_session(
+            _session(
+                [SessionEvent("0", "user", "lakebase remote maintenance staging " * 3)],
+                external_id=f"session-{index}",
+            )
+        )
+
+    hits = store.search("lakebase remote maintenance staging", num_results=2)
+
+    assert hits[0]["path"] == "topics/lakebase-maintenance"

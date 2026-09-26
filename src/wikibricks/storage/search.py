@@ -2,10 +2,26 @@
 
 from __future__ import annotations
 
+import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from wikibricks.storage.store import PostgresStore
+
+
+def _snippet(text: str, query: str, *, length: int = 300) -> str:
+    normalized = " ".join(str(text or "").split())
+    tokens = re.findall(r"[\w-]+", query, flags=re.UNICODE)
+    if not tokens:
+        return normalized[:length]
+    expression = "|".join(re.escape(token) for token in tokens)
+    match = re.search(expression, normalized, flags=re.IGNORECASE | re.UNICODE)
+    if match is None:
+        return normalized[:length]
+    padding = max(0, (length - len(match.group(0))) // 2)
+    start = max(0, match.start() - padding)
+    end = min(len(normalized), start + length)
+    return normalized[start:end]
 
 
 class SearchRepository:
@@ -42,7 +58,7 @@ class SearchRepository:
             ),
             session_hits AS (
                 SELECT s.session_id AS id, s.page_path AS path, s.title,
-                       'session'::text AS page_type, ''::text AS content_text,
+                       'session'::text AS page_type, min(v.content) AS content_text,
                        ARRAY['session', 'harness:' || s.harness]::text[] AS tags,
                        1 AS version,
                        GREATEST(
@@ -121,7 +137,7 @@ class SearchRepository:
                 "path": row[1],
                 "title": row[2],
                 "page_type": row[3],
-                "content_text": row[4],
+                "snippet": _snippet(row[4], query),
                 "tags": list(row[5] or []),
                 "version": row[6],
                 "score": float(row[7]),

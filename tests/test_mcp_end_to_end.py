@@ -9,7 +9,13 @@ from pathlib import Path
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
-from wikibricks.mcp_server import get_server_instructions, get_tool_schemas
+from wikibricks import WikiClient
+from wikibricks.mcp_server import (
+    dispatch_tool,
+    format_tool_response,
+    get_server_instructions,
+    get_tool_schemas,
+)
 from wikibricks.models import SessionEvent, SessionRecord
 from wikibricks.storage.sqlite_store import SQLiteStore
 
@@ -149,3 +155,27 @@ def test_all_five_tools_work_over_stdio_without_databricks_or_outbound_network(
                 assert promoted["cited"] == 1
 
     asyncio.run(exercise())
+
+
+def test_dispatched_search_and_error_contract(tmp_path: Path):
+    database_path = tmp_path / "wikibricks.db"
+    store = SQLiteStore(database_path)
+    store.migrate()
+    store.write_page("topics/search", "Search", {"body": "Focused search marker"})
+    wiki_client = WikiClient(database_path=database_path)
+    tools = {
+        "wiki_search": lambda query, k=5: wiki_client.search(query, num_results=k),
+        "wiki_read_full": wiki_client.read_page,
+    }
+
+    searched = dispatch_tool("wiki_search", {"query": "focused search marker"}, tools)
+    assert searched[0]["snippet"] == "Focused search marker"
+    assert "content_text" not in searched[0]
+
+    read = dispatch_tool("wiki_read_full", {"path": "topics/search"}, tools)
+    assert read["content"]["body"] == "Focused search marker"
+
+    unknown = json.loads(format_tool_response("wiki_unknown", {}, tools))
+    missing_query = json.loads(format_tool_response("wiki_search", {}, tools))
+    assert unknown["error"].startswith("Unknown tool:")
+    assert "query" in missing_query["error"].lower()
