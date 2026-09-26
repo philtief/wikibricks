@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.11.1 - 2026-09-26
+
+- Fixed a migration bug where five tables (`links`, `sources`, `operations`,
+  `background_leases`, `sync_state`) were retroactively added to `0001_core.sql`
+  after real databases had already applied that migration. Added
+  `0003_backfill_late_tables.sql` to create all five tables on existing
+  databases. `IF NOT EXISTS` keeps fresh installs unaffected.
+
 ## 0.11.0 - 2026-09-02
 
 - Added `wikibricks install` as the primary setup command. It configures a
