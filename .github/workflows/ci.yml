@@ -34,5 +34,5 @@ jobs:
         run: uv run --locked pytest -q
         if: matrix.python != '3.14'
       - name: Pytest with coverage
-        run: uv run --locked --with pytest-cov pytest -q --cov=wikibricks --cov=wikibricks_remote --cov-report=term --cov-fail-under=80
+        run: uv run --locked --with pytest-cov pytest -q --cov=wikibricks --cov=wikibricks_remote --cov-report=term --cov-fail-under=85
         if: matrix.python == '3.14'

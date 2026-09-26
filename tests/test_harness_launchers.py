@@ -9,11 +9,20 @@ from subprocess import CompletedProcess
 import pytest
 import yaml
 
+from wikibricks.harness_launchers import main as launch_main
+from wikibricks.harness_launchers import prepare_hermes_home, prepare_opencode_environment
 from wikibricks.omnigent_install import install_integrations
 
 
 def _runner(command: list[str], **_: object) -> CompletedProcess[str]:
     return CompletedProcess(command, 0, stdout="", stderr="")
+
+
+def _manifest(home: Path, **values: object) -> Path:
+    manifest = home / ".wikibricks" / "omnigent-install.json"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(json.dumps({"mcp_command": "/bin/wikibricks-mcp", **values}))
+    return manifest
 
 
 @pytest.mark.skipif(shutil.which("node") is None, reason="Node is required to run the Pi extension")
@@ -298,3 +307,119 @@ def test_installer_preserves_harness_args_and_original_downstream_paths(tmp_path
     assert second_manifest["previous_harness_commands"] == first_manifest[
         "previous_harness_commands"
     ]
+
+
+def test_opencode_environment_rejects_invalid_configurations():
+    with pytest.raises(RuntimeError, match="Cannot update OpenCode inline config"):
+        prepare_opencode_environment({"OPENCODE_CONFIG_CONTENT": "{"}, "/bin/mcp")
+
+    with pytest.raises(RuntimeError, match="top level must be an object"):
+        prepare_opencode_environment(
+            {"OPENCODE_CONFIG_CONTENT": json.dumps([])}, "/bin/mcp"
+        )
+
+    with pytest.raises(RuntimeError, match="mcp must be an object"):
+        prepare_opencode_environment(
+            {"OPENCODE_CONFIG_CONTENT": json.dumps({"mcp": []})}, "/bin/mcp"
+        )
+
+
+def test_hermes_home_is_optional():
+    assert prepare_hermes_home({}, "/bin/mcp") is None
+
+
+def test_hermes_launcher_prepares_configuration_and_replaces_the_process(tmp_path: Path):
+    _manifest(tmp_path, launchers={"hermes": "/bin/hermes"})
+    hermes_home = tmp_path / "hermes-home"
+    hermes_home.mkdir()
+    executed = {}
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "wikibricks.harness_launchers.os.execvpe",
+        lambda executable, arguments, environ: executed.update(
+            executable=executable, arguments=arguments, environ=environ
+        ),
+    )
+    launch_main(
+        ["hermes", "--serve"],
+        environ={"HOME": str(tmp_path), "HERMES_HOME": str(hermes_home)},
+    )
+    monkeypatch.undo()
+
+    assert executed["executable"] == "/bin/hermes"
+    assert executed["arguments"] == ["/bin/hermes", "--serve"]
+    assert executed["environ"] == {
+        "HOME": str(tmp_path),
+        "HERMES_HOME": str(hermes_home),
+    }
+    assert yaml.safe_load((hermes_home / "config.yaml").read_text()) == {
+        "mcp_servers": {
+            "wikibricks": {"command": "/bin/wikibricks-mcp", "args": []}
+        }
+    }
+
+
+@pytest.mark.parametrize(
+    ("values", "message"),
+    [
+        ({"launchers": {}}, "has no downstream opencode executable"),
+        (
+            {"launchers": {"opencode": "/bin/opencode"}, "mcp_command": ""},
+            "has no MCP command",
+        ),
+    ],
+)
+def test_opencode_launcher_rejects_incomplete_installations(
+    tmp_path: Path,
+    values: dict[str, object],
+    message: str,
+):
+    _manifest(tmp_path, **values)
+
+    with pytest.raises(RuntimeError, match=message):
+        launch_main(["opencode"], environ={"HOME": str(tmp_path)})
+
+
+def test_opencode_launcher_rejects_itself_as_downstream(tmp_path: Path):
+    wrapper = tmp_path / ".wikibricks" / "bin" / "opencode"
+    _manifest(tmp_path, launchers={"opencode": str(wrapper)})
+
+    with pytest.raises(RuntimeError, match="cannot invoke itself"):
+        launch_main(["opencode"], environ={"HOME": str(tmp_path)})
+
+
+def test_opencode_launcher_prepares_configuration_and_replaces_the_process(
+    tmp_path: Path,
+):
+    _manifest(tmp_path, launchers={"opencode": "/bin/downstream"})
+    executed = {}
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setattr(
+        "wikibricks.harness_launchers.os.execvpe",
+        lambda executable, arguments, environ: executed.update(
+            executable=executable, arguments=arguments, environ=environ
+        ),
+    )
+    launch_main(["opencode", "--serve"], environ={"HOME": str(tmp_path)})
+    monkeypatch.undo()
+
+    assert executed["executable"] == "/bin/downstream"
+    assert executed["arguments"] == ["/bin/downstream", "--serve"]
+    assert json.loads(executed["environ"]["OPENCODE_CONFIG_CONTENT"]) == {
+        "mcp": {
+            "wikibricks": {
+                "type": "local",
+                "command": ["/bin/wikibricks-mcp"],
+                "enabled": True,
+            }
+        }
+    }
+
+
+def test_launcher_rejects_an_unknown_harness(tmp_path: Path):
+    _manifest(tmp_path, launchers={"opencode": "/bin/downstream"})
+
+    with pytest.raises(SystemExit, match="usage"):
+        launch_main(["goose"], environ={"HOME": str(tmp_path)})
