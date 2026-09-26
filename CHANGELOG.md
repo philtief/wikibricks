@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.0 - 2026-09-26
 
 - Added `wikibricks import omnigent-server` for explicit, opt-in imports from
   Omnigent 0.15 server sessions. `wikibricks check` now reports capture
@@ -11,6 +11,8 @@
 - Applied the same snippet result shape to the PostgreSQL compatibility store.
 - Ranked FTS chunks in materialized CTEs and aggregated per page and session in
   SQL. On a 16,000-chunk store, queries take 20-190 ms instead of up to 8 s.
+- CI now tests Python 3.10, 3.12 and 3.14, enforces 80% coverage, and fails
+  when a released migration file changes.
 
 ## 0.11.1 - 2026-09-26
 
