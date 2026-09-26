@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import subprocess
 import sys
-import tomllib
 from importlib.resources import files
 from pathlib import Path
 
+import pytest
+
 import wikibricks
+
+# tomllib is stdlib from Python 3.11; the package itself supports 3.10.
+tomllib = pytest.importorskip("tomllib")
 
 ROOT = Path(__file__).resolve().parents[1]
 
