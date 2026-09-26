@@ -17,6 +17,8 @@ WikiBricks is shared memory for multiple agent harnesses.
 - SQLite at `~/.wikibricks/wikibricks.db` is the default active store.
 - Lakebase is an optional archive and curation exchange. Local memory must work
   when Lakebase, Databricks credentials, and the network are absent.
+- `import omnigent-server` is an explicit, opt-in network command like
+  `sync lakebase`.
 
 The library does not call a language model. The active agent makes semantic
 decisions about page content. Deterministic local maintenance repairs indexes

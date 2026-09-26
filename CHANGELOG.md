@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Added `wikibricks import omnigent-server` for explicit, opt-in imports from
+  Omnigent 0.15 server sessions. `wikibricks check` now reports capture
+  staleness as a warning, and `wiki_index` surfaces that warning without
+  changing the tool schema.
+
 ## 0.11.1 - 2026-09-26
 
 - Fixed a migration bug where five tables (`links`, `sources`, `operations`,
