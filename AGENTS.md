@@ -148,6 +148,10 @@ Keep tests lean. Prefer one end-to-end contract test over repeated unit tests
 for the same behavior. Never point a test fixture at a database that contains
 user data.
 
+Released migration files are immutable. `tests/test_migration_immutability.py`
+enforces their content hashes, so add a new forward migration instead of editing
+an existing release.
+
 ## Release checklist
 
 For a version change, update `pyproject.toml`, `uv.lock`, `CHANGELOG.md`, and

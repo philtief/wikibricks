@@ -9,12 +9,17 @@ on:
 jobs:
   test:
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python: ["3.10", "3.12", "3.14"]
+    env:
+      UV_PYTHON: ${{ matrix.python }}
     steps:
       - uses: actions/checkout@v4
       - name: Install uv
         uses: astral-sh/setup-uv@v5
       - name: Set up Python
-        run: uv python install 3.14
+        run: uv python install ${{ matrix.python }}
       - name: Install PostgreSQL
         run: |
           sudo apt-get update
@@ -26,3 +31,7 @@ jobs:
         run: uv run --locked ruff check src tests
       - name: Pytest
         run: uv run --locked pytest -q
+        if: matrix.python != '3.14'
+      - name: Pytest with coverage
+        run: uv run --locked --with pytest-cov pytest -q --cov=wikibricks --cov=wikibricks_remote --cov-report=term --cov-fail-under=80
+        if: matrix.python == '3.14'
