@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Ranked SQLite search results by FTS5 relevance, grouped one hit per session,
+  and returned bounded snippets instead of full page or event text.
+- Applied the same snippet result shape to the PostgreSQL compatibility store.
+- Ranked FTS chunks in materialized CTEs and aggregated per page and session in
+  SQL. On a 16,000-chunk store, queries take 20-190 ms instead of up to 8 s.
+
 ## 0.11.1 - 2026-09-26
 
 - Fixed a migration bug where five tables (`links`, `sources`, `operations`,

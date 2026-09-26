@@ -106,7 +106,7 @@ class WikiClient:
                 current_suffix
             ):
                 continue
-            raw_text = str(hit.get("content_text") or "").strip()
+            raw_text = str(hit.get("snippet") or "").strip()
             text = raw_text[:1200]
             content_truncated = content_truncated or len(raw_text) > len(text)
             item = MemoryItem(

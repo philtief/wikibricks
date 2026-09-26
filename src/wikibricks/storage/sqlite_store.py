@@ -37,6 +37,18 @@ def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
 
+def _snippet(text: str, tokens: list[str], *, length: int = 300) -> str:
+    normalized = " ".join(text.split())
+    expression = "|".join(re.escape(token) for token in tokens)
+    match = re.search(expression, normalized, flags=re.IGNORECASE | re.UNICODE)
+    if match is None:
+        return normalized[:length]
+    padding = max(0, (length - len(match.group(0))) // 2)
+    start = max(0, match.start() - padding)
+    end = min(len(normalized), start + length)
+    return normalized[start:end]
+
+
 def _insert_chunks(
     conn: sqlite3.Connection,
     *,
@@ -915,38 +927,76 @@ class SQLiteStore:
         if not tokens:
             return []
         match = " OR ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
-        pattern = f"%{query}%"
+        normalized_query = query.strip().casefold()
         with self.connection() as conn:
             rows = conn.execute(
-                "WITH page_hits AS ("
-                "SELECT p.page_id, p.path, v.title, v.page_type, v.content_text, "
-                "v.tags, v.version, CASE WHEN p.path = ? THEN 10.0 WHEN p.path LIKE ? "
-                "THEN 6.0 WHEN v.title LIKE ? THEN 5.0 ELSE 3.0 END AS score "
-                "FROM page_search_fts f JOIN page_versions v ON v.version_id = f.version_id "
+                # bm25() cannot run inside an aggregate, so rank each chunk first.
+                "WITH page_fts AS MATERIALIZED ("
+                "SELECT version_id, bm25(page_search_fts) AS rank FROM page_search_fts "
+                "WHERE page_search_fts MATCH ?), page_hits AS ("
+                "SELECT p.page_id, p.path, v.title, "
+                "v.page_type, v.content_text, v.tags, v.version, "
+                "min(f.rank) AS relevance "
+                "FROM page_fts f JOIN page_versions v ON v.version_id = f.version_id "
                 "JOIN pages p ON p.current_version_id = v.version_id "
-                "WHERE page_search_fts MATCH ? AND p.status = 'active' "
-                "GROUP BY v.version_id), session_hits AS ("
-                "SELECT s.session_id, s.page_path, s.title, 'session', v.content, "
-                "json_array('session', 'harness:' || s.harness), 1, 1.0 "
-                "FROM session_search_fts f JOIN session_event_versions v "
+                "WHERE p.status = 'active' "
+                "AND p.path != ? GROUP BY p.page_id), exact_page_hits AS ("
+                "SELECT p.page_id, p.path, v.title, v.page_type, v.content_text, "
+                "v.tags, v.version, NULL AS relevance FROM pages p "
+                "JOIN page_versions v ON v.version_id = p.current_version_id "
+                "WHERE p.status = 'active' AND p.path = ?), session_fts AS MATERIALIZED ("
+                "SELECT version_id, bm25(session_search_fts) AS rank FROM session_search_fts "
+                "WHERE session_search_fts MATCH ?), session_hits AS ("
+                "SELECT NULL AS page_id, s.page_path, s.title, 'session', v.content, "
+                "json_array('session', 'harness:' || s.harness), 1, "
+                "min(f.rank) AS relevance "
+                "FROM session_fts f JOIN session_event_versions v "
                 "ON v.version_id = f.version_id JOIN session_events e "
                 "ON e.current_version_id = v.version_id JOIN sessions s "
-                "ON s.session_id = e.session_id WHERE session_search_fts MATCH ? "
-                "AND e.active = 1 GROUP BY v.version_id) "
-                "SELECT * FROM (SELECT * FROM page_hits UNION ALL SELECT * FROM session_hits) "
-                "ORDER BY score DESC, 2 LIMIT ?",
-                (query, pattern, pattern, match, match, num_results),
+                "ON s.session_id = e.session_id "
+                "WHERE e.active = 1 GROUP BY s.session_id) "
+                "SELECT page_id, path, title, page_type, content_text, tags, version, relevance "
+                # Boosts and the session weight are applied in Python, so fetch
+                # enough candidates of each kind for them to reorder.
+                "FROM (SELECT * FROM (SELECT * FROM page_hits ORDER BY relevance LIMIT ?) "
+                "UNION ALL SELECT * FROM exact_page_hits "
+                "UNION ALL SELECT * FROM (SELECT * FROM session_hits "
+                "ORDER BY relevance LIMIT ?)) ORDER BY relevance",
+                (
+                    match,
+                    normalized_query,
+                    normalized_query,
+                    match,
+                    num_results * 3,
+                    num_results * 3,
+                ),
             ).fetchall()
-        return [
-            {
+        best_hits: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            relevance = max(-float(row[7]), 0.0) if row[7] is not None else 0.0
+            score = relevance / (1 + relevance)
+            if row[7] is None:
+                score = 1.0
+            elif normalized_query and (
+                normalized_query in str(row[1]).casefold()
+                or normalized_query in str(row[2]).casefold()
+            ):
+                score = min(score + 0.1, 0.99)
+            if row[3] == "session":
+                score *= 0.9
+            candidate = {
                 "page_id": row[0],
                 "path": row[1],
                 "title": row[2],
                 "page_type": row[3],
-                "content_text": row[4],
+                "snippet": _snippet(row[4], tokens),
                 "tags": json.loads(row[5]),
                 "version": row[6],
-                "score": float(row[7]),
+                "score": float(score),
             }
-            for row in rows
-        ]
+            previous = best_hits.get(row[1])
+            if previous is None or candidate["score"] > previous["score"]:
+                best_hits[row[1]] = candidate
+        hits = list(best_hits.values())
+        hits.sort(key=lambda hit: (-hit["score"], hit["path"]))
+        return hits[:num_results]
