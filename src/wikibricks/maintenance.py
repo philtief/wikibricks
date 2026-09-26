@@ -6,6 +6,7 @@ import shutil
 import sqlite3
 import subprocess
 import tempfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -80,6 +81,25 @@ def initialize_database(database_url: str | Path, *, migrate: bool = True) -> bo
     return not bool(exists)
 
 
+CAPTURE_STALE_HOURS = 48
+
+
+def capture_status(conn: Any) -> dict[str, Any]:
+    """Report how long ago the newest session was recorded."""
+    newest = conn.execute("SELECT max(updated_at) FROM sessions").fetchone()[0]
+    if newest is None:
+        return {"capture": {"last_session_at": None, "age_hours": None}, "capture_stale": True}
+    if not isinstance(newest, datetime):
+        newest = datetime.fromisoformat(str(newest))
+    if newest.tzinfo is None:
+        newest = newest.replace(tzinfo=timezone.utc)
+    age_hours = max(0.0, (datetime.now(timezone.utc) - newest).total_seconds() / 3600)
+    return {
+        "capture": {"last_session_at": newest.isoformat(), "age_hours": round(age_hours, 1)},
+        "capture_stale": age_hours > CAPTURE_STALE_HOURS,
+    }
+
+
 def check_database(database_url: str | Path) -> dict[str, Any]:
     if not is_postgres_target(database_url):
         store = SQLiteStore(database_url)
@@ -100,12 +120,14 @@ def check_database(database_url: str | Path) -> dict[str, Any]:
                     "WHERE e.active = 1 AND (e.current_version_id IS NULL OR v.version_id IS NULL)"
                 ).fetchone()[0]
             )
+            capture = capture_status(conn)
         return {
             "ok": integrity == "ok" and broken_pages == 0 and broken_sessions == 0,
             "integrity": integrity,
             "broken_page_pointers": broken_pages,
             "broken_session_pointers": broken_sessions,
             "pending_outbox": store.outbox_count(),
+            **capture,
         }
     store = _postgres_store(database_url)
     store.migrate()
@@ -134,12 +156,14 @@ def check_database(database_url: str | Path) -> dict[str, Any]:
                 "SELECT count(*) FROM sync_outbox WHERE acknowledged_at IS NULL"
             ).fetchone()[0]
         )
+        capture = capture_status(conn)
     return {
         "ok": pg_trgm and broken_pages == 0 and broken_sessions == 0,
         "pg_trgm": pg_trgm,
         "broken_page_pointers": broken_pages,
         "broken_session_pointers": broken_sessions,
         "pending_outbox": pending_outbox,
+        **capture,
     }
 
 

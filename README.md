@@ -310,6 +310,17 @@ native integration does not poll `~/.omnigent/chat.db` during normal work.
 wikibricks import omnigent --user-id "$USER"
 ```
 
+For Omnigent 0.15 server sessions, use the explicit server importer. It uses
+the Databricks profile only to obtain a bearer token and does not change the
+server.
+
+```bash
+wikibricks import omnigent-server \
+  --server https://omnigent.example \
+  --profile workspace \
+  --user-id "$USER"
+```
+
 Existing PostgreSQL installations can move to SQLite once:
 
 ```bash

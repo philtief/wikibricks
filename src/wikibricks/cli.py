@@ -16,6 +16,8 @@ from wikibricks.adapters.omnigent import (
     is_syncable_conversation,
     load_conversations,
 )
+from wikibricks.adapters.omnigent_export import export_to_session
+from wikibricks.omnigent_server import export_session, list_sessions, resolve_token
 from wikibricks.storage.sqlite_store import SQLiteStore
 from wikibricks.storage.targets import is_postgres_target
 
@@ -113,6 +115,71 @@ def import_jsonl(
     return result
 
 
+def import_omnigent_server(
+    *,
+    database_url: str | Path | None,
+    server: str,
+    profile: str,
+    user_id: str,
+    since_days: int = 0,
+    limit: int = 0,
+) -> dict[str, int]:
+    store = _store(database_url)
+    store.migrate()
+    target = f"omnigent-server:{server}"
+    saved = store.get_sync_cursor(target)
+    token = resolve_token(profile)
+    listed_sessions = list_sessions(server, token)
+    since_epoch = int(time.time() - since_days * 86400) if since_days else None
+
+    def source_updated_at(session: dict[str, Any]) -> int:
+        try:
+            return int(session.get("updated_at") or 0)
+        except (TypeError, ValueError):
+            return 0
+
+    cursor = (int(saved.get("updated_at") or 0), str(saved.get("id") or ""))
+
+    def key(session: dict[str, Any]) -> tuple[int, str]:
+        return (source_updated_at(session), str(session.get("id") or ""))
+
+    selected = [
+        session
+        for session in listed_sessions
+        if source_updated_at(session) > 0
+        and (
+            key(session) > cursor
+            or (since_epoch is not None and source_updated_at(session) >= since_epoch)
+        )
+    ]
+    selected.sort(key=key)
+    if limit:
+        selected = selected[:limit]
+
+    result = {"scanned": len(selected), "imported": 0, "skipped": 0, "errors": 0}
+    for session in selected:
+        updated_at, session_id = key(session)
+        try:
+            record = export_to_session(
+                export_session(server, session_id),
+                user_id=user_id,
+                server=server,
+            )
+            if record is None:
+                result["skipped"] += 1
+            else:
+                store.ingest_session(record)
+                result["imported"] += 1
+        except Exception as exc:
+            result["errors"] += 1
+            print(f"session {session_id or '?'}: {exc}", file=sys.stderr)
+            break
+        if key(session) > cursor:
+            cursor = key(session)
+            store.set_sync_cursor(target, {"updated_at": updated_at, "id": session_id})
+    return result
+
+
 def _print_json(value: Any) -> None:
     print(json.dumps(value, default=str, indent=2))
 
@@ -186,6 +253,13 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
     jsonl = formats.add_parser("jsonl")
     jsonl.add_argument("source", type=Path)
     jsonl.set_defaults(handler=_command_import_jsonl)
+    server_import = formats.add_parser("omnigent-server", help="Import sessions from an Omnigent server")
+    server_import.add_argument("--server", required=True)
+    server_import.add_argument("--profile", required=True)
+    server_import.add_argument("--user-id", required=True)
+    server_import.add_argument("--since-days", type=int, default=0)
+    server_import.add_argument("--limit", type=int, default=0)
+    server_import.set_defaults(handler=_command_import_omnigent_server)
 
     sync = commands.add_parser("sync", help="Explicit remote archival")
     sync_targets = sync.add_subparsers(dest="sync_target", required=True)
@@ -346,6 +420,19 @@ def _command_import_omnigent(args: argparse.Namespace) -> int:
 
 def _command_import_jsonl(args: argparse.Namespace) -> int:
     result = import_jsonl(database_url=_target(args), source=args.source)
+    _print_json(result)
+    return 1 if result["errors"] else 0
+
+
+def _command_import_omnigent_server(args: argparse.Namespace) -> int:
+    result = import_omnigent_server(
+        database_url=_target(args),
+        server=args.server,
+        profile=args.profile,
+        user_id=args.user_id,
+        since_days=args.since_days,
+        limit=args.limit,
+    )
     _print_json(result)
     return 1 if result["errors"] else 0
 
