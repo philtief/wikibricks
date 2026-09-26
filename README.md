@@ -62,7 +62,7 @@ WikiBricks requires Python 3.10 or newer. SQLite is included with Python, so
 there is no local database service to install.
 
 ```bash
-uv tool install https://github.com/philtief/wikibricks/releases/download/v0.11.0/wikibricks-0.11.0-py3-none-any.whl
+uv tool install https://github.com/philtief/wikibricks/releases/download/v0.11.1/wikibricks-0.11.1-py3-none-any.whl
 wikibricks install
 ```
 
@@ -78,7 +78,7 @@ client, run:
 
 ```bash
 claude --version
-uv tool install https://github.com/philtief/wikibricks/releases/download/v0.11.0/wikibricks-0.11.0-py3-none-any.whl
+uv tool install https://github.com/philtief/wikibricks/releases/download/v0.11.1/wikibricks-0.11.1-py3-none-any.whl
 wikibricks install
 claude mcp get wikibricks
 ```
@@ -110,7 +110,7 @@ brew tap omnigent-ai/tap
 brew install omnigent-ai/tap/omnigent
 omnigent --version
 
-uv tool install https://github.com/philtief/wikibricks/releases/download/v0.11.0/wikibricks-0.11.0-py3-none-any.whl
+uv tool install https://github.com/philtief/wikibricks/releases/download/v0.11.1/wikibricks-0.11.1-py3-none-any.whl
 wikibricks install
 ```
 
@@ -230,7 +230,7 @@ are never copied to SQLite or required by an agent harness.
 Reinstall WikiBricks with the Lakebase extra. Omnigent remains unchanged:
 
 ```bash
-uv tool install --force "wikibricks[lakebase] @ https://github.com/philtief/wikibricks/releases/download/v0.11.0/wikibricks-0.11.0-py3-none-any.whl"
+uv tool install --force "wikibricks[lakebase] @ https://github.com/philtief/wikibricks/releases/download/v0.11.1/wikibricks-0.11.1-py3-none-any.whl"
 ```
 
 Create `~/.wikibricks/config.yml`:

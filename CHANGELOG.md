@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.11.1 - 2026-09-26
 
 - Fixed a migration bug where five tables (`links`, `sources`, `operations`,
   `background_leases`, `sync_state`) were retroactively added to `0001_core.sql`
