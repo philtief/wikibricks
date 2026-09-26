@@ -1,7 +1,7 @@
 [
   {
     "name": "wiki_search",
-    "description": "Automatically call this at the start of tasks with possible prior context. Search local memory and return the best matching pages and sessions without asking the user to manage memory.",
+    "description": "Automatically call this at the start of tasks with possible prior context. Search local memory and return ranked snippets from the best matching pages and sessions without asking the user to manage memory. Use wiki_read_full when a result needs the full page.",
     "inputSchema": {
       "type": "object",
       "properties": {
