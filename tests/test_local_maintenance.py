@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import gzip
+import sqlite3
+from contextlib import closing, contextmanager
 from pathlib import Path
 
+import pytest
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from wikibricks import WikiClient
@@ -25,6 +29,37 @@ from wikibricks.postgres_store import PostgresStore
 from wikibricks.storage.sqlite_store import SQLiteStore
 
 
+def _populate_store(database_path: Path) -> SQLiteStore:
+    store = SQLiteStore(database_path)
+    store.migrate()
+    store.write_page(
+        "topics/backup",
+        "Backup",
+        {"summary": "durable", "body": "compact backup marker"},
+    )
+    store.ingest_session(
+        SessionRecord(
+            harness="test-harness",
+            external_id="backup-round-trip",
+            user_id="user",
+            events=[
+                SessionEvent("0", "user", "first compact backup event"),
+                SessionEvent("1", "assistant", "second compact backup event"),
+                SessionEvent("2", "tool_result", "third compact backup event"),
+            ],
+        )
+    )
+    return store
+
+
+def _row_counts(database_path: Path, tables: tuple[str, ...]) -> dict[str, int]:
+    with closing(sqlite3.connect(database_path)) as conn:
+        return {
+            table: int(conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0])
+            for table in tables
+        }
+
+
 def test_sqlite_online_backup_restores_a_consistent_database(tmp_path: Path):
     source = tmp_path / "source.db"
     restored = tmp_path / "restored.db"
@@ -40,6 +75,109 @@ def test_sqlite_online_backup_restores_a_consistent_database(tmp_path: Path):
 
     assert WikiClient(restored).read_page("topics/backup")["content"]["body"] == "copy"
     assert check_database(restored)["ok"] is True
+
+
+def test_sqlite_backup_replaces_non_sqlite_destination(tmp_path: Path):
+    source = tmp_path / "source.db"
+    destination = tmp_path / "backup.db"
+    _populate_store(source)
+    destination.write_bytes(b"PGDMP")
+
+    backup_database(source, destination)
+
+    with closing(sqlite3.connect(destination)) as conn:
+        assert conn.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+
+
+def test_sqlite_backup_failure_preserves_destination(tmp_path: Path, monkeypatch):
+    source = tmp_path / "source.db"
+    destination = tmp_path / "backup.db"
+    _populate_store(source)
+    backup_database(source, destination)
+    original = destination.read_bytes()
+
+    monkeypatch.setattr(SQLiteStore, "migrate", lambda self: None)
+
+    @contextmanager
+    def failing_connection(self, write: bool = False):
+        class FailingSource:
+            def backup(self, destination, **kwargs):
+                raise RuntimeError("backup failed midway")
+
+        yield FailingSource()
+
+    monkeypatch.setattr(SQLiteStore, "connection", failing_connection)
+    with pytest.raises(RuntimeError, match="backup failed midway"):
+        backup_database(source, destination)
+
+    assert destination.read_bytes() == original
+    assert not list(tmp_path.glob(".backup.db.*"))
+
+
+def test_sqlite_gzip_backup_round_trip_and_repair_search(tmp_path: Path):
+    source = tmp_path / "source.db"
+    compressed = tmp_path / "x.db.gz"
+    plain = tmp_path / "plain.db"
+    restored = tmp_path / "new-dir" / "restored.db"
+    store = _populate_store(source)
+    expected_counts = _row_counts(
+        source,
+        (
+            "pages",
+            "page_versions",
+            "sessions",
+            "session_events",
+            "session_event_versions",
+        ),
+    )
+
+    backup_database(source, compressed)
+    backup_database(source, plain)
+
+    assert compressed.read_bytes()[:2] == b"\x1f\x8b"
+    assert compressed.stat().st_size < plain.stat().st_size
+    extracted = tmp_path / "extracted.db"
+    with gzip.open(compressed, "rb") as source_handle:
+        extracted.write_bytes(source_handle.read())
+    derived_tables = (
+        "page_search_chunks",
+        "page_search_fts",
+        "session_search_chunks",
+        "session_search_fts",
+    )
+    assert not any(_row_counts(extracted, (table,))[table] for table in derived_tables)
+
+    restore_database(compressed, restored)
+    restored_counts = _row_counts(
+        restored,
+        (
+            "pages",
+            "page_versions",
+            "sessions",
+            "session_events",
+            "session_event_versions",
+        ),
+    )
+    client = WikiClient(restored)
+    assert client.search("compact backup marker")[0]["path"] == "topics/backup"
+    assert client.search("third compact backup event")[0]["page_type"] == "session"
+    assert check_database(restored)["ok"] is True
+    assert restored_counts == expected_counts
+    assert store.search("third compact backup event")[0]["page_type"] == "session"
+
+
+def test_sqlite_plain_backup_round_trip(tmp_path: Path):
+    source = tmp_path / "source.db"
+    backup = tmp_path / "backup.db"
+    restored = tmp_path / "restored.db"
+    store = _populate_store(source)
+
+    backup_database(source, backup)
+    restore_database(backup, restored)
+
+    assert WikiClient(restored).read_page("topics/backup")["content"]["body"] == "compact backup marker"
+    assert check_database(restored)["ok"] is True
+    assert store.search("compact backup marker")[0]["path"] == "topics/backup"
 
 
 def test_sqlite_curation_repairs_search_and_reports_hygiene(tmp_path: Path):

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- SQLite backups now build in a temporary file, omit derived search rows, are
+  vacuumed, pass an integrity check, and atomically replace the destination.
+  `.gz` output is gzip-compressed. Restore detects gzip by magic bytes and
+  repairs search indexes.
+- Retry Omnigent server session listing once with a freshly resolved token
+  after HTTP 401 or 403.
+
 ## 0.12.0 - 2026-09-26
 
 - Added `wikibricks import omnigent-server` for explicit, opt-in imports from
