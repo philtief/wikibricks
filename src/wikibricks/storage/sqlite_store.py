@@ -24,6 +24,7 @@ from wikibricks.storage.content import (
     iter_search_chunks,
     page_content_hash,
 )
+from wikibricks.storage.search import select_hits
 
 DEFAULT_DATABASE_PATH = Path.home() / ".wikibricks" / "wikibricks.db"
 _UNSET = object()
@@ -999,4 +1000,4 @@ class SQLiteStore:
                 best_hits[row[1]] = candidate
         hits = list(best_hits.values())
         hits.sort(key=lambda hit: (-hit["score"], hit["path"]))
-        return hits[:num_results]
+        return select_hits(hits, num_results)

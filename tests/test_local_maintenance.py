@@ -160,10 +160,13 @@ def test_sqlite_gzip_backup_round_trip_and_repair_search(tmp_path: Path):
     )
     client = WikiClient(restored)
     assert client.search("compact backup marker")[0]["path"] == "topics/backup"
-    assert client.search("third compact backup event")[0]["page_type"] == "session"
+    third_hits = client.search("third compact backup event")
+    assert third_hits[0]["path"] == "topics/backup"
+    assert third_hits[-1]["page_type"] == "session"
     assert check_database(restored)["ok"] is True
     assert restored_counts == expected_counts
-    assert store.search("third compact backup event")[0]["page_type"] == "session"
+    assert store.search("third compact backup event")[0]["path"] == "topics/backup"
+    assert store.search("third compact backup event")[-1]["page_type"] == "session"
 
 
 def test_sqlite_plain_backup_round_trip(tmp_path: Path):
