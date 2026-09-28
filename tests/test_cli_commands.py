@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.error import HTTPError
 
 import pytest
 
-from wikibricks.cli import main
+from wikibricks.cli import import_omnigent_server, main
+from wikibricks.models import SessionRecord
 
 
 def run_cli(database_path: Path, *arguments: str) -> int:
@@ -132,6 +134,98 @@ def test_sync_lakebase_uses_a_fresh_remote_target(
 
     assert remote_calls == [str(tmp_path / "remote.db")]
     assert result == {"status": "idle", "acknowledged": 0}
+
+
+def _fake_list_sessions(response):
+    calls = []
+
+    def fake_list_sessions(server, token):
+        calls.append(token)
+        if len(calls) == 1 and isinstance(response, HTTPError):
+            raise response
+        return [{"id": "session-one", "updated_at": 2}]
+
+    return fake_list_sessions, calls
+
+
+def test_import_omnigent_server_retries_forbidden_once(tmp_path, monkeypatch):
+    database = tmp_path / "wikibricks.db"
+    store = import_omnigent_server.__globals__["_store"](database)
+    store.migrate()
+    fake_list_sessions, calls = _fake_list_sessions(
+        HTTPError("url", 403, "Forbidden", None, None)
+    )
+    monkeypatch.setattr(
+        "wikibricks.cli.resolve_token",
+        lambda profile: f"token-{len(calls) + 1}",
+    )
+    monkeypatch.setattr("wikibricks.cli.list_sessions", fake_list_sessions)
+    monkeypatch.setattr(
+        "wikibricks.cli.export_session",
+        lambda server, session_id: {"id": session_id},
+    )
+    monkeypatch.setattr(
+        "wikibricks.cli.export_to_session",
+        lambda *args, **kwargs: SessionRecord(
+            harness="omnigent",
+            external_id="session-one",
+            user_id="user",
+            events=[],
+        ),
+    )
+
+    result = import_omnigent_server(
+        database_url=database,
+        server="example",
+        profile="profile",
+        user_id="user",
+    )
+
+    assert calls == ["token-1", "token-2"]
+    assert result["scanned"] == 1
+    assert store.get_sync_cursor("omnigent-server:example")
+
+
+def test_import_omnigent_server_second_forbidden_propagates(
+    tmp_path,
+    monkeypatch,
+):
+    error = HTTPError("url", 403, "Forbidden", None, None)
+
+    def fake_list_sessions(server, token):
+        calls.append(token)
+        raise error
+
+    calls = []
+    monkeypatch.setattr("wikibricks.cli.resolve_token", lambda profile: "token")
+    monkeypatch.setattr("wikibricks.cli.list_sessions", fake_list_sessions)
+
+    with pytest.raises(HTTPError):
+        import_omnigent_server(
+            database_url=tmp_path / "wikibricks.db",
+            server="example",
+            profile="profile",
+            user_id="user",
+        )
+
+    assert calls == ["token", "token"]
+
+
+def test_import_omnigent_server_server_error_does_not_retry(tmp_path, monkeypatch):
+    error = HTTPError("url", 500, "Error", None, None)
+    fake_list_sessions, calls = _fake_list_sessions(error)
+    monkeypatch.setattr("wikibricks.cli.resolve_token", lambda profile: "token")
+    monkeypatch.setattr("wikibricks.cli.list_sessions", fake_list_sessions)
+
+    with pytest.raises(HTTPError):
+        import_omnigent_server(
+            database_url=tmp_path / "wikibricks.db",
+            server="example",
+            profile="profile",
+            user_id="user",
+        )
+
+    assert calls == ["token"]
 
 
 @pytest.mark.parametrize("install_target", [(), ("omnigent",)])

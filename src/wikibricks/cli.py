@@ -8,6 +8,7 @@ import sys
 import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
+from urllib.error import HTTPError
 from uuid import UUID
 
 from wikibricks.adapters.jsonl import iter_jsonl_sessions
@@ -129,7 +130,13 @@ def import_omnigent_server(
     target = f"omnigent-server:{server}"
     saved = store.get_sync_cursor(target)
     token = resolve_token(profile)
-    listed_sessions = list_sessions(server, token)
+    try:
+        listed_sessions = list_sessions(server, token)
+    except HTTPError as error:
+        if error.code not in (401, 403):
+            raise
+        token = resolve_token(profile)
+        listed_sessions = list_sessions(server, token)
     since_epoch = int(time.time() - since_days * 86400) if since_days else None
 
     def source_updated_at(session: dict[str, Any]) -> int:

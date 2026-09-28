@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import gzip
+import os
 import shutil
 import sqlite3
 import subprocess
 import tempfile
+from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -314,8 +317,45 @@ def backup_database(database_url: str | Path, output: Path) -> Path:
         source = SQLiteStore(database_url)
         source.migrate()
         output.parent.mkdir(parents=True, exist_ok=True)
-        with source.connection() as source_conn, sqlite3.connect(output) as destination:
-            source_conn.backup(destination)
+        with tempfile.NamedTemporaryFile(
+            prefix=f".{output.name}.", suffix=".sqlite", dir=output.parent, delete=False
+        ) as handle:
+            temporary_sqlite = Path(handle.name)
+        temporary_output: Path | None = None
+        try:
+            with source.connection() as source_conn:
+                with closing(sqlite3.connect(temporary_sqlite)) as destination:
+                    source_conn.backup(destination)
+            with closing(sqlite3.connect(temporary_sqlite)) as conn:
+                with conn:
+                    for table in (
+                        "page_search_chunks",
+                        "page_search_fts",
+                        "session_search_chunks",
+                        "session_search_fts",
+                    ):
+                        conn.execute(f'DELETE FROM "{table}"')
+                conn.execute("VACUUM")
+                integrity = conn.execute("PRAGMA integrity_check").fetchone()[0]
+                if integrity != "ok":
+                    raise RuntimeError(f"backup database is invalid: {integrity}")
+            if output.suffix == ".gz":
+                with tempfile.NamedTemporaryFile(
+                    prefix=f".{output.name}.", suffix=".gz", dir=output.parent, delete=False
+                ) as handle:
+                    temporary_output = Path(handle.name)
+                with (
+                    gzip.open(temporary_output, "wb") as compressed,
+                    temporary_sqlite.open("rb") as plain,
+                ):
+                    shutil.copyfileobj(plain, compressed)
+            else:
+                temporary_output = temporary_sqlite
+            os.replace(temporary_output, output)
+        finally:
+            temporary_sqlite.unlink(missing_ok=True)
+            if temporary_output is not None:
+                temporary_output.unlink(missing_ok=True)
         return output
     executable = shutil.which("pg_dump")
     if executable is None:
@@ -344,24 +384,45 @@ def restore_database(backup: Path, database_url: str | Path) -> None:
         target = Path(database_url)
         if target.exists() and target.stat().st_size:
             raise RuntimeError("restore target database already exists")
-        with sqlite3.connect(backup) as source:
-            integrity = source.execute("PRAGMA integrity_check").fetchone()[0]
-            if integrity != "ok":
-                raise RuntimeError(f"backup database is invalid: {integrity}")
-            target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with backup.open("rb") as handle:
+            magic = handle.read(2)
+        decompressed: Path | None = None
+        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if magic == b"\x1f\x8b":
             with tempfile.NamedTemporaryFile(
                 prefix=f".{target.name}.",
-                suffix=".restore",
+                suffix=".decompressed",
                 dir=target.parent,
                 delete=False,
             ) as handle:
-                temporary = Path(handle.name)
-            try:
-                with sqlite3.connect(temporary) as destination:
-                    source.backup(destination)
-                temporary.replace(target)
-            finally:
-                temporary.unlink(missing_ok=True)
+                decompressed = Path(handle.name)
+            with (
+                gzip.open(backup, "rb") as compressed,
+                decompressed.open("wb") as plain,
+            ):
+                shutil.copyfileobj(compressed, plain)
+        try:
+            with closing(sqlite3.connect(decompressed or backup)) as source:
+                integrity = source.execute("PRAGMA integrity_check").fetchone()[0]
+                if integrity != "ok":
+                    raise RuntimeError(f"backup database is invalid: {integrity}")
+                with tempfile.NamedTemporaryFile(
+                    prefix=f".{target.name}.",
+                    suffix=".restore",
+                    dir=target.parent,
+                    delete=False,
+                ) as handle:
+                    temporary = Path(handle.name)
+                try:
+                    with closing(sqlite3.connect(temporary)) as destination:
+                        source.backup(destination)
+                    temporary.replace(target)
+                finally:
+                    temporary.unlink(missing_ok=True)
+        finally:
+            if decompressed is not None:
+                decompressed.unlink(missing_ok=True)
+        SQLiteStore(target).repair_search_indexes()
         return
     executable = shutil.which("pg_restore")
     if executable is None:

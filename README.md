@@ -214,6 +214,10 @@ wikibricks backup ~/.wikibricks/backups/wikibricks.db
 wikibricks vacuum
 ```
 
+`wikibricks backup` builds SQLite backups in a temporary file first and omits
+derived search data. A file ending in `.gz` is gzip-compressed. Restore detects
+gzip by magic bytes and repairs search indexes immediately.
+
 Session deletion is archive-gated. A retention run can remove an old session
 only after every immutable event version has a committed archive receipt:
 
