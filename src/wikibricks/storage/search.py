@@ -102,13 +102,20 @@ class SearchRepository:
                    OR a.title ILIKE %s
                    OR to_tsvector('simple', a.content_text) @@ q.value
             )
-            SELECT * FROM (
-                SELECT * FROM page_hits
-                UNION ALL SELECT * FROM session_hits
-                UNION ALL SELECT * FROM archive_hits
-            ) hits
+            SELECT id, path, title, page_type, content_text, tags, version, score
+            FROM (
+                SELECT hits.*, row_number() OVER (
+                    PARTITION BY (page_type = 'session')
+                    ORDER BY score DESC, path
+                ) AS kind_rank
+                FROM (
+                    SELECT * FROM page_hits
+                    UNION ALL SELECT * FROM session_hits
+                    UNION ALL SELECT * FROM archive_hits
+                ) hits
+            ) ranked
+            WHERE kind_rank <= %s
             ORDER BY score DESC, path
-            LIMIT %s
         """
         params = (
             query,
@@ -131,7 +138,7 @@ class SearchRepository:
         )
         with self.store.connection() as conn:
             rows = conn.execute(statement, params).fetchall()
-        return [
+        hits = [
             {
                 "page_id": str(row[0]) if row[0] is not None else None,
                 "path": row[1],
@@ -144,3 +151,13 @@ class SearchRepository:
             }
             for row in rows
         ]
+        return select_hits(hits, num_results)
+
+
+def select_hits(hits: list[dict[str, Any]], num_results: int) -> list[dict[str, Any]]:
+    """Return curated pages first, then sessions; each kind may fill the other's gap."""
+    sessions = [hit for hit in hits if hit["page_type"] == "session"]
+    pages = [hit for hit in hits if hit["page_type"] != "session"]
+    page_slots = min(len(pages), num_results - min(len(sessions), num_results // 2))
+    session_slots = min(len(sessions), num_results - page_slots)
+    return pages[:page_slots] + sessions[:session_slots]

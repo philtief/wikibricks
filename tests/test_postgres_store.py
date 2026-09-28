@@ -97,6 +97,46 @@ def test_full_text_search_uses_bounded_chunks(store: PostgresStore):
     assert largest <= MAX_SEARCH_CHUNK_BYTES
 
 
+def test_search_keeps_weak_page_matches_before_strong_sessions(store: PostgresStore):
+    tokens = "lakebase remote maintenance staging"
+    for index in range(3):
+        store.write_page(
+            f"topics/lakebase-{index}",
+            f"Lakebase page {index}",
+            # PostgreSQL websearch_to_tsquery requires every term to match.
+            {"body": "filler " * 40 + f"{tokens} " + "filler " * 40},
+        )
+    for index in range(6):
+        record = _session([SessionEvent("0", "user", f"{tokens} " * 4)])
+        record = SessionRecord(
+            harness=record.harness,
+            external_id=f"conversation-{index}",
+            user_id=record.user_id,
+            agent=record.agent,
+            workspace=record.workspace,
+            started_at=record.started_at,
+            updated_at=record.updated_at,
+            events=record.events,
+            metadata=record.metadata,
+        )
+        store.ingest_session(record)
+
+    hits = store.search(tokens)
+
+    assert [hit["page_type"] for hit in hits] == [
+        "concept",
+        "concept",
+        "concept",
+        "session",
+        "session",
+    ]
+    assert [hit["path"] for hit in hits[:3]] == [
+        "topics/lakebase-0",
+        "topics/lakebase-1",
+        "topics/lakebase-2",
+    ]
+
+
 def test_session_reimport_is_idempotent_and_changed_events_get_history(store: PostgresStore):
     initial = _session(
         [

@@ -7,6 +7,7 @@ import pytest
 
 from wikibricks.models import SessionEvent, SessionRecord
 from wikibricks.storage.content import MAX_SEARCH_CHUNK_BYTES
+from wikibricks.storage.search import select_hits
 from wikibricks.storage.sqlite_store import SQLiteStore
 
 
@@ -149,6 +150,30 @@ def test_only_one_process_holds_the_background_lease(store: SQLiteStore):
     assert store.acquire_lease("maintenance", "worker-b", 60, now=161)
 
 
+@pytest.mark.parametrize(
+    ("pages", "sessions", "expected", "num_results"),
+    [
+        ([6, 1, 2, 3, 4, 5], [6, 7, 8, 9, 10, 11], ["p6", "p1", "p2", "s6", "s7"], 5),
+        ([1], [6, 7, 8, 9, 10, 11], ["p1", "s6", "s7", "s8", "s9"], 5),
+        ([], [6, 7, 8, 9, 10, 11], ["s6", "s7", "s8", "s9", "s10"], 5),
+        ([6, 1, 2, 3, 4, 5], [], ["p6", "p1", "p2", "p3", "p4"], 5),
+        ([1, 2], [3], ["p1"], 1),
+    ],
+)
+def test_select_hits_returns_pages_first_then_sessions(
+    pages: list[int],
+    sessions: list[int],
+    expected: list[str],
+    num_results: int,
+):
+    hits = [{"path": f"p{path}", "page_type": "page"} for path in pages]
+    hits += [{"path": f"s{path}", "page_type": "session"} for path in sessions]
+
+    selected = select_hits(hits, num_results)
+
+    assert [hit["path"] for hit in selected] == expected
+
+
 def test_search_ranks_full_matches_above_a_single_token_distractor(
     store: SQLiteStore,
 ):
@@ -180,10 +205,47 @@ def test_search_ranks_full_matches_above_a_single_token_distractor(
     assert paths.index("topics/lakebase-maintenance") == 0
     session_paths = [path for path in paths if path.startswith("omnigent-sessions/")]
     assert len(session_paths) == 1
-    assert paths.index(session_paths[0]) < paths.index("synthesis/agent-atlas")
-    scores = [hit["score"] for hit in hits[: paths.index("synthesis/agent-atlas") + 1]]
-    assert all(isinstance(score, float) and 0 <= score <= 1 for score in scores)
-    assert all(left > right for left, right in zip(scores, scores[1:]))
+    assert all(path.startswith("topics/") or path.startswith("synthesis/") for path in paths[:2])
+    assert paths[2:] == session_paths
+    page_scores = [hit["score"] for hit in hits[:2]]
+    assert all(isinstance(score, float) and 0 <= score <= 1 for score in page_scores)
+    assert all(left > right for left, right in zip(page_scores, page_scores[1:]))
+
+
+def test_search_keeps_weak_page_matches_before_strong_sessions(store: SQLiteStore):
+    tokens = "lakebase remote maintenance staging"
+    for index in range(3):
+        store.write_page(
+            f"topics/lakebase-{index}",
+            f"Lakebase page {index}",
+            {"body": "filler " * 40 + "lakebase " + "filler " * 40},
+        )
+    for index in range(6):
+        store.ingest_session(
+            _session(
+                [SessionEvent("0", "user", f"{tokens} " * 4)],
+                external_id=f"session-{index}",
+            )
+        )
+
+    hits = store.search(tokens)
+
+    assert [hit["page_type"] for hit in hits] == [
+        "concept",
+        "concept",
+        "concept",
+        "session",
+        "session",
+    ]
+    assert [hit["path"] for hit in hits[:3]] == [
+        "topics/lakebase-0",
+        "topics/lakebase-1",
+        "topics/lakebase-2",
+    ]
+    page_scores = [hit["score"] for hit in hits[:3]]
+    session_scores = [hit["score"] for hit in hits[3:]]
+    assert all(left >= right for left, right in zip(page_scores, page_scores[1:]))
+    assert all(left >= right for left, right in zip(session_scores, session_scores[1:]))
 
 
 def test_search_scores_exact_paths_and_bounded_snippets(store: SQLiteStore):

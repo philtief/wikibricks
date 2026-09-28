@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Search now reserves room for matched curated pages and returns pages before
+  recorded sessions.
+
 ## 0.12.1 - 2026-09-28
 
 - SQLite backups now build in a temporary file, omit derived search rows, are
