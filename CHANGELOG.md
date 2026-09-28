@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.1 - 2026-09-28
 
 - SQLite backups now build in a temporary file, omit derived search rows, are
   vacuumed, pass an integrity check, and atomically replace the destination.
