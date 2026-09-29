@@ -566,6 +566,82 @@ def test_run_curator_updates_covered_page(tmp_path: Path):
     }
 
 
+def test_run_curator_labels_created_page_and_applied_link(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    store.write_page(
+        "topics/related-target",
+        "Related Target",
+        {"summary": "Label project target", "body": "The label project target already exists."},
+    )
+    with store.connection(write=True) as conn:
+        conn.execute(
+            "UPDATE pages SET updated_at = ? WHERE path = 'topics/related-target'",
+            (_recent_timestamp(4),),
+        )
+    _backlog_project(store, project="label-project")
+
+    calls = []
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        calls.append(request)
+        if len(calls) == 1:
+            return {"proposals": [_proposal(
+                operation="create_page",
+                path=request["living_page"],
+                evidence_id=request["evidence"][0]["evidence_id"],
+            )]}
+        return {
+            "proposals": [{
+                "group": "main",
+                "operation": "add_link",
+                "path": request["living_page"],
+                "target_path": "topics/related-target",
+                "link_type": "related",
+                "evidence_ids": [request["evidence"][0]["evidence_id"]],
+                "reason": "The pages cover related concepts.",
+                "risk_class": "low",
+            }]
+        }
+
+    result = run_curator(store.database_path, chat=chat, projects=1)
+    assert result["projects"][0]["status"] == "applied"
+
+    with store.connection(write=True) as conn:
+        conn.execute(
+            "UPDATE pages SET updated_at = ? WHERE path = ?",
+            (_recent_timestamp(3), "topics/label-project"),
+        )
+
+    _ingest(
+        store,
+        "label-project-second",
+        "/Users/u/work/label-project",
+        _recent_timestamp(1),
+        [SessionEvent("user-2", "user", "another durable fact")],
+    )
+
+    result = run_curator(store.database_path, chat=chat, projects=1)
+    assert result["projects"][0]["status"] == "applied"
+    assert result["projects"][0]["counts"] == {"applied": 1}
+    with store.connection() as conn:
+        version = conn.execute(
+            "SELECT created_by FROM page_versions "
+            "WHERE version_id = (SELECT current_version_id FROM pages WHERE path = ?)",
+            ("topics/label-project",),
+        ).fetchone()
+        link = conn.execute(
+            "SELECT origin FROM links WHERE source_page_id = "
+            "(SELECT page_id FROM pages WHERE path = ?) "
+            "AND target_page_id = (SELECT page_id FROM pages WHERE path = ?)",
+            ("topics/label-project", "topics/related-target"),
+        ).fetchone()
+
+    assert tuple(version) == ("local-curator",)
+    assert tuple(link) == ("local-curator",)
+
+
 def test_shrink_guard_leaves_page_for_review(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
