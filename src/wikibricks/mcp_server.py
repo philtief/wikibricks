@@ -19,6 +19,7 @@ def _build_tools() -> dict[str, Any]:
     client = WikiClient()
     write_tools = make_agent_tools(database_path=str(client.database_path))
     def wiki_index(prefix=None):
+        from wikibricks.curation.backlog import load_curation_backlog
         from wikibricks.maintenance import capture_status
 
         pages = [
@@ -28,6 +29,7 @@ def _build_tools() -> dict[str, Any]:
         ]
         with client.store.connection() as conn:
             status = capture_status(conn)
+            backlog = load_curation_backlog(conn)
         if status["capture_stale"]:
             last = status["capture"]["last_session_at"] or "never"
             pages.append(
@@ -39,6 +41,19 @@ def _build_tools() -> dict[str, Any]:
                         f"The newest recorded session is from {last}. Tell the user that "
                         "memory capture has stopped and that `wikibricks check` shows details."
                     ),
+                }
+            )
+        if backlog:
+            pages.append(
+                {
+                    "path": "_meta/curation-backlog",
+                    "title": "Curation backlog: projects with new sessions and no updated page",
+                    "page_type": "backlog",
+                    "summary": (
+                        "Update or create the project's topics/ page with wiki_write_page "
+                        "when the current task touches one of these projects."
+                    ),
+                    "items": backlog,
                 }
             )
         return pages

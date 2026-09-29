@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Local curation now reports the newest projects whose sessions are newer than
+  any covering page, and `wiki_index` surfaces that bounded backlog to agents.
+
 ## 0.12.2 - 2026-09-28
 
 - Search now reserves room for matched curated pages and returns pages before

@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from wikibricks.client import WikiClient
+from wikibricks.curation.backlog import load_curation_backlog
 from wikibricks.storage.content import insert_search_chunks
 from wikibricks.storage.sqlite_store import SQLiteStore
 from wikibricks.storage.targets import is_postgres_target
@@ -200,6 +201,7 @@ def curate_database(
                 "SELECT 1 FROM links l WHERE l.source_page_id = p.page_id "
                 "OR l.target_page_id = p.page_id) ORDER BY p.path"
             ).fetchall()
+            curation_backlog = load_curation_backlog(conn)
         result = {
             "ok": True,
             "index": index_result,
@@ -210,6 +212,7 @@ def curate_database(
                 for paths, count in duplicate_rows
             ],
             "orphan_pages": [row[0] for row in orphan_rows],
+            "curation_backlog": curation_backlog,
             "pruned_sessions": 0,
             "pending_outbox": store.outbox_count(),
         }
@@ -260,6 +263,7 @@ def curate_database(
             "AND NOT EXISTS (SELECT 1 FROM links l WHERE l.source_page_id = p.page_id "
             "OR l.target_page_id = p.page_id) ORDER BY p.path"
         ).fetchall()
+        curation_backlog = load_curation_backlog(conn)
 
     pruned_sessions = 0
     if prune_archived_sessions_after_days is not None:
@@ -305,6 +309,7 @@ def curate_database(
             for paths, count in duplicate_rows
         ],
         "orphan_pages": [row[0] for row in orphan_rows],
+        "curation_backlog": curation_backlog,
         "pruned_sessions": pruned_sessions,
         "pending_outbox": store.outbox_count(),
     }
