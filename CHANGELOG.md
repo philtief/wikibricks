@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.14.0 - 2026-09-29
 
 - Group curation sessions by routed topic pages instead of workspace folder names.
   The nightly curator asks the model which topic each container-folder session is
