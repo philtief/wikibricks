@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+- Added optional `wikibricks-curator propose` for local backlog curation. It
+  stores one model-generated run, auto-applies low-risk groups under the safe
+  policy, leaves other groups for review, and lists pending review runs in
+  `wiki_index`.
+
 ## 0.12.3 - 2026-09-29
 
 - Local curation now reports the newest projects whose sessions are newer than

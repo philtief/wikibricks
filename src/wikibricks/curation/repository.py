@@ -136,6 +136,18 @@ def publish_manifest(
         return _insert_manifest(conn, checked, received=False)
 
 
+def store_manifest(
+    store: PostgresStore | SQLiteStore,
+    manifest: dict[str, Any],
+) -> bool:
+    checked = validate_manifest(manifest)
+    if isinstance(store, SQLiteStore):
+        with store.connection(write=True) as conn:
+            return _insert_manifest(conn, checked, received=True)
+    with store.connection() as conn, conn.transaction():
+        return _insert_manifest(conn, checked, received=True)
+
+
 def pull_manifests(
     local: PostgresStore | SQLiteStore,
     remote: PostgresStore,
@@ -153,13 +165,8 @@ def pull_manifests(
     received_runs = 0
     received_patches = 0
     for row in rows:
-        manifest = validate_manifest(dict(row[0]))
-        if isinstance(local, SQLiteStore):
-            with local.connection(write=True) as conn:
-                inserted = _insert_manifest(conn, manifest, received=True)
-        else:
-            with local.connection() as conn, conn.transaction():
-                inserted = _insert_manifest(conn, manifest, received=True)
+        manifest = dict(row[0])
+        inserted = store_manifest(local, manifest)
         if inserted:
             received_runs += 1
             received_patches += len(manifest["patches"])
@@ -415,5 +422,19 @@ def list_conflicts(store: PostgresStore | SQLiteStore) -> list[dict[str, Any]]:
             ),
             "created_at": row[4],
         }
+        for row in rows
+    ]
+
+
+def pending_review_runs(store: PostgresStore | SQLiteStore) -> list[dict[str, Any]]:
+    store.migrate()
+    with store.connection() as conn:
+        rows = conn.execute(
+            "SELECT p.run_id, count(*) FROM curation_patches p "
+            "LEFT JOIN curation_receipts r ON r.patch_id = p.patch_id "
+            "WHERE r.patch_id IS NULL GROUP BY p.run_id ORDER BY p.run_id"
+        ).fetchall()
+    return [
+        {"run_id": str(row[0]), "pending_patches": int(row[1])}
         for row in rows
     ]

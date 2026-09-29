@@ -225,6 +225,29 @@ only after every immutable event version has a committed archive receipt:
 wikibricks curate --prune-archived-sessions-after-days 90
 ```
 
+## Nightly curation (optional)
+
+`wikibricks-curator propose` asks one Databricks model for updates to the top
+local backlog projects. It writes those proposals as a curation run, applies
+low-risk groups with the safe policy, and leaves high-risk or conflicting
+groups for review. Run it only when you intend to call the model:
+
+```bash
+wikibricks-curator propose \
+  --database-path ~/.wikibricks/wikibricks.db \
+  --base-url https://YOUR-DATABRICKS-WORKSPACE/serving-endpoints \
+  --profile PROFILE
+```
+
+Use `--dry-run` to print proposals without writing. Use `--no-apply` to store
+every run for inspection. `wiki_index` lists pending runs as
+`_meta/curation-review`. After reading them, run:
+
+```bash
+wikibricks sync plan RUN_ID
+wikibricks sync apply RUN_ID --policy all
+```
+
 ## Optional Lakebase curation
 
 Local memory does not need Lakebase. Configure it only when you want a remote
