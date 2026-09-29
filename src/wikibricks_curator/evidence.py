@@ -8,11 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from wikibricks.curation.backlog import session_targets
 from wikibricks.storage.sqlite_store import SQLiteStore
-
-
-def _normalize(value: str) -> str:
-    return Path(value).name.strip().lower().replace(" ", "-").replace("_", "-")
 
 
 def _database_path(conn: sqlite3.Connection) -> Path | None:
@@ -91,7 +88,7 @@ def _moment(value: Any) -> datetime:
 def _evidence(
     conn: sqlite3.Connection,
     *,
-    project: str,
+    living_page: str,
     cursor: str | None,
     last_page_update: str | None,
     max_events: int,
@@ -100,13 +97,20 @@ def _evidence(
 ) -> tuple[list[dict[str, Any]], str]:
     # Compare parsed datetimes: stored ISO strings carry different UTC offsets.
     after = [_moment(value) for value in (cursor, last_page_update) if value]
+    targets = session_targets(conn)
+    session_rows = conn.execute(
+        "SELECT s.session_id, s.workspace, COALESCE(s.source_updated_at, s.updated_at), "
+        "t.created_at "
+        "FROM sessions s LEFT JOIN session_topics t ON t.session_id = s.session_id"
+    ).fetchall()
     sessions = [
-        (_moment(row[2]), row[0])
-        for row in conn.execute(
-            "SELECT session_id, workspace, COALESCE(source_updated_at, updated_at) "
-            "FROM sessions WHERE workspace IS NOT NULL"
-        ).fetchall()
-        if _normalize(row[1]) == project and all(_moment(row[2]) > bound for bound in after)
+        (
+            _moment(row[2]) if row[3] is None else max(_moment(row[2]), _moment(row[3])),
+            row[0],
+        )
+        for row in session_rows
+        if targets.get(row[0]) == living_page
+        and all(_moment(row[2] if row[3] is None else max(_moment(row[2]), _moment(row[3]))) > bound for bound in after)
     ]
     if not sessions:
         return [], ""
@@ -166,10 +170,7 @@ def build_request(
     """Build one bounded curator request for a backlog item."""
     project = item["project"]
     requested_paths = list(dict.fromkeys(item["pages"]))
-    living_page = next(
-        (path for path in requested_paths if path.startswith("topics/")),
-        f"topics/{project}",
-    )
+    living_page = item["living_page"]
     paths = set(requested_paths) | {living_page}
     pages = _active_pages(
         conn,
@@ -179,7 +180,7 @@ def build_request(
     )
     evidence, newest_evidence_at = _evidence(
         conn,
-        project=project,
+        living_page=living_page,
         cursor=cursor,
         last_page_update=item.get("last_page_update"),
         max_events=max_events,
@@ -192,7 +193,7 @@ def build_request(
     page_ids = {page["evidence_id"] for page in pages}
     return {
         "request": {
-            "project": project,
+            "project": item["project"],
             "living_page": living_page,
             "current_pages": pages,
             "evidence": evidence,

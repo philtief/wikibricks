@@ -1,0 +1,18 @@
+{
+  "type": "object",
+  "properties": {
+    "routes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "session_id": {"type": "string"},
+          "page_path": {"type": ["string", "null"]},
+          "reason": {"type": "string"}
+        },
+        "required": ["session_id", "page_path", "reason"]
+      }
+    }
+  },
+  "required": ["routes"]
+}

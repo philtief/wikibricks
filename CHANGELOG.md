@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Group curation sessions by routed topic pages instead of workspace folder names.
+  The nightly curator asks the model which topic each container-folder session is
+  about before building the backlog.
 - Label pages and links written by the local curator as `local-curator`.
 
 ## 0.13.0 - 2026-09-29

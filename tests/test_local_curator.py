@@ -94,10 +94,28 @@ def _populate(tmp_path: Path) -> tuple[SQLiteStore, dict]:
         "beta",
         "/Users/u/work/beta",
         NEW_SESSION,
-        [SessionEvent("user-beta", "user", "beta user")],
+            [SessionEvent("user-beta", "user", "beta user")],
     )
+    with store.connection(write=True) as conn:
+        session_ids = {
+            row["external_id"]: row["session_id"]
+            for row in conn.execute(
+                "SELECT external_id, session_id FROM sessions WHERE external_id IN "
+                "('old-alpha', 'middle-alpha', 'new-alpha')"
+            ).fetchall()
+        }
+        conn.executemany(
+            "INSERT INTO session_topics(session_id, page_path, origin, created_at) "
+            "VALUES (?, 'topics/alpha', 'manual', ?)",
+            [
+                (session_ids["old-alpha"], OLD_SESSION),
+                (session_ids["middle-alpha"], MIDDLE_SESSION),
+                (session_ids["new-alpha"], NEW_SESSION),
+            ],
+        )
     item = {
         "project": "alpha-one",
+        "living_page": "topics/alpha",
         "workspace": "/Users/u/work/Alpha One",
         "new_sessions": 2,
         "last_session_at": NEW_SESSION,
@@ -212,6 +230,7 @@ def test_build_request_defaults_living_page_for_a_project_without_coverage(tmp_p
             conn,
             {
                 "project": "beta",
+                "living_page": "topics/beta",
                 "workspace": "/Users/u/work/beta",
                 "new_sessions": 1,
                 "last_session_at": NEW_SESSION,
@@ -431,7 +450,12 @@ def test_build_request_compares_timestamps_across_utc_offsets(tmp_path: Path):
             [SessionEvent("0", "user", "before the page update")])
     _ingest(store, "after", "/Users/u/work/offsets", "2026-01-04T11:30:00+00:00",
             [SessionEvent("0", "user", "after the page update")])
-    item = {"project": "offsets", "pages": [], "last_page_update": "2026-01-04T11:00:00+00:00"}
+    item = {
+        "project": "offsets",
+        "living_page": "topics/offsets",
+        "pages": [],
+        "last_page_update": "2026-01-04T11:00:00+00:00",
+    }
 
     with store.connection() as conn:
         built = build_request(conn, item)

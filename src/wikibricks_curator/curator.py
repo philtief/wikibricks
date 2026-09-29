@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import replace
+from datetime import datetime, timedelta, timezone
 from importlib.resources import files
 from pathlib import Path
 from typing import Any, Callable
@@ -19,17 +20,11 @@ from wikibricks.curation import (
 from wikibricks.curation.backlog import load_curation_backlog
 from wikibricks.storage.sqlite_store import SQLiteStore
 from wikibricks_curator.evidence import build_request
+from wikibricks_curator.router import route_sessions
 from wikibricks_remote.proposals import _PROPOSAL_FIELDS, build_patches
 from wikibricks_remote.resources import load_policy, load_prompt, load_schema
 
 Chat = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
-
-
-def _living_page(item: dict[str, Any]) -> str:
-    return next(
-        (path for path in item.get("pages", []) if path.startswith("topics/")),
-        f"topics/{item['project']}",
-    )
 
 
 def _proposal_result(raw: dict[str, Any]) -> list[dict[str, Any]]:
@@ -141,6 +136,12 @@ def run_curator(
     )
     schema = load_schema()
     policy = replace(load_policy(), allowed_operations=("create_page", "update_page", "add_link"))
+    routing = route_sessions(
+        store,
+        chat,
+        since=datetime.now(timezone.utc) - timedelta(days=7),
+        dry_run=dry_run,
+    )
     with store.connection() as conn:
         backlog = load_curation_backlog(conn, limit=projects)
     replica_id = get_or_create_replica_id(store)
@@ -149,7 +150,7 @@ def run_curator(
 
     for item in backlog:
         project = item["project"]
-        living_page = _living_page(item)
+        living_page = item["living_page"]
         result: dict[str, Any] = {
             "project": project,
             "living_page": living_page,
@@ -242,4 +243,4 @@ def run_curator(
         )
         results.append(result)
 
-    return {"projects": results, "errors": errors}
+    return {"projects": results, "errors": errors, "routing": routing}
