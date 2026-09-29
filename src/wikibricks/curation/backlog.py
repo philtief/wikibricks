@@ -204,9 +204,18 @@ def load_curation_backlog(conn: Any, **kwargs: Any) -> list[dict[str, Any]]:
     """Load sessions and active pages, then calculate the curation backlog."""
     # Count sessions by when the work happened, not when a backfill imported them.
     sessions = conn.execute(
-        "SELECT s.session_id, s.workspace, "
-        "COALESCE(s.source_updated_at, s.updated_at) FROM sessions s"
+        "SELECT s.session_id, s.workspace, COALESCE(s.source_updated_at, s.updated_at), "
+        "t.created_at "
+        "FROM sessions s LEFT JOIN session_topics t ON t.session_id = s.session_id"
     ).fetchall()
+    sessions = [
+        (
+            row[0],
+            row[1],
+            _timestamp(row[2]) if row[3] is None else max(_timestamp(row[2]), _timestamp(row[3])),
+        )
+        for row in sessions
+    ]
     pages = conn.execute(
         "SELECT p.path, v.title, p.updated_at FROM pages p "
         "JOIN page_versions v ON v.version_id = p.current_version_id "

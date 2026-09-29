@@ -98,14 +98,19 @@ def _evidence(
     # Compare parsed datetimes: stored ISO strings carry different UTC offsets.
     after = [_moment(value) for value in (cursor, last_page_update) if value]
     targets = session_targets(conn)
+    session_rows = conn.execute(
+        "SELECT s.session_id, s.workspace, COALESCE(s.source_updated_at, s.updated_at), "
+        "t.created_at "
+        "FROM sessions s LEFT JOIN session_topics t ON t.session_id = s.session_id"
+    ).fetchall()
     sessions = [
-        (_moment(row[2]), row[0])
-        for row in conn.execute(
-            "SELECT session_id, workspace, "
-            "COALESCE(source_updated_at, updated_at) FROM sessions"
-        ).fetchall()
+        (
+            _moment(row[2]) if row[3] is None else max(_moment(row[2]), _moment(row[3])),
+            row[0],
+        )
+        for row in session_rows
         if targets.get(row[0]) == living_page
-        and all(_moment(row[2]) > bound for bound in after)
+        and all(_moment(row[2] if row[3] is None else max(_moment(row[2]), _moment(row[3]))) > bound for bound in after)
     ]
     if not sessions:
         return [], ""
