@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.12.3 - 2026-09-29
 
 - Local curation now reports the newest projects whose sessions are newer than
   any covering page, and `wiki_index` surfaces that bounded backlog to agents.
