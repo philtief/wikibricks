@@ -1,5 +1,8 @@
 # Changelog
 
+## Unreleased
+- Added deterministic mention links during local curation.
+
 ## 0.12.2 - 2026-09-28
 
 - Search now reserves room for matched curated pages and returns pages before
