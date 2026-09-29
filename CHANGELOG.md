@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Label pages and links written by the local curator as `local-curator`.
+
 ## 0.13.0 - 2026-09-29
 
 - Added optional `wikibricks-curator propose` for local backlog curation. It
