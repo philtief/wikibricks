@@ -15,6 +15,7 @@ from typing import Any
 
 from wikibricks.client import WikiClient
 from wikibricks.curation.backlog import load_curation_backlog
+from wikibricks.curation.mentions import new_mention_edges
 from wikibricks.storage.content import insert_search_chunks
 from wikibricks.storage.sqlite_store import SQLiteStore
 from wikibricks.storage.targets import is_postgres_target
@@ -195,6 +196,9 @@ def curate_database(
                 "WHERE p.status = 'active' AND p.path <> '_meta/index' "
                 "GROUP BY v.content_hash HAVING count(*) > 1 ORDER BY min(p.path)"
             ).fetchall()
+            linked_pages = store.commit_edges(new_mention_edges(conn))
+
+        with store.connection() as conn:
             orphan_rows = conn.execute(
                 "SELECT p.path FROM pages p WHERE p.status = 'active' "
                 "AND p.path NOT LIKE '_meta/%' AND NOT EXISTS ("
@@ -214,6 +218,7 @@ def curate_database(
             "orphan_pages": [row[0] for row in orphan_rows],
             "curation_backlog": curation_backlog,
             "pruned_sessions": 0,
+            "linked_pages": linked_pages,
             "pending_outbox": store.outbox_count(),
         }
         store.log("curate_local", details=result)
@@ -257,6 +262,9 @@ def curate_database(
             "WHERE p.status = 'active' AND p.path <> '_meta/index' GROUP BY v.content_hash "
             "HAVING count(*) > 1 ORDER BY min(p.path)"
         ).fetchall()
+        linked_pages = store.commit_edges(new_mention_edges(conn))
+
+    with store.connection() as conn:
         orphan_rows = conn.execute(
             "SELECT p.path FROM pages p WHERE p.status = 'active' "
             "AND p.path NOT LIKE '_meta/%' "
@@ -311,6 +319,7 @@ def curate_database(
         "orphan_pages": [row[0] for row in orphan_rows],
         "curation_backlog": curation_backlog,
         "pruned_sessions": pruned_sessions,
+        "linked_pages": linked_pages,
         "pending_outbox": store.outbox_count(),
     }
     store.log("curate_local", details=result)

@@ -4,6 +4,7 @@
 
 - Local curation now reports the newest projects whose sessions are newer than
   any covering page, and `wiki_index` surfaces that bounded backlog to agents.
+- `curate` links pages that mention another page's path or title.
 
 ## 0.12.2 - 2026-09-28
 
