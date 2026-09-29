@@ -20,6 +20,7 @@ def _build_tools() -> dict[str, Any]:
     write_tools = make_agent_tools(database_path=str(client.database_path))
     def wiki_index(prefix=None):
         from wikibricks.curation.backlog import load_curation_backlog
+        from wikibricks.curation.repository import pending_review_runs
         from wikibricks.maintenance import capture_status
 
         pages = [
@@ -54,6 +55,23 @@ def _build_tools() -> dict[str, Any]:
                         "when the current task touches one of these projects."
                     ),
                     "items": backlog,
+                }
+            )
+        pending_runs = pending_review_runs(client.store)
+        if pending_runs:
+            pending = sum(run["pending_patches"] for run in pending_runs)
+            pages.append(
+                {
+                    "path": "_meta/curation-review",
+                    "page_type": "review",
+                    "title": f"Curation review: {pending} proposed changes wait for review",
+                    "summary": (
+                        f"Tell the user about these proposed changes, or for example run "
+                        f"`wikibricks sync plan {pending_runs[0]['run_id']}` and "
+                        f"`wikibricks sync apply {pending_runs[0]['run_id']} --policy all` "
+                        "after checking."
+                    ),
+                    "items": pending_runs,
                 }
             )
         return pages

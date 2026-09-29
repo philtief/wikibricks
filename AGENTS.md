@@ -19,6 +19,8 @@ WikiBricks is shared memory for multiple agent harnesses.
   when Lakebase, Databricks credentials, and the network are absent.
 - `import omnigent-server` is an explicit, opt-in network command like
   `sync lakebase`.
+- `wikibricks-curator` is an optional, explicit network command that calls one
+  model. The core library still never calls a model.
 
 The library does not call a language model. The active agent makes semantic
 decisions about page content. Deterministic local maintenance repairs indexes

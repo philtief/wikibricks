@@ -74,6 +74,7 @@ def chat_json(
     temperature: float = 0.0,
     max_tokens: int = 8192,
     timeout: float = 180,
+    reasoning_effort: str | None = "low",
     opener=urlopen,
 ) -> dict[str, Any]:
     """Call an OpenAI-compatible chat endpoint and return its JSON object."""
@@ -93,6 +94,9 @@ def chat_json(
         "temperature": temperature,
         "max_tokens": max_tokens,
     }
+    if reasoning_effort is not None:
+        # GLM 5.3 Flash otherwise spends the whole output budget on reasoning.
+        payload["reasoning_effort"] = reasoning_effort
     http_request = Request(
         f"{base_url.rstrip('/')}/chat/completions",
         data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
@@ -103,7 +107,7 @@ def chat_json(
         method="POST",
     )
     try:
-        response = opener(http_request, timeout)
+        response = opener(http_request, timeout=timeout)
     except HTTPError as error:
         raise RuntimeError(f"curation model request failed: HTTP {error.code}") from error
     return _json_content(response)

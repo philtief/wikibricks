@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime, timedelta, timezone
+from importlib.resources import files
 from pathlib import Path
 from urllib.error import HTTPError
 from urllib.request import Request
@@ -17,6 +19,10 @@ TEN = "2026-01-03T10:00:00+00:00"
 OLD_SESSION = "2026-01-03T09:00:00+00:00"
 MIDDLE_SESSION = "2026-01-04T09:00:00+00:00"
 NEW_SESSION = "2026-01-04T11:00:00+00:00"
+
+
+def _recent_timestamp(offset_hours: int = 1) -> str:
+    return (datetime.now(timezone.utc) - timedelta(hours=offset_hours)).isoformat()
 
 
 def _store(tmp_path: Path) -> SQLiteStore:
@@ -433,3 +439,441 @@ def test_build_request_compares_timestamps_across_utc_offsets(tmp_path: Path):
 
     assert [entry["text"] for entry in built["request"]["evidence"]] == ["after the page update"]
     assert [entry["text"] for entry in later["request"]["evidence"]] == ["after the page update"]
+
+
+def _backlog_project(
+    store: SQLiteStore,
+    *,
+    project: str,
+    page: bool = False,
+) -> dict:
+    from wikibricks.curation.backlog import load_curation_backlog
+
+    if page:
+        store.write_page(
+            f"topics/{project}",
+            project.title(),
+            {"summary": "current summary", "body": "The project page contains durable facts."},
+        )
+        with store.connection(write=True) as conn:
+            conn.execute(
+                "UPDATE pages SET updated_at = ? WHERE path = ?",
+                (_recent_timestamp(3), f"topics/{project}"),
+            )
+    store.ingest_session(
+        SessionRecord(
+            harness="test-harness",
+            external_id=f"{project}-new",
+            user_id="user",
+            workspace=f"/Users/u/work/{project}",
+            updated_at=_recent_timestamp(1),
+            events=[SessionEvent("user-1", "user", f"{project} learned one durable fact")],
+        )
+    )
+    with store.connection(write=True) as conn:
+        conn.execute(
+            "UPDATE sessions SET updated_at = ? WHERE external_id = ?",
+            (_recent_timestamp(1), f"{project}-new"),
+        )
+    with store.connection() as conn:
+        backlog = load_curation_backlog(conn, limit=3)
+    return next(item for item in backlog if item["project"] == project)
+
+
+def _proposal(
+    *,
+    operation: str,
+    path: str,
+    evidence_id: str,
+    body: str = "Derived from session evidence.",
+    summary: str = "Updated summary",
+) -> dict:
+    return {
+        "group": "main",
+        "operation": operation,
+        "path": path,
+        "title": path.rsplit("/", 1)[-1].title(),
+        "page_type": "entity",
+        "summary": summary,
+        "body": body,
+        "tags": [],
+        "source_ids": [],
+        "target_path": None,
+        "evidence_ids": [evidence_id],
+        "reason": "The session evidence changed the project state.",
+        "risk_class": "low",
+    }
+
+
+def test_run_curator_creates_page_then_stops_at_cursor(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="create-project")
+
+    def chat(system_prompt: str, request: dict, schema: dict) -> dict:
+        assert system_prompt
+        assert schema
+        return {"proposals": [_proposal(
+            operation="create_page",
+            path=request["living_page"],
+            evidence_id=request["evidence"][0]["evidence_id"],
+        )]}
+
+    result = run_curator(store.database_path, chat=chat, projects=1)
+    project = result["projects"][0]
+    assert project["status"] == "applied"
+    assert project["guarded"] == 0
+    assert project["counts"] == {"applied": 1}
+    assert project["proposals"][0]["operation"] == "create_page"
+    assert store.read_page("topics/create-project")["version"] == 1
+    assert store.get_sync_cursor("curator:create-project")["newest_evidence_at"]
+
+    with store.connection(write=True) as conn:
+        conn.execute(
+            "UPDATE pages SET updated_at = ? WHERE path = 'topics/create-project'",
+            (_recent_timestamp(3),),
+        )
+
+    second = run_curator(store.database_path, chat=chat, projects=1)
+    assert second["projects"][0]["status"] == "no_evidence"
+    assert second["projects"][0]["run_id"] is None
+
+
+def test_run_curator_updates_covered_page(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    item = _backlog_project(store, project="update-project", page=True)
+    assert item["pages"] == ["topics/update-project"]
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        return {"proposals": [_proposal(
+            operation="update_page",
+            path=request["living_page"],
+            evidence_id=request["evidence"][0]["evidence_id"],
+            summary="New current summary",
+            body="New body is at least half the current page length.",
+        )]}
+
+    result = run_curator(store.database_path, chat=chat, projects=1)
+    assert result["projects"][0]["status"] == "applied"
+    page = store.read_page("topics/update-project")
+    assert page["version"] == 2
+    assert page["content"] == {
+        "summary": "New current summary",
+        "body": "New body is at least half the current page length.",
+    }
+
+
+def test_shrink_guard_leaves_page_for_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    from uuid import UUID
+
+    from wikibricks import mcp_server
+    from wikibricks.curation import apply_run
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="guard-project", page=True)
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        return {"proposals": [_proposal(
+            operation="update_page",
+            path=request["living_page"],
+            evidence_id=request["evidence"][0]["evidence_id"],
+            summary="tiny",
+            body="tiny",
+        )]}
+
+    result = run_curator(store.database_path, chat=chat, projects=1)
+    project = result["projects"][0]
+    assert project["status"] == "review_required"
+    assert project["guarded"] == 1
+    assert store.read_page("topics/guard-project")["version"] == 1
+
+    monkeypatch.setenv("WIKIBRICKS_DATABASE_PATH", str(store.database_path))
+    indexed = mcp_server.dispatch_tool(
+        "wiki_index", {}, tools=mcp_server._build_tools()
+    )
+    review = [page for page in indexed if page["path"] == "_meta/curation-review"]
+    assert len(review) == 1
+    assert review[0]["items"] == [{
+        "run_id": project["run_id"],
+        "pending_patches": 1,
+    }]
+
+    applied = apply_run(store, UUID(project["run_id"]), policy="all")
+    assert applied["counts"] == {"applied": 1}
+    indexed = mcp_server.dispatch_tool(
+        "wiki_index", {}, tools=mcp_server._build_tools()
+    )
+    assert not [page for page in indexed if page["path"] == "_meta/curation-review"]
+
+
+def test_run_curator_reports_errors_and_processes_other_projects(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="failed-project")
+    _backlog_project(store, project="passed-project")
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        if request["project"] == "failed-project":
+            raise RuntimeError("model failed")
+        return {"proposals": [_proposal(
+            operation="create_page",
+            path=request["living_page"],
+            evidence_id=request["evidence"][0]["evidence_id"],
+        )]}
+
+    result = run_curator(store.database_path, chat=chat, projects=2)
+    statuses = {item["project"]: item["status"] for item in result["projects"]}
+    assert statuses == {"failed-project": "error", "passed-project": "applied"}
+    assert result["errors"] == 1
+    assert store.get_sync_cursor("curator:failed-project") == {}
+    assert store.get_sync_cursor("curator:passed-project")
+
+
+def test_run_curator_rejects_unknown_evidence(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="unknown-evidence")
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        return {"proposals": [_proposal(
+            operation="create_page",
+            path=request["living_page"],
+            evidence_id="session-event:not-real",
+        )]}
+
+    result = run_curator(store.database_path, chat=chat, projects=1)
+    assert result["errors"] == 1
+    assert "unknown evidence" in result["projects"][0]["error"]
+    assert store.read_page("topics/unknown-evidence") is None
+
+
+def test_dry_run_reports_proposals_without_writes(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="dry-run")
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        return {"proposals": [_proposal(
+            operation="create_page",
+            path=request["living_page"],
+            evidence_id=request["evidence"][0]["evidence_id"],
+        )]}
+
+    result = run_curator(store.database_path, chat=chat, projects=1, dry_run=True)
+    project = result["projects"][0]
+    assert project["status"] == "dry_run"
+    assert project["proposals"] == [{
+        "operation": "create_page",
+        "path": "topics/dry-run",
+        "title": "Dry-Run",
+        "risk_class": "low",
+        "reason": "The session evidence changed the project state.",
+    }]
+    assert store.read_page("topics/dry-run") is None
+    with store.connection() as conn:
+        assert conn.execute("SELECT count(*) FROM curation_runs").fetchone()[0] == 0
+    assert store.get_sync_cursor("curator:dry-run") == {}
+
+
+def test_prompt_schema_and_policy_reject_forbidden_operations(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+    from wikibricks_remote.resources import load_prompt, load_schema
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="policy-project", page=True)
+    calls: list[tuple[str, dict, dict]] = []
+
+    def chat(system_prompt: str, request: dict, schema: dict) -> dict:
+        calls.append((system_prompt, request, schema))
+        return {"proposals": [{
+            **_proposal(
+                operation="supersede_page",
+                path=request["living_page"],
+                evidence_id=request["evidence"][0]["evidence_id"],
+            ),
+            "target_path": "topics/other",
+        }]}
+
+    result = run_curator(store.database_path, chat=chat, projects=1)
+    prompt, _request, schema = calls[0]
+    assert prompt.startswith(load_prompt() + "\n\n")
+    assert schema == load_schema()
+    assert "# Local nightly curation for one project" in prompt
+    assert result["errors"] == 1
+    assert "disabled by remote policy" in result["projects"][0]["error"]
+
+
+def test_cli_propose_binds_gateway_and_reports_errors(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    from wikibricks_curator import cli
+
+    database_path = tmp_path / "wikibricks.db"
+    store = SQLiteStore(database_path)
+    store.migrate()
+    _backlog_project(store, project="cli-project")
+    tokens: list[str | None] = []
+
+    def resolve_token(profile: str | None) -> str:
+        tokens.append(profile)
+        return "test-token"
+
+    def chat_json(_prompt, request, _schema, *, base_url, token, model):
+        assert base_url == "https://gateway.example"
+        assert token == "test-token"
+        assert model == "system.ai.glm-5-3-flash"
+        return {"proposals": [_proposal(
+            operation="create_page",
+            path=request["living_page"],
+            evidence_id=request["evidence"][0]["evidence_id"],
+        )]}
+
+    monkeypatch.setattr(cli, "resolve_token", resolve_token)
+    monkeypatch.setattr(cli, "chat_json", chat_json)
+    code = cli.main([
+        "propose",
+        "--database-path",
+        str(database_path),
+        "--base-url",
+        "https://gateway.example",
+        "--projects",
+        "1",
+    ])
+    output = json.loads(capsys.readouterr().out)
+    assert code == 0
+    assert tokens == [None]
+    assert output["projects"][0]["project"] == "cli-project"
+    assert store.read_page("topics/cli-project")
+
+    _backlog_project(store, project="cli-error")
+
+    def failing_chat_json(*_args, **_kwargs):
+        raise RuntimeError("model failed")
+
+    monkeypatch.setattr(cli, "chat_json", failing_chat_json)
+    assert cli.main([
+        "propose",
+        "--database-path",
+        str(database_path),
+        "--base-url",
+        "https://gateway.example",
+        "--projects",
+        "2",
+        "--profile",
+        "staging",
+        "--no-apply",
+    ]) == 1
+    output = json.loads(capsys.readouterr().out)
+    assert output["errors"] == 1
+
+
+def test_store_manifest_is_idempotent(tmp_path: Path):
+    from uuid import uuid4
+
+    from wikibricks.curation import build_manifest, store_manifest
+    from wikibricks_remote.proposals import build_patches
+    from wikibricks_remote.resources import load_policy
+
+    store = _store(tmp_path)
+    patches = build_patches(
+        {"proposals": [_proposal(
+            operation="create_page",
+            path="topics/new",
+            evidence_id="session-event:test",
+        )]},
+        run_id=uuid4(),
+        pages=[],
+        evidence_ids={"session-event:test"},
+        policy=load_policy(),
+    )
+    manifest = build_manifest(
+        replica_id=uuid4(),
+        input_watermark=0,
+        patches=patches,
+    )
+    assert store_manifest(store, manifest) is True
+    assert store_manifest(store, manifest) is False
+
+
+def test_run_curator_uses_a_deterministic_run_id_for_the_same_input(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="stable-run")
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        return {"proposals": [_proposal(
+            operation="create_page",
+            path=request["living_page"],
+            evidence_id=request["evidence"][0]["evidence_id"],
+        )]}
+
+    first = run_curator(store.database_path, chat=chat, projects=1, dry_run=True)
+    second = run_curator(store.database_path, chat=chat, projects=1, dry_run=True)
+    assert first["projects"][0]["run_id"] == second["projects"][0]["run_id"]
+
+
+def test_local_curator_resource_is_packaged():
+    resource = files("wikibricks_curator").joinpath("resources", "local-curator.md")
+    assert resource.read_text(encoding="utf-8").startswith(
+        "# Local nightly curation for one project"
+    )
+
+
+def test_dry_run_without_changes_does_not_advance_the_cursor(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="quiet")
+
+    result = run_curator(
+        store.database_path, chat=lambda *_: {"proposals": []}, projects=1, dry_run=True
+    )
+
+    assert result["projects"][0]["status"] == "no_changes"
+    assert store.get_sync_cursor("curator:quiet") == {}
+
+
+def test_shrink_guard_handles_pages_without_a_summary():
+    from wikibricks_curator.curator import _guard_shrinking_updates
+
+    raw = {"proposals": [{"operation": "update_page", "path": "topics/x", "summary": "", "body": "x"}]}
+    pages = [{"path": "topics/x", "content": {"body": "long body " * 20}}]
+
+    assert _guard_shrinking_updates(raw, pages) == 1
+    assert raw["proposals"][0]["risk_class"] == "high"
+
+
+def test_chat_json_passes_timeout_by_keyword_and_asks_for_low_reasoning():
+    # urllib.request.urlopen(url, data, timeout): a positional timeout becomes the body.
+    from wikibricks_curator.gateway import chat_json
+
+    seen: dict = {}
+
+    def keyword_only_opener(request: Request, *, timeout: float) -> _Response:
+        seen["timeout"] = timeout
+        seen["payload"] = _payload(request)
+        return _Response(json.dumps({"choices": [{"message": {"content": '{"proposals": []}'}}]}))
+
+    result = chat_json(
+        "prompt", {"a": 1}, {"type": "object"},
+        base_url="https://gateway.example/v1", token="t", model="m", timeout=42,
+        opener=keyword_only_opener,
+    )
+
+    assert result == {"proposals": []}
+    assert seen["timeout"] == 42
+    # GLM 5.3 Flash spends the whole output budget on reasoning without this.
+    assert seen["payload"]["reasoning_effort"] == "low"
