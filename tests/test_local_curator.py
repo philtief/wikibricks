@@ -877,3 +877,89 @@ def test_chat_json_passes_timeout_by_keyword_and_asks_for_low_reasoning():
     assert seen["timeout"] == 42
     # GLM 5.3 Flash spends the whole output budget on reasoning without this.
     assert seen["payload"]["reasoning_effort"] == "low"
+
+
+def test_links_from_a_page_created_in_the_same_run_are_dropped_not_fatal(tmp_path: Path):
+    # Real GLM output: create the living page and link it in one reply. build_patches only
+    # knows existing pages, so the link must not cost the page.
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    store.write_page("topics/other", "Other", {"summary": "s", "body": "Existing page."})
+    _backlog_project(store, project="fresh")
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        evidence_id = request["evidence"][0]["evidence_id"]
+        link = _proposal(operation="add_link", path=request["living_page"], evidence_id=evidence_id)
+        link.update({"target_path": "topics/other", "link_type": "related", "title": "",
+                     "page_type": "entity", "summary": "", "body": ""})
+        return {"proposals": [
+            _proposal(operation="create_page", path=request["living_page"], evidence_id=evidence_id),
+            link,
+        ]}
+
+    result = run_curator(store.database_path, chat=chat, projects=1)
+    project = result["projects"][0]
+
+    assert project["status"] == "applied", project["error"]
+    assert project["dropped_links"] == 1
+    assert store.read_page("topics/fresh") is not None
+
+
+def test_neutral_defaults_fill_fields_models_omit(tmp_path: Path):
+    # Real GLM output omitted risk_class, and links rarely carry title/body/tags.
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="omits", page=True)
+    store.write_page("topics/other", "Other", {"summary": "s", "body": "Existing page."})
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        evidence_id = request["evidence"][0]["evidence_id"]
+        update = _proposal(operation="update_page", path=request["living_page"], evidence_id=evidence_id,
+                           body="The project page contains durable facts and one more fact.")
+        del update["risk_class"], update["tags"], update["group"]
+        update["confidence"] = 0.9
+        link = {"operation": "add_link", "path": request["living_page"], "target_path": "topics/other",
+                "link_type": "related", "evidence_ids": [evidence_id], "reason": "Builds on it."}
+        return {"proposals": [update, link]}
+
+    project = run_curator(store.database_path, chat=chat, projects=1)["projects"][0]
+
+    assert project["status"] == "applied", project["error"]
+    assert "one more fact" in store.read_page("topics/omits")["content_text"]
+
+
+def test_page_proposals_without_content_still_fail(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="empty")
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        proposal = _proposal(operation="create_page", path=request["living_page"],
+                             evidence_id=request["evidence"][0]["evidence_id"])
+        del proposal["body"]
+        return {"proposals": [proposal]}
+
+    assert run_curator(store.database_path, chat=chat, projects=1)["projects"][0]["status"] == "error"
+
+
+def test_one_retry_after_an_invalid_model_reply(tmp_path: Path):
+    from wikibricks_curator.curator import run_curator
+
+    store = _store(tmp_path)
+    _backlog_project(store, project="flaky")
+    replies = [RuntimeError("curation model output could not be decoded"), None]
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        reply = replies.pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return {"proposals": [_proposal(operation="create_page", path=request["living_page"],
+                                        evidence_id=request["evidence"][0]["evidence_id"])]}
+
+    project = run_curator(store.database_path, chat=chat, projects=1)["projects"][0]
+
+    assert project["status"] == "applied", project["error"]
+    assert project["attempts"] == 2

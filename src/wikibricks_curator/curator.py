@@ -19,7 +19,7 @@ from wikibricks.curation import (
 from wikibricks.curation.backlog import load_curation_backlog
 from wikibricks.storage.sqlite_store import SQLiteStore
 from wikibricks_curator.evidence import build_request
-from wikibricks_remote.proposals import build_patches
+from wikibricks_remote.proposals import _PROPOSAL_FIELDS, build_patches
 from wikibricks_remote.resources import load_policy, load_prompt, load_schema
 
 Chat = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -77,6 +77,52 @@ def _guard_shrinking_updates(
     return guarded
 
 
+_LINK_ONLY_FIELDS = ("title", "page_type", "summary", "body")
+
+
+def _fill_neutral_defaults(raw: dict[str, Any]) -> None:
+    """Fill fields a model may omit whose value carries no content; drop unknown keys.
+
+    Never invents content, evidence, or reasons: page proposals without a title or
+    body still fail validation.
+    """
+    proposals = raw.get("proposals") if isinstance(raw, dict) else None
+    if not isinstance(proposals, list):
+        return
+    for proposal in proposals:
+        if not isinstance(proposal, dict):
+            continue
+        for key in set(proposal) - _PROPOSAL_FIELDS:
+            del proposal[key]
+        proposal.setdefault("group", "main")
+        proposal.setdefault("tags", [])
+        proposal.setdefault("source_ids", [])
+        proposal.setdefault("target_path", None)
+        proposal.setdefault("risk_class", "low")
+        if proposal.get("operation") == "add_link":
+            for key in _LINK_ONLY_FIELDS:
+                proposal.setdefault(key, "")
+
+
+def _drop_unresolvable_links(raw: dict[str, Any], pages: list[dict[str, Any]]) -> int:
+    """Drop links whose ends are not existing pages; `curate` links new pages later."""
+    proposals = raw.get("proposals")
+    if not isinstance(proposals, list):
+        return 0
+    existing = {page["path"] for page in pages}
+    kept = [
+        proposal
+        for proposal in proposals
+        if not (
+            isinstance(proposal, dict)
+            and proposal.get("operation") == "add_link"
+            and not {proposal.get("path"), proposal.get("target_path")} <= existing
+        )
+    ]
+    raw["proposals"] = kept
+    return len(proposals) - len(kept)
+
+
 def run_curator(
     database_path: str | Path,
     *,
@@ -111,6 +157,8 @@ def run_curator(
             "status": "no_evidence",
             "proposals": [],
             "guarded": 0,
+            "dropped_links": 0,
+            "attempts": 0,
             "run_id": None,
             "counts": {},
             "error": None,
@@ -122,31 +170,32 @@ def run_curator(
             results.append(result)
             continue
         result["events"] = len(built["request"]["evidence"])
-        try:
-            raw = chat(prompt, built["request"], schema)
-        except Exception as exc:
-            result["status"] = "error"
-            result["error"] = str(exc)[:300]
-            results.append(result)
-            errors += 1
-            continue
-        result["guarded"] = _guard_shrinking_updates(raw, built["pages"])
-        result["proposals"] = _proposal_result(raw)
         digest = hashlib.sha256(
             canonical_json(built["request"]).encode("utf-8")
         ).hexdigest()
         run_id = uuid5(replica_id, f"wikibricks:local-curator:{project}:{digest}")
-        try:
-            patches = build_patches(
-                raw,
-                run_id=run_id,
-                pages=built["pages"],
-                evidence_ids=built["evidence_ids"],
-                policy=policy,
-            )
-        except ValueError as exc:
+        # Model output varies between calls; one retry absorbs an invalid reply.
+        for attempt in (1, 2):
+            result["attempts"] = attempt
+            try:
+                raw = chat(prompt, built["request"], schema)
+                _fill_neutral_defaults(raw)
+                result["dropped_links"] = _drop_unresolvable_links(raw, built["pages"])
+                result["guarded"] = _guard_shrinking_updates(raw, built["pages"])
+                result["proposals"] = _proposal_result(raw)
+                patches = build_patches(
+                    raw,
+                    run_id=run_id,
+                    pages=built["pages"],
+                    evidence_ids=built["evidence_ids"],
+                    policy=policy,
+                )
+                result["error"] = None
+                break
+            except Exception as exc:
+                result["error"] = str(exc)[:300]
+        if result["error"] is not None:
             result["status"] = "error"
-            result["error"] = str(exc)[:300]
             results.append(result)
             errors += 1
             continue
