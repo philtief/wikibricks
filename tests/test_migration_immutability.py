@@ -20,10 +20,16 @@ RELEASED_MIGRATIONS = {
         "ba5ad411cff8fe7572900dcd1493efca4442e22818e4ef80a4192f46345cff5c"
     ),
     f"{LOCAL_MIGRATIONS}/0006_add_link.sql": "90de2f20cb319896227329a4de24f57cdac50f2c752ca1188781952bf4a5d4d8",
+    f"{LOCAL_MIGRATIONS}/0007_session_topics.sql": (
+        "b24e80325ed2b46b2a472b790da84755da3dc0a2feb4f5feb4d836139fb4e6f6"
+    ),
     f"{SQLITE_MIGRATIONS}/0001_core.sql": "622f8257f4a8dd9d5db3419ae30f3484f77566094dd416f33f13974d3ca18e8e",
     f"{SQLITE_MIGRATIONS}/0002_sync.sql": "70e60dd7f65b11df52feb20e1a411cd88485a1d2a45de6daae74cb6781eb17cc",
     f"{SQLITE_MIGRATIONS}/0003_backfill_late_tables.sql": (
         "cb5b62c81aa4c8d7c8aa22e11c558c13305ef16806a258567ea0c98cf4c55fbf"
+    ),
+    f"{SQLITE_MIGRATIONS}/0004_session_topics.sql": (
+        "8fad04bb0f94813aea4817acb82d10f465cc8b35a481121a1c9e9de912f8df6e"
     ),
     f"{REMOTE_MIGRATIONS}/0001_lakebase_search.sql": "b9b2da1ebcf902ed6a10e48dd7bdb4f3d3a9adcb28752bf8dc2e4a1120b17144",
 }

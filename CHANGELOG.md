@@ -1,5 +1,9 @@
 # Changelog
 
+## Unreleased
+
+- Group curation sessions by routed topic pages instead of workspace folder names.
+
 ## 0.13.0 - 2026-09-29
 
 - Added optional `wikibricks-curator propose` for local backlog curation. It

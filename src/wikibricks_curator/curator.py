@@ -25,13 +25,6 @@ from wikibricks_remote.resources import load_policy, load_prompt, load_schema
 Chat = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
 
 
-def _living_page(item: dict[str, Any]) -> str:
-    return next(
-        (path for path in item.get("pages", []) if path.startswith("topics/")),
-        f"topics/{item['project']}",
-    )
-
-
 def _proposal_result(raw: dict[str, Any]) -> list[dict[str, Any]]:
     return [
         {
@@ -149,7 +142,7 @@ def run_curator(
 
     for item in backlog:
         project = item["project"]
-        living_page = _living_page(item)
+        living_page = item["living_page"]
         result: dict[str, Any] = {
             "project": project,
             "living_page": living_page,

@@ -23,17 +23,24 @@ def test_curation_backlog_counts_recent_sessions_without_a_page():
     from wikibricks.curation.backlog import curation_backlog
 
     sessions = [
-        ("/Users/u/work/slide-hub", _timestamp(1, reference=NOW)),
-        ("/Users/u/work/slide-hub", _timestamp(2, reference=NOW)),
-        ("/Users/u/work/slide-hub", _timestamp(3, reference=NOW)),
+        ("one", "/Users/u/work/slide-hub", _timestamp(1, reference=NOW)),
+        ("two", "/Users/u/work/slide-hub", _timestamp(2, reference=NOW)),
+        ("three", "/Users/u/work/slide-hub", _timestamp(3, reference=NOW)),
     ]
+    targets = {
+        "one": "topics/slide-hub",
+        "two": "topics/slide-hub",
+        "three": "topics/slide-hub",
+    }
 
-    result = curation_backlog(sessions, [], now=NOW)
+    result = curation_backlog(sessions, [], now=NOW, targets=targets)
 
     assert result == [
         {
             "project": "slide-hub",
+            "living_page": "topics/slide-hub",
             "workspace": "/Users/u/work/slide-hub",
+            "workspaces": ["/Users/u/work/slide-hub"],
             "new_sessions": 3,
             "last_session_at": _timestamp(1, reference=NOW),
             "pages": [],
@@ -46,27 +53,35 @@ def test_curation_backlog_ignores_sessions_covered_by_a_newer_page():
     from wikibricks.curation.backlog import curation_backlog
 
     sessions = [
-        ("/Users/u/work/agent-compliance-cockpit", _timestamp(3, reference=NOW)),
-        ("/Users/u/work/agent-compliance-cockpit", _timestamp(4, reference=NOW)),
-        ("/Users/u/work/agent-compliance-cockpit", _timestamp(5, reference=NOW)),
+        ("one", "/Users/u/work/agent-compliance-cockpit", _timestamp(3, reference=NOW)),
+        ("two", "/Users/u/work/agent-compliance-cockpit", _timestamp(4, reference=NOW)),
+        ("three", "/Users/u/work/agent-compliance-cockpit", _timestamp(5, reference=NOW)),
     ]
     pages = [
         ("topics/agent-atlas", "Agent Atlas (agent-compliance-cockpit)", _timestamp(2, reference=NOW))
     ]
 
-    assert curation_backlog(sessions, pages, now=NOW) == []
+    assert curation_backlog(sessions, pages, now=NOW, targets={
+        "one": "topics/agent-atlas",
+        "two": "topics/agent-atlas",
+        "three": "topics/agent-atlas",
+    }) == []
 
 
 def test_curation_backlog_counts_only_sessions_newer_than_the_page():
     from wikibricks.curation.backlog import curation_backlog
 
     sessions = [
-        ("/Users/u/work/slide-hub", _timestamp(1, reference=NOW)),
-        ("/Users/u/work/slide-hub", _timestamp(2, reference=NOW)),
-        ("/Users/u/work/slide-hub", _timestamp(5, reference=NOW)),
+        ("one", "/Users/u/work/slide-hub", _timestamp(1, reference=NOW)),
+        ("two", "/Users/u/work/slide-hub", _timestamp(2, reference=NOW)),
+        ("three", "/Users/u/work/slide-hub", _timestamp(5, reference=NOW)),
     ]
     pages = [("topics/slide-hub", "Slide Hub", _timestamp(3, reference=NOW))]
-    result = curation_backlog(sessions, pages, now=NOW)
+    result = curation_backlog(sessions, pages, now=NOW, targets={
+        "one": "topics/slide-hub",
+        "two": "topics/slide-hub",
+        "three": "topics/slide-hub",
+    })
 
     assert result[0]["new_sessions"] == 2
     assert result[0]["pages"] == ["topics/slide-hub"]
@@ -77,21 +92,32 @@ def test_curation_backlog_filters_expired_or_invalid_workspaces_and_orders_resul
     from wikibricks.curation.backlog import curation_backlog
 
     sessions = [
-        ("/Users/u/work/slide-hub", _timestamp(24 * 8, reference=NOW)),
-        ("/Users/u/work/slide-hub", _timestamp(1, reference=NOW)),
-        (str(Path.home()), _timestamp(1, reference=NOW)),
-        ("", _timestamp(1, reference=NOW)),
-        (None, _timestamp(1, reference=NOW)),
-        ("/Users/u/work/zeta", _timestamp(2, reference=NOW)),
-        ("/Users/u/work/zeta", _timestamp(3, reference=NOW)),
+        ("old-slide", "/Users/u/work/slide-hub", _timestamp(24 * 8, reference=NOW)),
+        ("slide", "/Users/u/work/slide-hub", _timestamp(1, reference=NOW)),
+        ("home", str(Path.home()), _timestamp(1, reference=NOW)),
+        ("empty", "", _timestamp(1, reference=NOW)),
+        ("missing", None, _timestamp(1, reference=NOW)),
+        ("zeta-one", "/Users/u/work/zeta", _timestamp(2, reference=NOW)),
+        ("zeta-two", "/Users/u/work/zeta", _timestamp(3, reference=NOW)),
     ]
+    targets = {
+        "old-slide": "topics/slide-hub",
+        "slide": "topics/slide-hub",
+        "home": None,
+        "empty": None,
+        "missing": None,
+        "zeta-one": "topics/zeta",
+        "zeta-two": "topics/zeta",
+    }
 
     assert curation_backlog(
-        sessions, [], now=NOW, days=7, home=Path.home()
+        sessions, [], now=NOW, days=7, targets=targets
     ) == [
         {
             "project": "zeta",
+            "living_page": "topics/zeta",
             "workspace": "/Users/u/work/zeta",
+            "workspaces": ["/Users/u/work/zeta"],
             "new_sessions": 2,
             "last_session_at": _timestamp(2, reference=NOW),
             "pages": [],
@@ -99,7 +125,9 @@ def test_curation_backlog_filters_expired_or_invalid_workspaces_and_orders_resul
         },
         {
             "project": "slide-hub",
+            "living_page": "topics/slide-hub",
             "workspace": "/Users/u/work/slide-hub",
+            "workspaces": ["/Users/u/work/slide-hub"],
             "new_sessions": 1,
             "last_session_at": _timestamp(1, reference=NOW),
             "pages": [],

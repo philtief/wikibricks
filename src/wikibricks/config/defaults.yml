@@ -7,6 +7,18 @@ search:
   maximum_results: 20
 maintenance:
   prune_archived_sessions_after_days: null
+curation:
+  generic_workspaces:
+    - code
+    - emails
+    - work
+    - projects
+    - repos
+    - src
+    - documents
+    - desktop
+    - downloads
+    - tmp
 automation:
   enabled: true
   poll_seconds: 300

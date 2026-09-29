@@ -16,6 +16,7 @@ _ALLOWED = {
     "database": {"path": None, "url": None},
     "search": {"default_results": None, "maximum_results": None},
     "maintenance": {"prune_archived_sessions_after_days": None},
+    "curation": {"generic_workspaces": None},
     "automation": {
         "enabled": None,
         "poll_seconds": None,
@@ -41,6 +42,7 @@ class WikiBricksConfig:
     search_default_results: int
     search_maximum_results: int
     prune_archived_sessions_after_days: int | None
+    curation_generic_workspaces: tuple[str, ...]
     automation_enabled: bool
     automation_poll_seconds: int
     automation_local_maintenance_hours: int
@@ -115,6 +117,21 @@ def _string(value: Any, path: str, *, optional: bool = False) -> str | None:
     return value.strip()
 
 
+def _string_list(value: Any, path: str) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError(f"{path} must be a list of strings")
+    if any(not item.strip() for item in value):
+        raise ValueError(f"{path} must not contain empty strings")
+    return [item.strip() for item in value]
+
+
+def _comma_separated_strings(value: str) -> list[str]:
+    values = [item.strip() for item in value.split(",")]
+    if any(not item for item in values):
+        raise ValueError("must be a comma-separated list of non-empty strings")
+    return values
+
+
 def _environment_overlay(environ: Mapping[str, str]) -> dict[str, Any]:
     result: dict[str, Any] = {}
     mappings = {
@@ -126,6 +143,11 @@ def _environment_overlay(environ: Mapping[str, str]) -> dict[str, Any]:
             "maintenance",
             "prune_archived_sessions_after_days",
             int,
+        ),
+        "WIKIBRICKS_CURATION_GENERIC_WORKSPACES": (
+            "curation",
+            "generic_workspaces",
+            _comma_separated_strings,
         ),
         "WIKIBRICKS_SYNC_BATCH_SIZE": ("sync", "batch_size", int),
         "WIKIBRICKS_SYNC_APPLY_POLICY": ("sync", "apply_policy", str),
@@ -215,6 +237,10 @@ def load_config(
             minimum=1,
             maximum=36500,
         )
+    generic_workspaces = _string_list(
+        value["curation"]["generic_workspaces"],
+        "curation.generic_workspaces",
+    )
     automation_enabled = _boolean(
         value["automation"]["enabled"],
         "automation.enabled",
@@ -260,6 +286,7 @@ def load_config(
         search_default_results=default_results,
         search_maximum_results=maximum_results,
         prune_archived_sessions_after_days=retention,
+        curation_generic_workspaces=tuple(generic_workspaces),
         automation_enabled=automation_enabled,
         automation_poll_seconds=poll_seconds,
         automation_local_maintenance_hours=local_maintenance_hours,
