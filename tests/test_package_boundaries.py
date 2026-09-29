@@ -78,6 +78,8 @@ import wikibricks.cli
 import wikibricks.curation
 import wikibricks.maintenance
 import wikibricks.remote.lakebase
+import wikibricks_remote.proposals
+import wikibricks_remote.resources
 print('ok')
 """
     result = subprocess.run(
