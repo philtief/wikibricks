@@ -158,6 +158,7 @@ def _apply_patch(
     patch: dict[str, Any],
     *,
     force: bool,
+    created_by: str,
 ) -> UUID | None:
     operation = patch["operation"]
     proposal = patch["proposal"]
@@ -172,7 +173,7 @@ def _apply_patch(
                     proposal["title"],
                     proposal["content"],
                     page_type=proposal["page_type"],
-                    created_by="remote-curator",
+                    created_by=created_by,
                     tags=proposal["tags"],
                     source_ids=proposal["source_ids"],
                     parent_id=proposal["parent_id"],
@@ -187,7 +188,7 @@ def _apply_patch(
                     proposal["title"],
                     proposal["content"],
                     page_type=proposal["page_type"],
-                    created_by="remote-curator",
+                    created_by=created_by,
                     tags=proposal["tags"],
                     source_ids=proposal["source_ids"],
                     parent_id=proposal["parent_id"],
@@ -210,7 +211,7 @@ def _apply_patch(
             proposal["title"],
             proposal["content"],
             page_type=proposal["page_type"],
-            created_by="remote-curator",
+            created_by=created_by,
             tags=proposal["tags"],
             source_ids=proposal["source_ids"],
             parent_id=proposal["parent_id"],
@@ -234,13 +235,14 @@ def _apply_patch(
             conn.execute(
                 "INSERT INTO links "
                 "(link_id, source_page_id, target_page_id, link_type, origin, metadata, created_at) "
-                "VALUES (?, ?, ?, ?, 'remote-curator', ?, ?) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?) "
                 "ON CONFLICT (source_page_id, target_page_id, link_type) DO NOTHING",
                 (
                     str(uuid4()),
                     source["page_id"],
                     target["page_id"],
                     proposal["link_type"],
+                    created_by,
                     json.dumps(metadata, separators=(",", ":"), sort_keys=True),
                     datetime.now(timezone.utc).isoformat(),
                 ),
@@ -251,13 +253,14 @@ def _apply_patch(
             conn.execute(
                 "INSERT INTO links "
                 "(link_id, source_page_id, target_page_id, link_type, origin, metadata) "
-                "VALUES (%s, %s, %s, %s, 'remote-curator', %s) "
+                "VALUES (%s, %s, %s, %s, %s, %s) "
                 "ON CONFLICT (source_page_id, target_page_id, link_type) DO NOTHING",
                 (
                     uuid4(),
                     UUID(source["page_id"]),
                     UUID(target["page_id"]),
                     proposal["link_type"],
+                    created_by,
                     Jsonb(metadata),
                 ),
             )
@@ -333,6 +336,7 @@ def _apply_group(
     *,
     force: bool,
     failpoint: Callable[[str], None],
+    created_by: str = "remote-curator",
 ) -> tuple[str, list[dict[str, Any]]]:
     processed = receipt_count(conn, patches)
     if processed == len(patches):
@@ -386,7 +390,13 @@ def _apply_group(
                 result_version_id=result_id,
             )
         else:
-            result_id = _apply_patch(store, conn, patch, force=force)
+            result_id = _apply_patch(
+                store,
+                conn,
+                patch,
+                force=force,
+                created_by=created_by,
+            )
             insert_receipt(
                 conn,
                 run_id,
@@ -404,6 +414,7 @@ def apply_run(
     *,
     policy: str = "safe",
     failpoint: Callable[[str], None] | None = None,
+    created_by: str = "remote-curator",
 ) -> dict[str, Any]:
     if policy not in {"safe", "all"}:
         raise ValueError("curation policy must be 'safe' or 'all'")
@@ -432,6 +443,7 @@ def apply_run(
                 items,
                 force=False,
                 failpoint=trigger,
+                created_by=created_by,
             )
             mark_run_applied(conn, run_id)
         results.append(

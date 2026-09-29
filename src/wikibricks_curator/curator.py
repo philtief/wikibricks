@@ -223,7 +223,12 @@ def run_curator(
         store_manifest(store, manifest)
         result["run_id"] = str(run_id)
         if apply:
-            outcome = apply_run(store, run_id, policy="safe")
+            outcome = apply_run(
+                store,
+                run_id,
+                policy="safe",
+                created_by="local-curator",
+            )
             result["counts"] = outcome["counts"]
             result["status"] = (
                 "applied"
