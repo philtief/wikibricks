@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.14.1 - 2026-10-01
+
+- Internal simplification with no behavior change: shared page-write, title,
+  snippet and archive-row helpers, and fewer duplicate code paths.
+- Removed unused API surface: `WikiClient.sync_index`, `index_row_count`,
+  `reconcile_vs_source`, `list_recent_by_cwd_tag`, the ignored `search`
+  keywords, `run_background_worker`, and `export_karpathy --limit`.
+
 ## 0.14.0 - 2026-09-29
 
 - Group curation sessions by routed topic pages instead of workspace folder names.
