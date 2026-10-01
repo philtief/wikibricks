@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
@@ -85,6 +85,10 @@ def _canonical_json(value: Any) -> str:
     )
 
 
+def _row_dict(cursor: Any, row: tuple[Any, ...]) -> dict[str, Any]:
+    return dict(zip([column[0] for column in cursor.description], row))
+
+
 def _resolve_event(
     store: PostgresStore | SQLiteStore,
     row: dict[str, Any],
@@ -94,78 +98,52 @@ def _resolve_event(
     placeholder = "?" if isinstance(store, SQLiteStore) else "%s"
     with store.connection() as conn:
         if row["entity_kind"] == "page_version":
-            payload_row = conn.execute(
-                "SELECT p.path, v.version, v.title, v.page_type, v.content, v.content_text, "
-                "v.tags, v.source_ids, v.parent_id, v.chunk_index, v.created_by, v.created_at, "
-                "v.curation_patch_id "
+            cursor = conn.execute(
+                "SELECT p.path AS path, v.version AS version, v.title AS title, "
+                "v.page_type AS page_type, v.content AS content, "
+                "v.content_text AS content_text, v.tags AS tags, "
+                "v.source_ids AS source_ids, v.parent_id AS parent_id, "
+                "v.chunk_index AS chunk_index, v.created_by AS created_by, "
+                "v.created_at AS created_at, v.curation_patch_id AS curation_patch_id "
                 "FROM page_versions v JOIN pages p ON p.page_id = v.page_id "
                 f"WHERE v.version_id = {placeholder}",
                 (row["version_id"],),
-            ).fetchone()
+            )
+            payload_row = cursor.fetchone()
             if not payload_row:
                 raise RuntimeError(f"missing immutable page version {row['version_id']}")
-            payload = {
-                "path": payload_row[0],
-                "version": payload_row[1],
-                "title": payload_row[2],
-                "page_type": payload_row[3],
-                "content": payload_row[4],
-                "content_text": payload_row[5],
-                "tags": payload_row[6],
-                "source_ids": payload_row[7],
-                "parent_id": payload_row[8],
-                "chunk_index": payload_row[9],
-                "created_by": payload_row[10],
-                "created_at": payload_row[11],
-                "curation_patch_id": payload_row[12],
-            }
+            payload = _row_dict(cursor, payload_row)
         elif row["entity_kind"] == "session_event_version":
-            payload_row = conn.execute(
-                "SELECT s.harness, s.external_id, s.user_id, s.agent, s.workspace, "
-                "s.page_path, e.external_id, e.position, v.version, v.kind, v.content, "
-                "v.metadata, v.source_created_at, v.created_at "
+            cursor = conn.execute(
+                "SELECT s.harness AS harness, s.external_id AS session_external_id, "
+                "s.user_id AS user_id, s.agent AS agent, s.workspace AS workspace, "
+                "s.page_path AS page_path, e.external_id AS event_external_id, "
+                "e.position AS position, v.version AS version, v.kind AS kind, "
+                "v.content AS content, v.metadata AS metadata, "
+                "v.source_created_at AS source_created_at, v.created_at AS created_at "
                 "FROM session_event_versions v "
                 "JOIN session_events e ON e.event_id = v.event_id "
                 "JOIN sessions s ON s.session_id = e.session_id "
                 f"WHERE v.version_id = {placeholder}",
                 (row["version_id"],),
-            ).fetchone()
+            )
+            payload_row = cursor.fetchone()
             if not payload_row:
                 raise RuntimeError(f"missing immutable session event version {row['version_id']}")
-            payload = {
-                "harness": payload_row[0],
-                "session_external_id": payload_row[1],
-                "user_id": payload_row[2],
-                "agent": payload_row[3],
-                "workspace": payload_row[4],
-                "page_path": payload_row[5],
-                "event_external_id": payload_row[6],
-                "position": payload_row[7],
-                "version": payload_row[8],
-                "kind": payload_row[9],
-                "content": payload_row[10],
-                "metadata": payload_row[11],
-                "source_created_at": payload_row[12],
-                "created_at": payload_row[13],
-            }
+            payload = _row_dict(cursor, payload_row)
         elif row["entity_kind"] == "curation_receipt":
-            payload_row = conn.execute(
-                "SELECT run_id, patch_id, status, result_version_id, local_content_hash, "
-                "details, applied_at FROM curation_receipts "
+            cursor = conn.execute(
+                "SELECT run_id AS run_id, patch_id AS patch_id, status AS status, "
+                "result_version_id AS result_version_id, "
+                "local_content_hash AS local_content_hash, details AS details, "
+                "applied_at AS applied_at FROM curation_receipts "
                 f"WHERE patch_id = {placeholder}",
                 (row["version_id"],),
-            ).fetchone()
+            )
+            payload_row = cursor.fetchone()
             if not payload_row:
                 raise RuntimeError(f"missing immutable curation receipt {row['version_id']}")
-            payload = {
-                "run_id": payload_row[0],
-                "patch_id": payload_row[1],
-                "status": payload_row[2],
-                "result_version_id": payload_row[3],
-                "local_content_hash": payload_row[4],
-                "details": payload_row[5],
-                "applied_at": payload_row[6],
-            }
+            payload = _row_dict(cursor, payload_row)
         else:
             raise ValueError(f"unsupported outbox entity kind: {row['entity_kind']}")
     json_fields = {
@@ -204,19 +182,7 @@ def build_batch(
     events = tuple(
         _resolve_event(store, row, replica_id=replica_id) for row in pending
     )
-    digest_input = [
-        {
-            "replica_id": str(event.replica_id),
-            "sequence": event.sequence,
-            "event_id": str(event.event_id),
-            "entity_kind": event.entity_kind,
-            "entity_id": str(event.entity_id),
-            "version_id": str(event.version_id),
-            "payload_hash": event.payload_hash,
-            "payload": event.payload,
-        }
-        for event in events
-    ]
+    digest_input = [asdict(event) for event in events]
     digest = hashlib.sha256(_canonical_json(digest_input).encode("utf-8")).hexdigest()
     batch_id = uuid5(
         NAMESPACE_URL,
