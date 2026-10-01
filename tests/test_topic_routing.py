@@ -333,7 +333,8 @@ def test_route_sessions_writes_model_routes_and_builds_backlog(tmp_path: Path):
         quick: None,
     }
     with store.connection() as conn:
-        backlog = load_curation_backlog(conn, home=HOME, now=NOW)
+        # Routing stamps the real time, so the backlog must use the real clock too.
+        backlog = load_curation_backlog(conn, home=HOME, now=datetime.now(timezone.utc))
     assert {item["living_page"] for item in backlog} == {
         "topics/unity-gateway",
         "topics/agent-atlas",
