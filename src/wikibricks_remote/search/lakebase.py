@@ -8,6 +8,7 @@ from typing import Any
 from uuid import UUID
 
 from wikibricks.postgres_store import PostgresStore
+from wikibricks_remote.proposals import archive_page
 from wikibricks_remote.search.documents import SearchDocument, project_event
 from wikibricks_remote.search.embeddings import (
     Embedder,
@@ -436,18 +437,8 @@ class LakebaseHybridSearch:
             ).fetchall()
         pages = {}
         for event_id, version_id, content_hash, raw_payload in rows:
-            payload = dict(raw_payload)
-            pages[payload["path"]] = {
-                "evidence_id": f"archive-event:{event_id}",
-                "path": payload["path"],
-                "title": payload["title"],
-                "page_type": payload["page_type"],
-                "content": payload["content"],
-                "tags": list(payload.get("tags") or []),
-                "source_ids": list(payload.get("source_ids") or []),
-                "base_version_id": str(version_id),
-                "base_content_hash": content_hash,
-            }
+            page = archive_page(event_id, version_id, content_hash, raw_payload)
+            pages[page["path"]] = page
         return pages
 
     def candidates(

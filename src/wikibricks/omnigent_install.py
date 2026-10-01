@@ -30,6 +30,18 @@ from wikibricks.resources import get_tool_schemas
 _MINIMUM_VERSION = (0, 11, 0)
 _VERSION_PATTERN = re.compile(r"\b(\d+)\.(\d+)\.(\d+)(?:[^\s]*)?")
 _MCP_NAME = "wikibricks"
+_OWNED_SETTINGS = {
+    "debby": "Claude mcpServers.wikibricks",
+    "polly": "Claude mcpServers.wikibricks",
+    "goose": "extensions.wikibricks",
+    "hermes": "mcp_servers.wikibricks",
+    "opencode": "mcp.wikibricks",
+    "kimi": "mcpServers.wikibricks",
+    "kiro": "mcpServers.wikibricks",
+    "qwen": "mcpServers.wikibricks",
+    "claude": "mcpServers.wikibricks",
+    "codex": "mcp_servers.wikibricks",
+}
 _FILE_HARNESSES = {
     "goose": "goose",
     "hermes": "hermes",
@@ -431,20 +443,9 @@ def install_integrations(
         owned_files.extend((str(paths["pi_config"]), str(paths["pi_extension"])))
     owned_files.extend(str(resolved_home / ".wikibricks" / "bin" / name) for name in launchers)
     owned_files.append(str(paths["manifest"]))
-    owned_settings: dict[str, list[str]] = {}
-    for name in statuses:
-        if name in {"debby", "polly"}:
-            owned_settings[name] = ["Claude mcpServers.wikibricks"]
-        elif name == "goose":
-            owned_settings[name] = ["extensions.wikibricks"]
-        elif name == "hermes":
-            owned_settings[name] = ["mcp_servers.wikibricks"]
-        elif name == "opencode":
-            owned_settings[name] = ["mcp.wikibricks"]
-        elif name in {"kimi", "kiro", "qwen", "claude"}:
-            owned_settings[name] = ["mcpServers.wikibricks"]
-        elif name == "codex":
-            owned_settings[name] = ["mcp_servers.wikibricks"]
+    owned_settings = {
+        name: [_OWNED_SETTINGS[name]] for name in statuses if name in _OWNED_SETTINGS
+    }
     if wrapper_paths:
         owned_settings["omnigent"] = [
             *(f"harness.{name}.command" for name in sorted(wrapper_paths)),

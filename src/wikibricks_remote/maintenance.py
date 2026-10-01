@@ -12,7 +12,7 @@ from psycopg.types.json import Jsonb
 
 from wikibricks.curation import build_manifest, publish_manifest
 from wikibricks.postgres_store import PostgresStore
-from wikibricks_remote.proposals import _canonical_json, build_patches
+from wikibricks_remote.proposals import _canonical_json, archive_page, build_patches
 from wikibricks_remote.resources import (
     RemotePolicy,
     load_prompt,
@@ -119,19 +119,8 @@ def _current_pages(
     ).fetchall()
     pages = []
     for event_id, version_id, content_hash, raw_payload in rows:
-        payload = dict(raw_payload)
         pages.append(
-            {
-                "evidence_id": f"archive-event:{event_id}",
-                "path": payload["path"],
-                "title": payload["title"],
-                "page_type": payload["page_type"],
-                "content": payload["content"],
-                "tags": list(payload.get("tags") or []),
-                "source_ids": list(payload.get("source_ids") or []),
-                "base_version_id": str(version_id),
-                "base_content_hash": content_hash,
-            }
+            archive_page(event_id, version_id, content_hash, raw_payload)
         )
     return pages
 

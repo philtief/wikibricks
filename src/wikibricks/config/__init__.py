@@ -168,12 +168,7 @@ def _environment_overlay(environ: Mapping[str, str]) -> dict[str, Any]:
             value = convert(raw)
         except ValueError as exc:
             raise ValueError(f"{name} has an invalid value") from exc
-        target = result.setdefault(section, {})
-        if "." in key:
-            parent, child = key.split(".", 1)
-            target.setdefault(parent, {})[child] = value
-        else:
-            target[key] = value
+        result.setdefault(section, {})[key] = value
     return result
 
 

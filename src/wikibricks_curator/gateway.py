@@ -38,8 +38,7 @@ def resolve_token(profile: str | None) -> str:
 
 
 def _json_content(response: Any) -> dict[str, Any]:
-    content = response.read()
-    text = content.decode("utf-8") if isinstance(content, bytes) else content
+    text = response.read().decode("utf-8")
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as error:

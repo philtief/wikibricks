@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-import threading
 import time
 from collections.abc import Callable
 from contextlib import contextmanager
@@ -209,23 +208,8 @@ async def run_background_loop() -> None:
         await asyncio.sleep(delay)
 
 
-def run_background_worker(stop: threading.Event) -> None:
-    """Run maintenance for a native host until its lifecycle ends."""
-    while not stop.is_set():
-        delay = 300
-        try:
-            config = load_config()
-            delay = config.automation_poll_seconds
-            if config.automation_enabled:
-                run_background_cycle(config)
-        except Exception as exc:
-            _LOGGER.warning("WikiBricks background cycle failed: %s", exc)
-        stop.wait(delay)
-
-
 __all__ = [
     "run_background_cycle",
     "run_background_loop",
-    "run_background_worker",
     "run_remote_cycle",
 ]

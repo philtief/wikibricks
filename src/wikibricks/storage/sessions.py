@@ -13,6 +13,7 @@ from wikibricks.session_ingest import (
     session_content_hash,
     session_identity,
     session_page_path,
+    session_title,
 )
 from wikibricks.storage.content import canonical_hash, insert_search_chunks
 
@@ -23,16 +24,6 @@ if TYPE_CHECKING:
 class SessionRepository:
     def __init__(self, store: PostgresStore) -> None:
         self.store = store
-
-    @staticmethod
-    def title(record: SessionRecord) -> str:
-        configured = record.metadata.get("title")
-        if configured:
-            return str(configured)[:120]
-        for event in record.events:
-            if event.kind == "user" and event.content.strip():
-                return event.content.strip().splitlines()[0][:120]
-        return f"Session {record.external_id[:8]}"
 
     @staticmethod
     def event_hash(event: SessionEvent) -> str:
@@ -64,7 +55,7 @@ class SessionRepository:
                         record.started_at,
                         record.updated_at,
                         session_page_path(record),
-                        self.title(record),
+                        session_title(record),
                         Jsonb(record.metadata),
                         record_hash,
                         stable_id,
@@ -87,7 +78,7 @@ class SessionRepository:
                         record.started_at,
                         record.updated_at,
                         session_page_path(record),
-                        self.title(record),
+                        session_title(record),
                         Jsonb(record.metadata),
                         record_hash,
                     ),

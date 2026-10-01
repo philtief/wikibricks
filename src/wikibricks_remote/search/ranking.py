@@ -32,9 +32,8 @@ def reciprocal_rank_fusion(
     keyword_paths: Sequence[str],
     *,
     maximum: int,
-    constant: int = 60,
 ) -> tuple[CandidateRank, ...]:
-    if maximum < 1 or constant < 1:
+    if maximum < 1:
         raise ValueError("RRF bounds must be positive")
     vector_ranks: dict[str, int] = {}
     keyword_ranks: dict[str, int] = {}
@@ -47,7 +46,7 @@ def reciprocal_rank_fusion(
         vector_rank = vector_ranks.get(path)
         keyword_rank = keyword_ranks.get(path)
         score = sum(
-            1.0 / (constant + rank)
+            1.0 / (60 + rank)
             for rank in (vector_rank, keyword_rank)
             if rank is not None
         )

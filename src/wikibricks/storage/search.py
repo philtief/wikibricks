@@ -9,9 +9,8 @@ if TYPE_CHECKING:
     from wikibricks.storage.store import PostgresStore
 
 
-def _snippet(text: str, query: str, *, length: int = 300) -> str:
+def _snippet(text: str, tokens: list[str], *, length: int = 300) -> str:
     normalized = " ".join(str(text or "").split())
-    tokens = re.findall(r"[\w-]+", query, flags=re.UNICODE)
     if not tokens:
         return normalized[:length]
     expression = "|".join(re.escape(token) for token in tokens)
@@ -144,7 +143,10 @@ class SearchRepository:
                 "path": row[1],
                 "title": row[2],
                 "page_type": row[3],
-                "snippet": _snippet(row[4], query),
+                "snippet": _snippet(
+                    row[4],
+                    re.findall(r"[\w-]+", query, flags=re.UNICODE),
+                ),
                 "tags": list(row[5] or []),
                 "version": row[6],
                 "score": float(row[7]),

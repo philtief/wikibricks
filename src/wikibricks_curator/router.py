@@ -73,7 +73,7 @@ def _candidates(conn: Any, generic: set[str]) -> list[dict[str, str]]:
 
 
 def _new_path(path: str, *, candidates: set[str], generic: set[str]) -> bool:
-    if not isinstance(path, str) or path in candidates:
+    if path in candidates:
         return False
     last_segment = path.rsplit("/", 1)[-1]
     return _NEW_TOPIC.fullmatch(path) is not None and _normalize(last_segment) not in generic | {"home"}
@@ -117,8 +117,7 @@ def route_sessions(
     prompt = _ROUTER_PROMPT.read_text(encoding="utf-8")
     schema = _schema()
     empty = {session["session_id"] for session in sessions if not session["text"]}
-    model_ids = [session_id for session_id in ids if session_id not in empty]
-    model_id_set = set(model_ids)
+    model_id_set = {session_id for session_id in ids if session_id not in empty}
     request = {
         "sessions": [session for session in sessions if session["session_id"] in model_id_set],
         "candidates": candidates,
@@ -127,7 +126,7 @@ def route_sessions(
     error: str | None = None
     for _attempt in (1, 2):
         try:
-            raw = chat(prompt, request, schema) if model_ids else {"routes": []}
+            raw = chat(prompt, request, schema) if model_id_set else {"routes": []}
             error = None
             break
         except Exception as exc:
@@ -165,7 +164,7 @@ def route_sessions(
     for session_id in empty:
         accepted[session_id] = None
     if invalid_routes:
-        invalid += len(model_ids)
+        invalid += len(model_id_set)
     new_topics = sorted(
         {path for path in accepted.values() if path is not None and path not in candidate_paths}
     )

@@ -27,6 +27,26 @@ _PROPOSAL_REQUIRED_FIELDS = {
 _PROPOSAL_FIELDS = _PROPOSAL_REQUIRED_FIELDS | {"link_type"}
 
 
+def archive_page(
+    event_id: UUID,
+    version_id: UUID,
+    content_hash: str,
+    raw_payload: dict[str, Any],
+) -> dict[str, Any]:
+    payload = dict(raw_payload)
+    return {
+        "evidence_id": f"archive-event:{event_id}",
+        "path": payload["path"],
+        "title": payload["title"],
+        "page_type": payload["page_type"],
+        "content": payload["content"],
+        "tags": list(payload.get("tags") or []),
+        "source_ids": list(payload.get("source_ids") or []),
+        "base_version_id": str(version_id),
+        "base_content_hash": content_hash,
+    }
+
+
 def _canonical_json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
 
