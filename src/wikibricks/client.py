@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import re
-import warnings
 from pathlib import Path
 from typing import Any
 
@@ -40,7 +39,6 @@ class WikiClient:
         return self.store.write_page(*args, **kwargs)
 
     def write_pages(self, pages: list[dict[str, Any]]) -> int:
-        written = 0
         for page in pages:
             content = page.get("content", page.get("content_json"))
             self.write_page(
@@ -55,8 +53,7 @@ class WikiClient:
                 chunk_index=page.get("chunk_index"),
                 content_text_override=page.get("content_text_override"),
             )
-            written += 1
-        return written
+        return len(pages)
 
     def read_page(self, path: str) -> dict[str, Any] | None:
         page = self.store.read_page(path)
@@ -81,13 +78,8 @@ class WikiClient:
     def search(
         self,
         query: str,
-        mode: str = "HYBRID",
         num_results: int = 5,
-        rerank_by_citations: bool | None = None,
-        rerank_with_pagerank: bool | None = None,
-        include_ephemeral: bool = False,
     ) -> list[dict[str, Any]]:
-        del mode, rerank_by_citations, rerank_with_pagerank, include_ephemeral
         hits = self.store.search(query, num_results=num_results)
         self._log("search", query=query)
         return hits
@@ -230,40 +222,6 @@ class WikiClient:
             tags=["meta", "index"],
         )
         return f"Materialized index with {len(pages)} pages"
-
-    def sync_index(self) -> None:
-        warnings.warn(
-            "sync_index is unnecessary for local search",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-
-    def index_row_count(self) -> int:
-        return len(self.list_pages(include_ephemeral=True))
-
-    def reconcile_vs_source(self) -> int:
-        return 0
-
-    def list_recent_by_cwd_tag(
-        self, cwd_basename: str, limit: int = 3
-    ) -> list[dict[str, Any]]:
-        if not cwd_basename:
-            return []
-        with self.store.connection() as conn:
-            rows = conn.execute(
-                "SELECT page_path, title, updated_at FROM sessions "
-                "WHERE workspace LIKE ? ORDER BY updated_at DESC LIMIT ?",
-                (f"%/{cwd_basename}", limit),
-            ).fetchall()
-        return [
-            {
-                "path": row[0],
-                "title": row[1],
-                "summary": row[1],
-                "updated_at": row[2],
-            }
-            for row in rows
-        ]
 
     def _log(self, op_type, path=None, query=None, details=None) -> None:
         try:

@@ -75,8 +75,6 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("target_dir", help="where to write the markdown tree")
     p.add_argument("--database-url", help="Optional PostgreSQL connection URL")
-    p.add_argument("--limit", type=int, default=None,
-                   help="cap number of pages exported (testing)")
     args = p.parse_args()
 
     from wikibricks import WikiClient
@@ -84,8 +82,6 @@ def main() -> int:
     wiki = WikiClient(args.database_url)
 
     pages, edges = fetch_pages_and_edges(wiki)
-    if args.limit is not None:
-        pages = pages[: args.limit]
     print(f"exporting {len(pages)} pages, {len(edges)} edges to {args.target_dir}")
 
     target = Path(args.target_dir).resolve()
