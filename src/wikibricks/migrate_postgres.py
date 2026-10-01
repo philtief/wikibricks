@@ -41,8 +41,6 @@ class MigrationReport:
 def _sqlite_value(value: Any) -> Any:
     if value is None or isinstance(value, (str, int, float, bytes)):
         return value
-    if isinstance(value, bool):
-        return int(value)
     if isinstance(value, UUID):
         return str(value)
     if isinstance(value, (date, datetime)):

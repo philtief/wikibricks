@@ -119,9 +119,7 @@ def map_wiki_path_to_file(wiki_path: str) -> str:
 
     Subfolders are preserved. Existing `.md` suffix is not duplicated.
     """
-    if wiki_path.endswith(".md"):
-        return wiki_path
-    return f"{wiki_path}.md"
+    return wiki_path.removesuffix(".md") + ".md"
 
 
 def _render_yaml_value(v) -> str:

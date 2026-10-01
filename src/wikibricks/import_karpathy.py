@@ -39,27 +39,24 @@ def _read_page_record(file: Path, base_dir: Path) -> dict:
     meta, body = parse_frontmatter(text)
 
     path = wiki_path_for(str(file), base_dir=str(base_dir), frontmatter=meta)
-    title = meta.get("title")
-    if not title:
-        # First H1 in body, or filename slug as fallback.
-        for line in body.splitlines():
-            if line.startswith("# "):
-                title = line[2:].strip()
-                break
-        if not title:
-            title = file.stem.replace("-", " ").title()
+    title = (
+        meta.get("title")
+        or next(
+            (line[2:].strip() for line in body.splitlines() if line.startswith("# ")),
+            "",
+        )
+        or file.stem.replace("-", " ").title()
+    )
 
     tags = meta.get("tags", [])
     if isinstance(tags, str):
         tags = [t.strip() for t in tags.split(",") if t.strip()]
     tags = [str(t) for t in tags]
 
-    summary = ""
-    for line in body.splitlines():
-        s = line.strip()
-        if s and not s.startswith("#"):
-            summary = s[:200]
-            break
+    summary = next(
+        (s[:200] for s in (line.strip() for line in body.splitlines()) if s and not s.startswith("#")),
+        "",
+    )
 
     return {
         "path": path,

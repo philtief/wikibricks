@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import asdict, dataclass, field
 from typing import Any
 
 SESSION_EVENT_KINDS = frozenset(
@@ -92,13 +92,7 @@ class SessionEvent:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "external_id": self.external_id,
-            "kind": self.kind,
-            "content": self.content,
-            "created_at": self.created_at,
-            "metadata": self.metadata,
-        }
+        return asdict(self)
 
 
 @dataclass(frozen=True, slots=True)
@@ -146,14 +140,4 @@ class SessionRecord:
         )
 
     def to_dict(self) -> dict[str, Any]:
-        return {
-            "harness": self.harness,
-            "external_id": self.external_id,
-            "user_id": self.user_id,
-            "agent": self.agent,
-            "workspace": self.workspace,
-            "started_at": self.started_at,
-            "updated_at": self.updated_at,
-            "events": [event.to_dict() for event in self.events],
-            "metadata": self.metadata,
-        }
+        return asdict(self)
