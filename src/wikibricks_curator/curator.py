@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from importlib.resources import files
@@ -13,11 +12,11 @@ from uuid import uuid5
 from wikibricks.curation import (
     apply_run,
     build_manifest,
-    canonical_json,
     get_or_create_replica_id,
     store_manifest,
 )
 from wikibricks.curation.backlog import load_curation_backlog
+from wikibricks.curation.protocol import content_hash
 from wikibricks.storage.sqlite_store import SQLiteStore
 from wikibricks_curator.evidence import build_request
 from wikibricks_curator.router import route_sessions
@@ -171,9 +170,7 @@ def run_curator(
             results.append(result)
             continue
         result["events"] = len(built["request"]["evidence"])
-        digest = hashlib.sha256(
-            canonical_json(built["request"]).encode("utf-8")
-        ).hexdigest()
+        digest = content_hash(built["request"])
         run_id = uuid5(replica_id, f"wikibricks:local-curator:{project}:{digest}")
         # Model output varies between calls; one retry absorbs an invalid reply.
         for attempt in (1, 2):

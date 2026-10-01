@@ -169,9 +169,8 @@ def build_request(
 ) -> dict[str, Any] | None:
     """Build one bounded curator request for a backlog item."""
     project = item["project"]
-    requested_paths = list(dict.fromkeys(item["pages"]))
     living_page = item["living_page"]
-    paths = set(requested_paths) | {living_page}
+    paths = set(item["pages"]) | {living_page}
     pages = _active_pages(
         conn,
         paths=paths,

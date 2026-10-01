@@ -108,7 +108,6 @@ def curation_backlog(
             {
                 **item,
                 "workspaces": sorted(item["workspaces"]),
-                "workspace": item["workspace"],
                 "new_sessions": new_sessions,
                 "pages": project_pages[:3],
                 "last_page_update": (

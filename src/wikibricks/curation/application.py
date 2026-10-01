@@ -164,40 +164,6 @@ def _apply_patch(
     proposal = patch["proposal"]
     patch_id = UUID(patch["patch_id"])
     if operation in {"create_page", "update_page"}:
-        if isinstance(store, SQLiteStore):
-            expected = None if operation == "create_page" else patch["base_content_hash"]
-            if force:
-                _message, version_id = store.write_page_in_connection(
-                    conn,
-                    patch["path"],
-                    proposal["title"],
-                    proposal["content"],
-                    page_type=proposal["page_type"],
-                    created_by=created_by,
-                    tags=proposal["tags"],
-                    source_ids=proposal["source_ids"],
-                    parent_id=proposal["parent_id"],
-                    chunk_index=proposal["chunk_index"],
-                    content_text=proposal["content_text"],
-                    curation_patch_id=str(patch_id),
-                )
-            else:
-                _message, version_id = store.write_page_in_connection(
-                    conn,
-                    patch["path"],
-                    proposal["title"],
-                    proposal["content"],
-                    page_type=proposal["page_type"],
-                    created_by=created_by,
-                    tags=proposal["tags"],
-                    source_ids=proposal["source_ids"],
-                    parent_id=proposal["parent_id"],
-                    chunk_index=proposal["chunk_index"],
-                    content_text=proposal["content_text"],
-                    curation_patch_id=str(patch_id),
-                    expected_base_content_hash=expected,
-                )
-            return UUID(version_id)
         kwargs: dict[str, Any] = {}
         if not force:
             kwargs["expected_base_content_hash"] = (
@@ -205,6 +171,23 @@ def _apply_patch(
                 if operation == "create_page"
                 else patch["base_content_hash"]
             )
+        if isinstance(store, SQLiteStore):
+            _message, version_id = store.write_page_in_connection(
+                conn,
+                patch["path"],
+                proposal["title"],
+                proposal["content"],
+                page_type=proposal["page_type"],
+                created_by=created_by,
+                tags=proposal["tags"],
+                source_ids=proposal["source_ids"],
+                parent_id=proposal["parent_id"],
+                chunk_index=proposal["chunk_index"],
+                content_text=proposal["content_text"],
+                curation_patch_id=str(patch_id),
+                **kwargs,
+            )
+            return UUID(version_id)
         _message, version_id = store.pages.write_in_connection(
             conn,
             patch["path"],
