@@ -46,3 +46,13 @@ def session_tags(record: SessionRecord) -> list[str]:
         tags.append(f"agent:{record.agent}")
     tags.append(f"user:{record.user_id}")
     return tags
+
+
+def session_title(record: SessionRecord) -> str:
+    configured = record.metadata.get("title")
+    if configured:
+        return str(configured)[:120]
+    for event in record.events:
+        if event.kind == "user" and event.content.strip():
+            return event.content.strip().splitlines()[0][:120]
+    return f"Session {record.external_id[:8]}"

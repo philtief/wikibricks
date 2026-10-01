@@ -18,13 +18,14 @@ from wikibricks.session_ingest import (
     session_content_hash,
     session_identity,
     session_page_path,
+    session_title,
 )
 from wikibricks.storage.content import (
     canonical_hash,
     iter_search_chunks,
     page_content_hash,
 )
-from wikibricks.storage.search import select_hits
+from wikibricks.storage.search import _snippet, select_hits
 
 DEFAULT_DATABASE_PATH = Path.home() / ".wikibricks" / "wikibricks.db"
 _UNSET = object()
@@ -36,18 +37,6 @@ def _now() -> str:
 
 def _json(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), sort_keys=True)
-
-
-def _snippet(text: str, tokens: list[str], *, length: int = 300) -> str:
-    normalized = " ".join(text.split())
-    expression = "|".join(re.escape(token) for token in tokens)
-    match = re.search(expression, normalized, flags=re.IGNORECASE | re.UNICODE)
-    if match is None:
-        return normalized[:length]
-    padding = max(0, (length - len(match.group(0))) // 2)
-    start = max(0, match.start() - padding)
-    end = min(len(normalized), start + length)
-    return normalized[start:end]
 
 
 def _insert_chunks(
@@ -163,81 +152,27 @@ class SQLiteStore:
             content_text = " ".join(
                 str(content.get(key) or "") for key in ("summary", "body")
             ).strip()
-        page_hash = page_content_hash(
-            title=title,
-            page_type=page_type,
-            content=content,
-            content_text=content_text,
-            tags=tags,
-            source_ids=source_ids,
-            parent_id=parent_id,
-            chunk_index=chunk_index,
-        )
         with self.connection(write=True) as conn:
             existing = conn.execute(
-                "SELECT p.page_id, p.status, v.version, v.content_hash "
-                "FROM pages p LEFT JOIN page_versions v "
-                "ON v.version_id = p.current_version_id WHERE p.path = ?",
-                (path,),
+                "SELECT status FROM pages WHERE path = ?", (path,)
             ).fetchone()
             if existing and existing["status"] != "active":
                 raise ValueError(f"wiki page is superseded: {path}")
-            if existing and existing["content_hash"] == page_hash:
-                return f"Wiki page unchanged: {path}"
-            timestamp = _now()
-            if existing:
-                page_id = existing["page_id"]
-                version = int(existing["version"]) + 1
-            else:
-                page_id = str(uuid4())
-                version = 1
-                conn.execute(
-                    "INSERT INTO pages(page_id, path, created_at, updated_at) "
-                    "VALUES (?, ?, ?, ?)",
-                    (page_id, path, timestamp, timestamp),
-                )
-            version_id = str(uuid4())
-            conn.execute(
-                "INSERT INTO page_versions("
-                "version_id, page_id, version, title, page_type, content, "
-                "content_text, tags, source_ids, parent_id, chunk_index, created_by, "
-                "content_hash, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                (
-                    version_id,
-                    page_id,
-                    version,
-                    title,
-                    page_type,
-                    _json(content),
-                    content_text,
-                    _json(tags or []),
-                    _json(source_ids) if source_ids is not None else None,
-                    parent_id,
-                    chunk_index,
-                    created_by,
-                    page_hash,
-                    timestamp,
-                ),
-            )
-            conn.execute(
-                "UPDATE pages SET current_version_id = ?, updated_at = ? WHERE page_id = ?",
-                (version_id, timestamp, page_id),
-            )
-            _insert_chunks(
+            message, _version_id = self.write_page_in_connection(
                 conn,
-                table="page_search_chunks",
-                fts_table="page_search_fts",
-                version_id=version_id,
-                text=content_text,
-            )
-            conn.execute(
-                "INSERT INTO sync_outbox("
-                "event_id, entity_kind, entity_id, version_id, payload_hash, created_at"
-                ") VALUES (?, 'page_version', ?, ?, ?, ?)",
-                (str(uuid4()), page_id, version_id, page_hash, timestamp),
+                path,
+                title,
+                content,
+                page_type=page_type,
+                created_by=created_by,
+                tags=tags or [],
+                source_ids=source_ids,
+                parent_id=parent_id,
+                chunk_index=chunk_index,
+                content_text=content_text,
             )
             self._failpoint("before_commit")
-        return f"Wrote wiki page: {path}"
+        return message
 
     def write_page_in_connection(
         self,
@@ -253,7 +188,7 @@ class SQLiteStore:
         parent_id: str | None,
         chunk_index: int | None,
         content_text: str,
-        curation_patch_id: str,
+        curation_patch_id: str | None = None,
         expected_base_content_hash: str | None | object = _UNSET,
     ) -> tuple[str, str]:
         """Write one curated page version inside an existing transaction."""
@@ -508,13 +443,11 @@ class SQLiteStore:
 
     def acknowledge_outbox_batch(self, batch_id: UUID) -> int:
         with self.connection(write=True) as conn:
-            before = conn.total_changes
-            conn.execute(
+            return conn.execute(
                 "UPDATE sync_outbox SET acknowledged_at = ? "
                 "WHERE batch_id = ? AND acknowledged_at IS NULL",
                 (_now(), str(batch_id)),
-            )
-            return conn.total_changes - before
+            ).rowcount
 
     def get_sync_cursor(self, target: str) -> dict[str, Any]:
         with self.connection() as conn:
@@ -727,16 +660,6 @@ class SQLiteStore:
             )
         return len(page_rows), len(session_rows)
 
-    @staticmethod
-    def _session_title(record: SessionRecord) -> str:
-        configured = record.metadata.get("title")
-        if configured:
-            return str(configured)[:120]
-        for event in record.events:
-            if event.kind == "user" and event.content.strip():
-                return event.content.strip().splitlines()[0][:120]
-        return f"Session {record.external_id[:8]}"
-
     def ingest_session(self, record: SessionRecord) -> IngestResult:
         stable_id = str(session_identity(record))
         record_hash = session_content_hash(record)
@@ -763,7 +686,7 @@ class SQLiteStore:
                         record.started_at,
                         record.updated_at,
                         session_page_path(record),
-                        self._session_title(record),
+                        session_title(record),
                         _json(record.metadata),
                         record_hash,
                         timestamp,
@@ -786,7 +709,7 @@ class SQLiteStore:
                         record.started_at,
                         record.updated_at,
                         session_page_path(record),
-                        self._session_title(record),
+                        session_title(record),
                         _json(record.metadata),
                         record_hash,
                         timestamp,
