@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.14.2 - 2026-10-15
+
+- Remote maintenance runs on `databricks-claude-sonnet-5-5`: it reads text from
+  content-block replies, and the remote policy leaves `temperature` unset by default.
+- Sessions in folders named by a generated ID (hex or UUID), such as per-run
+  agent folders, are routed to topics by content instead of becoming `topics/<id>` pages.
+
 ## 0.14.1 - 2026-10-01
 
 - Internal simplification with no behavior change: shared page-write, title,
