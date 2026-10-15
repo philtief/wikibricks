@@ -102,6 +102,20 @@ def test_session_targets_honours_a_generic_override(tmp_path: Path):
     assert targets[project] == "topics/project"
 
 
+def test_generated_id_folders_are_container_folders(tmp_path: Path):
+    store = _store(tmp_path)
+    hex_run = _ingest(store, "hex-run", str(HOME / "inbox-agent-runs" / "1a1314bdd0a00072"))
+    uuid_run = _ingest(store, "uuid-run", str(HOME / "runs" / "465e2232-4ab5-5e2c-b1da-18d7e164e40c"))
+    project = _ingest(store, "project", str(HOME / "code" / "cafe-dashboard"))
+
+    with store.connection(write=True) as conn:
+        targets = session_targets(conn, generic=(), home=HOME)
+
+    assert targets[hex_run] is None
+    assert targets[uuid_run] is None
+    assert targets[project] == "topics/cafe-dashboard"
+
+
 def test_unrouted_sessions_returns_only_recent_container_folder_sessions(tmp_path: Path):
     store = _store(tmp_path)
     generic = _ingest(store, "generic", str(HOME / "code"), _timestamp(1))
@@ -500,19 +514,25 @@ def test_routed_time_counts_as_new_evidence(tmp_path: Path):
 
 def test_run_curator_routes_before_backlog_and_hides_routing_errors(tmp_path: Path):
     store = _store(tmp_path)
+    # run_curator routes the last 7 days of the real clock, so date the data from it.
+    now = datetime.now(timezone.utc)
+
+    def recent(hours: int) -> str:
+        return (now - timedelta(hours=hours)).isoformat()
+
     store.write_page("topics/agent-atlas", "Agent Atlas", {"summary": "a", "body": "b"})
     with store.connection(write=True) as conn:
         conn.execute(
             "UPDATE pages SET updated_at = ? WHERE path = 'topics/agent-atlas'",
-            (_timestamp(5),),
+            (recent(5),),
         )
-    routed = _ingest(store, "routed", str(HOME / "code"), _timestamp(4))
-    _ingest(store, "router", str(HOME / "code"))
+    routed = _ingest(store, "routed", str(HOME / "code"), recent(4))
+    _ingest(store, "router", str(HOME / "code"), recent(1))
     with store.connection(write=True) as conn:
         conn.execute(
             "INSERT INTO session_topics(session_id, page_path, origin, created_at) "
             "VALUES (?, 'topics/agent-atlas', 'manual', ?)",
-            (routed, _timestamp(3)),
+            (routed, recent(3)),
         )
     calls = 0
 

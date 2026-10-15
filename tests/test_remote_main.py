@@ -203,6 +203,27 @@ def test_main_resolves_endpoints_and_rejects_a_non_object_model_response(
     }
 
 
+def test_json_content_reads_text_blocks_after_reasoning():
+    response = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(
+                    content=[
+                        {"type": "reasoning", "summary": [{"type": "summary_text", "text": ""}]},
+                        {"type": "text", "text": '{"proposals": []}'},
+                    ]
+                )
+            )
+        ]
+    )
+
+    assert _json_content(response) == {"proposals": []}
+
+
+def test_default_policy_leaves_temperature_unset():
+    assert load_policy().temperature is None
+
+
 def test_json_content_rejects_empty_and_non_object_responses():
     no_message = SimpleNamespace(choices=[])
     empty = SimpleNamespace(choices=[SimpleNamespace(message=None)])

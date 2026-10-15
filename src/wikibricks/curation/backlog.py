@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -16,10 +17,15 @@ def _normalized_name(value: str) -> str:
     return _normalize(Path(value).name)
 
 
+# Per-run folders such as `inbox-agent-runs/1a1314bdd0a00072` name a run, not a topic.
+_GENERATED_ID = re.compile(r"[0-9a-f]{12,}|[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}")
+
+
 def _unrouted_workspace(workspace: str | None, *, generic: set[str], home: Path) -> bool:
     if workspace is None or not workspace or Path(workspace) == home:
         return True
-    return _normalized_name(workspace) in generic
+    name = _normalized_name(workspace)
+    return name in generic or _GENERATED_ID.fullmatch(name) is not None
 
 
 def _timestamp(value: str | datetime) -> datetime:

@@ -31,5 +31,6 @@ search:
   pages_per_query: 10
 
 model:
-  temperature: 0
+  # Unset: Claude 5.5 models reject temperature.
+  temperature: null
   max_output_tokens: 8192
