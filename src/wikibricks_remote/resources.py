@@ -27,7 +27,7 @@ class RemotePolicy:
     embedding_batch_size: int
     max_query_documents: int
     pages_per_query: int
-    temperature: float
+    temperature: float | None
     max_output_tokens: int
 
 
@@ -70,7 +70,7 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         embedding_batch_size=int(search["embedding_batch_size"]),
         max_query_documents=int(search["max_query_documents"]),
         pages_per_query=int(search["pages_per_query"]),
-        temperature=float(model["temperature"]),
+        temperature=None if model["temperature"] is None else float(model["temperature"]),
         max_output_tokens=int(model["max_output_tokens"]),
     )
     numeric_limits = (

@@ -36,6 +36,11 @@ def _json_content(response: Any) -> dict[str, Any]:
     if not response.choices or not response.choices[0].message:
         raise RuntimeError("curation model returned no message")
     content = response.choices[0].message.content
+    if isinstance(content, list):
+        # Reasoning models return content blocks; the answer is in the text blocks.
+        content = "".join(
+            block.get("text", "") for block in content if isinstance(block, dict) and block.get("type") == "text"
+        )
     if not isinstance(content, str) or not content.strip():
         raise RuntimeError("curation model returned empty content")
     text = content.strip()
