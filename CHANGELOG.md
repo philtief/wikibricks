@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.3 - 2026-10-20
+
+- The topic router no longer routes a session to a page named after a per-run
+  folder: an existing `topics/<generated-id>` page is not offered as a candidate,
+  and the model cannot propose one as a new topic.
+- New `wikibricks import notes <dir> --user-id <id>`: meeting notes and
+  transcripts in a drop folder become sessions. Markdown and text files are one
+  event, `.vtt` transcripts one event per cue with the speaker in event metadata,
+  and an optional JSON sidecar carries title, platform, attendees, source URI and
+  a stable external ID. The meeting has no workspace, so the curator routes it by
+  content.
+
 ## 0.14.2 - 2026-10-15
 
 - Remote maintenance runs on `databricks-claude-sonnet-5-5`: it reads text from
