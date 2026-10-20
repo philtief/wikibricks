@@ -12,6 +12,7 @@ from urllib.error import HTTPError
 from uuid import UUID
 
 from wikibricks.adapters.jsonl import iter_jsonl_sessions
+from wikibricks.adapters.meeting_notes import iter_note_files, note_to_session
 from wikibricks.adapters.omnigent import (
     conversation_to_session,
     is_syncable_conversation,
@@ -113,6 +114,26 @@ def import_jsonl(
             except Exception as exc:
                 result["errors"] += 1
                 print(f"line {result['scanned']}: {exc}", file=sys.stderr)
+    return result
+
+
+def import_notes(
+    *,
+    database_url: str | Path | None,
+    source: Path,
+    user_id: str,
+) -> dict[str, int]:
+    store = _store(database_url)
+    store.migrate()
+    result = {"scanned": 0, "imported": 0, "errors": 0}
+    for note in iter_note_files(source):
+        result["scanned"] += 1
+        try:
+            store.ingest_session(note_to_session(note, user_id=user_id, root=source))
+            result["imported"] += 1
+        except Exception as exc:
+            result["errors"] += 1
+            print(f"{note}: {exc}", file=sys.stderr)
     return result
 
 
@@ -260,6 +281,10 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
     jsonl = formats.add_parser("jsonl")
     jsonl.add_argument("source", type=Path)
     jsonl.set_defaults(handler=_command_import_jsonl)
+    notes = formats.add_parser("notes", help="Import meeting notes from a drop folder")
+    notes.add_argument("source", type=Path)
+    notes.add_argument("--user-id", required=True)
+    notes.set_defaults(handler=_command_import_notes)
     server_import = formats.add_parser("omnigent-server", help="Import sessions from an Omnigent server")
     server_import.add_argument("--server", required=True)
     server_import.add_argument("--profile", required=True)
@@ -427,6 +452,16 @@ def _command_import_omnigent(args: argparse.Namespace) -> int:
 
 def _command_import_jsonl(args: argparse.Namespace) -> int:
     result = import_jsonl(database_url=_target(args), source=args.source)
+    _print_json(result)
+    return 1 if result["errors"] else 0
+
+
+def _command_import_notes(args: argparse.Namespace) -> int:
+    result = import_notes(
+        database_url=_target(args),
+        source=args.source,
+        user_id=args.user_id,
+    )
     _print_json(result)
     return 1 if result["errors"] else 0
 

@@ -575,3 +575,32 @@ def test_pages_named_after_a_container_folder_are_not_candidates(tmp_path: Path)
     assert result["invalid"] == 1
     with store.connection() as conn:
         assert email in unrouted_sessions(conn, since=NOW - timedelta(days=7))
+
+
+def test_generated_id_pages_are_neither_candidates_nor_new_topics(tmp_path: Path):
+    # A page named after a per-run folder is a routing accident, not a topic to reuse.
+    store = _store(tmp_path)
+    store.write_page("topics/1a13ba27c13463d1", "Run", {"summary": "junk", "body": "Run folder."})
+    store.write_page("topics/agent-atlas", "Agent Atlas", {"summary": "s", "body": "Page."})
+    existing = _ingest(store, "existing-run", str(HOME / "inbox-agent-runs" / "1a13ba27c13463d1"))
+    invented = _ingest(store, "invented-run", str(HOME / "inbox-agent-runs" / "1a13a3685c114886"))
+    seen: dict[str, Any] = {}
+
+    def chat(_prompt: str, request: dict[str, Any], _schema: dict[str, Any]) -> dict[str, Any]:
+        seen["candidates"] = [candidate["path"] for candidate in request["candidates"]]
+        return {
+            "routes": [
+                {"session_id": existing, "page_path": "topics/1a13ba27c13463d1", "reason": "folder"},
+                {"session_id": invented, "page_path": "topics/1a13a3685c114886", "reason": "folder"},
+            ]
+        }
+
+    result = route_sessions(store, chat, since=NOW - timedelta(days=7))
+
+    assert seen["candidates"] == ["topics/agent-atlas"]
+    assert result["routed"] == 0
+    assert result["invalid"] == 2
+    assert result["new_topics"] == []
+    with store.connection() as conn:
+        unrouted = set(unrouted_sessions(conn, since=NOW - timedelta(days=7), home=HOME))
+    assert unrouted == {existing, invented}

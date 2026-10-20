@@ -334,6 +334,36 @@ Use JSONL when another system can export the versioned session contract:
 wikibricks import jsonl examples/session-v1.jsonl
 ```
 
+Meeting notes and transcripts are files in a drop folder. One file becomes one
+session, so a note is evidence the curator can route to a topic page like any
+other session:
+
+```bash
+wikibricks import notes ~/.wikibricks/inbox/meetings --user-id "$USER"
+```
+
+`.md` and `.txt` files are stored as one event. `.vtt` transcripts are stored as
+one event per cue, with the speaker, start and end kept in event metadata. A
+`YYYY-MM-DD` filename prefix sets the meeting date. An optional sidecar named
+after the note (`2026-10-19--allianz-pricing.json`) carries the rest:
+
+```json
+{
+  "title": "Allianz pricing follow-up",
+  "platform": "gmeet",
+  "started_at": "2026-10-19T15:00:00+00:00",
+  "attendees": ["philipp@example.com"],
+  "source_uri": "https://meet.google.com/abc-defg-hij",
+  "external_id": "gmeet-abc-defg-hij"
+}
+```
+
+Re-importing an unchanged note is a no-op. Set `external_id` when the platform
+has a stable id, otherwise the path inside the drop folder is the identity and
+renaming a note creates a second session. Fetching notes from Google Meet,
+Microsoft Teams or Glean is a separate, opt-in step that only writes files into
+the drop folder.
+
 The Omnigent database importer is an optional, read-only recovery command. The
 native integration does not poll `~/.omnigent/chat.db` during normal work.
 
