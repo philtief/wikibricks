@@ -7,7 +7,9 @@ from urllib.error import HTTPError
 import pytest
 
 from wikibricks.cli import import_omnigent_server, main
+from wikibricks.curation.backlog import unrouted_sessions
 from wikibricks.models import SessionRecord
+from wikibricks.storage.sqlite_store import SQLiteStore
 
 
 def run_cli(database_path: Path, *arguments: str) -> int:
@@ -82,6 +84,54 @@ def test_import_jsonl_reports_contract_counts(tmp_path: Path, capsys: pytest.Cap
 
     assert exit_code == 0
     assert output == {"scanned": 1, "imported": 1, "errors": 0}
+
+
+def test_import_notes_maps_meeting_files_and_stays_unrouted(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    database = tmp_path / "wikibricks.db"
+    notes = tmp_path / "meetings"
+    notes.mkdir()
+    (notes / "2026-10-19--allianz-pricing.md").write_text(
+        "# Allianz pricing follow-up\n\nAgreed to send the serverless estimate.\n"
+    )
+    (notes / "2026-10-19--allianz-pricing.json").write_text(
+        json.dumps(
+            {
+                "platform": "gmeet",
+                "attendees": ["philipp@databricks.com"],
+                "source_uri": "https://meet.google.com/abc-defg-hij",
+            }
+        )
+    )
+    (notes / "2026-10-20--rwe-sap.vtt").write_text(
+        "WEBVTT\n\n"
+        "00:00:01.500 --> 00:00:04.000\n<v Philipp>SAP ingestion is next.</v>\n\n"
+        "00:00:04.000 --> 00:00:07.000\n<v Anna>We need Lakeflow Connect.</v>\n"
+    )
+
+    assert run_cli(database, "import", "notes", str(notes), "--user-id", "user") == 0
+    report = json.loads(capsys.readouterr().out)
+    assert run_cli(database, "import", "notes", str(notes), "--user-id", "user") == 0
+    repeat = json.loads(capsys.readouterr().out)
+
+    assert report == {"scanned": 2, "imported": 2, "errors": 0}
+    assert repeat == report
+    store = SQLiteStore(database)
+    meeting = store.read_page("meeting-notes-sessions/user/2026/10/19/2026-10-19--allianz-pricing")
+    transcript = store.read_page("meeting-notes-sessions/user/2026/10/20/2026-10-20--rwe-sap")
+
+    assert meeting["title"] == "Allianz pricing follow-up"
+    assert "serverless estimate" in meeting["content_text"]
+    assert [event["content"] for event in transcript["events"]] == [
+        "Philipp: SAP ingestion is next.",
+        "Anna: We need Lakeflow Connect.",
+    ]
+    with store.connection() as conn:
+        # A meeting has no workspace, so the curator routes it by content.
+        assert len(unrouted_sessions(conn, since="2026-10-01", generic=(), home=tmp_path)) == 2
+        assert conn.execute("SELECT COUNT(*) FROM session_event_versions").fetchone()[0] == 3
 
 
 def test_sync_replica_and_conflicts(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
