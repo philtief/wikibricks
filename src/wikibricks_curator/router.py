@@ -10,7 +10,7 @@ from importlib.resources import files
 from typing import Any
 
 from wikibricks.config import load_config
-from wikibricks.curation.backlog import unrouted_sessions
+from wikibricks.curation.backlog import GENERATED_ID, unrouted_sessions
 from wikibricks.storage.sqlite_store import SQLiteStore
 
 Chat = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -21,6 +21,11 @@ _ROUTER_SCHEMA = files("wikibricks_curator").joinpath("resources", "router.schem
 
 def _normalize(value: str) -> str:
     return value.strip().lower().replace(" ", "-").replace("_", "-")
+
+
+def _container_name(name: str, generic: set[str]) -> bool:
+    # A generic folder name or a per-run id names a container, never a topic.
+    return name in generic | {"home"} or GENERATED_ID.fullmatch(name) is not None
 
 
 def _sessions(conn: Any, ids: list[str], max_chars: int) -> list[dict[str, str]]:
@@ -68,7 +73,7 @@ def _candidates(conn: Any, generic: set[str]) -> list[dict[str, str]]:
             "summary": str(json.loads(row["content"]).get("summary", ""))[:200],
         }
         for row in rows
-        if _normalize(row["path"].rsplit("/", 1)[-1]) not in generic | {"home"}
+        if not _container_name(_normalize(row["path"].rsplit("/", 1)[-1]), generic)
     ]
 
 
@@ -76,7 +81,9 @@ def _new_path(path: str, *, candidates: set[str], generic: set[str]) -> bool:
     if path in candidates:
         return False
     last_segment = path.rsplit("/", 1)[-1]
-    return _NEW_TOPIC.fullmatch(path) is not None and _normalize(last_segment) not in generic | {"home"}
+    return _NEW_TOPIC.fullmatch(path) is not None and not _container_name(
+        _normalize(last_segment), generic
+    )
 
 
 def _valid_path(path: Any, *, candidates: set[str], generic: set[str]) -> bool:
