@@ -358,11 +358,43 @@ after the note (`2026-10-19--allianz-pricing.json`) carries the rest:
 }
 ```
 
+A markdown note can carry the same fields as YAML frontmatter instead, which is
+how notes written in Obsidian arrive. The frontmatter is kept out of the body and
+a `.json` sidecar wins if both exist. `examples/meeting-note.md` is a template:
+
+```markdown
+---
+title: Allianz pricing follow-up
+platform: teams
+started_at: 2026-10-21T15:00:00+00:00
+attendees: [philipp.tiefenbacher@databricks.com, first.last@customer.example]
+---
+
+## Decisions
+```
+
+Open the drop folder itself as an Obsidian vault and notes land where the
+importer reads them. Files under dot folders are ignored, so Obsidian's own
+`.obsidian` config and the `.trash` copies of notes you delete stay out.
+
 Re-importing an unchanged note is a no-op. Set `external_id` when the platform
 has a stable id, otherwise the path inside the drop folder is the identity and
-renaming a note creates a second session. Fetching notes from Google Meet,
-Microsoft Teams or Glean is a separate, opt-in step that only writes files into
-the drop folder.
+renaming a note creates a second session.
+
+Fetching notes from a meeting platform is a separate, opt-in step that only
+writes files into the drop folder, so a fetcher can never break ingestion.
+`scripts/notes/meet_drive_fetch.py` exports recent Google Meet "Notes by Gemini"
+and transcript documents from Drive, using the credentials `gcloud` already holds
+(the Drive read-only scope is required):
+
+```bash
+python3 scripts/notes/meet_drive_fetch.py --dry-run
+python3 scripts/notes/meet_drive_fetch.py --days 14
+```
+
+Microsoft Teams transcripts are only reachable through Graph for meetings hosted
+in a tenant that has consented to `OnlineMeetingTranscript.Read.All`. For a
+meeting hosted by someone else, save the recap as a note instead.
 
 The Omnigent database importer is an optional, read-only recovery command. The
 native integration does not poll `~/.omnigent/chat.db` during normal work.

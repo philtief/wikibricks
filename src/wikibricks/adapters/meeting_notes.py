@@ -9,6 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from wikibricks.models import SessionEvent, SessionRecord
 
 NOTES_HARNESS = "meeting-notes"
@@ -22,14 +24,18 @@ _UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 def iter_note_files(directory: Path) -> Iterator[Path]:
     for path in sorted(directory.rglob("*")):
+        # Obsidian keeps deleted notes and its own config in dot folders inside the vault.
+        if any(part.startswith(".") for part in path.relative_to(directory).parts):
+            continue
         if path.is_file() and path.suffix.lower() in NOTE_SUFFIXES:
             yield path
 
 
 def note_to_session(path: Path, *, user_id: str, root: Path | None = None) -> SessionRecord:
     """Map one note or transcript file to a session the curator can route."""
-    sidecar = _sidecar(path)
     text = path.read_text(encoding="utf-8", errors="replace")
+    front, text = _frontmatter(text)
+    sidecar = front | _sidecar(path)
     events = _cue_events(text) if path.suffix.lower() == ".vtt" else [SessionEvent("0", "user", text)]
     if not any(event.content.strip() for event in events):
         raise ValueError(f"note holds no text: {path}")
@@ -45,6 +51,23 @@ def note_to_session(path: Path, *, user_id: str, root: Path | None = None) -> Se
         updated_at=started_at,
         metadata=metadata,
     )
+
+
+def _frontmatter(text: str) -> tuple[dict[str, Any], str]:
+    """Split an Obsidian YAML frontmatter block from the note body."""
+    if not text.startswith("---\n"):
+        return {}, text
+    closing = re.search(r"^---\s*$", text[4:], re.MULTILINE)
+    if closing is None:
+        return {}, text
+    block = text[4 : 4 + closing.start()]
+    body = text[4 + closing.end() :].lstrip("\n")
+    value = yaml.safe_load(block)
+    if value is None:
+        return {}, body
+    if not isinstance(value, dict):
+        raise ValueError("note frontmatter must be a mapping")
+    return value, body
 
 
 def _sidecar(path: Path) -> dict[str, Any]:

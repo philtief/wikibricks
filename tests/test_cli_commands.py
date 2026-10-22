@@ -134,6 +134,43 @@ def test_import_notes_maps_meeting_files_and_stays_unrouted(
         assert conn.execute("SELECT COUNT(*) FROM session_event_versions").fetchone()[0] == 3
 
 
+def test_import_notes_reads_frontmatter_and_skips_dot_folders(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+):
+    database = tmp_path / "wikibricks.db"
+    vault = tmp_path / "vault"
+    (vault / ".trash").mkdir(parents=True)
+    (vault / "2026-10-21--rwe-sap-review.md").write_text(
+        "---\n"
+        "title: RWE SAP ingestion review\n"
+        "platform: teams\n"
+        "attendees: [philipp@databricks.com, anna@rwe.com]\n"
+        "started_at: 2026-10-21T15:00:00+00:00\n"
+        "---\n\n"
+        "Lakeflow Connect covers the SAP extractors.\n"
+    )
+    # Obsidian moves a deleted note into `.trash` inside the vault.
+    (vault / ".trash" / "2026-10-20--deleted.md").write_text("# Deleted\n\nGone.\n")
+
+    assert run_cli(database, "import", "notes", str(vault), "--user-id", "user") == 0
+    report = json.loads(capsys.readouterr().out)
+
+    store = SQLiteStore(database)
+    page = store.read_page("meeting-notes-sessions/user/2026/10/21/2026-10-21--rwe-sap-review")
+    with store.connection() as conn:
+        row = conn.execute("SELECT metadata, started_at FROM sessions").fetchone()
+    metadata = json.loads(row[0])
+
+    assert report == {"scanned": 1, "imported": 1, "errors": 0}
+    assert page["title"] == "RWE SAP ingestion review"
+    assert page["events"][0]["content"] == "Lakeflow Connect covers the SAP extractors.\n"
+    assert metadata["platform"] == "teams"
+    assert metadata["attendees"] == ["philipp@databricks.com", "anna@rwe.com"]
+    # YAML types a timestamp as a datetime, which still has to reach the store as ISO text.
+    assert row[1].startswith("2026-10-21 15:00:00")
+
+
 def test_sync_replica_and_conflicts(tmp_path: Path, capsys: pytest.CaptureFixture[str]):
     database = tmp_path / "wikibricks.db"
 
