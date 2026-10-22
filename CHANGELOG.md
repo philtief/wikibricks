@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.14.4 - 2026-10-22
+
+- A meeting note written in an editor can carry its fields as YAML frontmatter
+  instead of a JSON sidecar, which is how notes written in Obsidian arrive. The
+  frontmatter is kept out of the note body, and a sidecar still wins if both exist.
+- `import notes` skips files under dot folders, so Obsidian's own `.obsidian`
+  config and the `.trash` copies of deleted notes stay out of the store.
+- New `scripts/notes/meet_drive_fetch.py` exports recent Google Meet notes and
+  transcript documents from Drive into the note drop folder. It is opt-in, keeps no
+  state, and never touches the database.
+
 ## 0.14.3 - 2026-10-20
 
 - The topic router no longer routes a session to a page named after a per-run
