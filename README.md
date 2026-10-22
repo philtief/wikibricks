@@ -394,7 +394,19 @@ python3 scripts/notes/meet_drive_fetch.py --days 14
 
 Microsoft Teams transcripts are only reachable through Graph for meetings hosted
 in a tenant that has consented to `OnlineMeetingTranscript.Read.All`. For a
-meeting hosted by someone else, save the recap as a note instead.
+meeting hosted by someone else, write the minutes yourself.
+`scripts/notes/note_from_calendar.py` takes the typing out of that: it reads the
+event from Google Calendar, writes the note with title, time, attendees and
+platform already in the frontmatter, and opens it so only the substance is left
+to dictate or type.
+
+```bash
+wikibricks-note            # the meeting that just ended
+wikibricks-note --list     # pick a different one
+```
+
+Running it again on the same meeting reopens that note instead of overwriting
+it.
 
 The Omnigent database importer is an optional, read-only recovery command. The
 native integration does not poll `~/.omnigent/chat.db` during normal work.
