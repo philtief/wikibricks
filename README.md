@@ -230,6 +230,8 @@ wikibricks curate --prune-archived-sessions-after-days 90
 Sessions captured under container folders such as `~/code` do not identify their
 topic. Before building the backlog, the curator asks the model to route those
 sessions to an existing or new page, subject to `curation.generic_workspaces`.
+Routing considers the last 7 days; use `--since-days` to reach further back after
+backfilling older material, such as a batch of imported meeting notes.
 
 `wikibricks-curator propose` asks one Databricks model for updates to the top
 local backlog projects. It writes those proposals as a curation run, applies
