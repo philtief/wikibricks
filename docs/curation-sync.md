@@ -116,6 +116,13 @@ wikibricks sync lakebase \
   --pull-patches
 ```
 
+Use `--apply-patches` instead to pull and then apply every pending run with the
+configured `sync.apply_policy` (`safe` by default). This is the same exchange
+the background automation runs, so a scheduled job can close the loop. A group
+that conflicts with a newer local edit keeps the local page. A group with a
+medium- or high-risk patch stays `review_required`: its run stays pending, every
+pass reports it again, and `wiki_index` lists it as `_meta/curation-review`.
+
 Inspect the stable local replica ID when configuring the remote publisher:
 
 ```bash

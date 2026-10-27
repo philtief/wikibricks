@@ -319,6 +319,12 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
         action="store_true",
         help="Download immutable remote curation manifests without applying them",
     )
+    lakebase.add_argument(
+        "--apply-patches",
+        action="store_true",
+        help="Download remote curation manifests and apply them with the configured policy; "
+        "a conflicting group keeps the local page and a high-risk group waits for review",
+    )
     lakebase.set_defaults(handler=_command_sync_lakebase)
 
     replica = sync_targets.add_parser("replica", help="Show the stable local replica ID")
@@ -507,9 +513,21 @@ def _command_sync_lakebase(args: argparse.Namespace) -> int:
     if args.pull_curated:
         remote_url = target.fresh_database_url()
         result["curated_pages_imported"] = pull_curated_snapshot(local, remote_url)
-    if args.pull_patches:
+    if args.pull_patches or args.apply_patches:
         remote_url = target.fresh_database_url()
         result["curation"] = pull_curation_patches(local, remote_url)
+    if args.apply_patches:
+        from wikibricks.automation import apply_pending_runs
+        from wikibricks.config import load_config
+
+        applied = apply_pending_runs(local, policy=load_config().sync_apply_policy)
+        result["applied"] = {
+            "runs": [
+                {"run_id": item["run_id"], "counts": item["counts"]}
+                for item in applied["applications"]
+            ],
+            "kept_local_runs": applied["kept_local_runs"],
+        }
     _print_json(result)
     return 0
 
