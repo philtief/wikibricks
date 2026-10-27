@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.14.5 - 2026-10-27
+
+- `wikibricks-curator propose --since-days N` sets how far back topic routing
+  looks for unrouted sessions. The default stays 7 days, so the nightly run is
+  unchanged. Use a wider window once after backfilling older material: a
+  session dated before the window, such as an imported meeting note, was never
+  routed and never reached a topic page.
+- New `scripts/notes/note_from_calendar.py` writes a meeting note with title,
+  time, attendees and platform taken from the Google Calendar event, then
+  opens it for the minutes.
+
 ## 0.14.4 - 2026-10-22
 
 - A meeting note written in an editor can carry its fields as YAML frontmatter
