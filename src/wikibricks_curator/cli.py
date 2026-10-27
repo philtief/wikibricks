@@ -22,6 +22,12 @@ def build_parser() -> argparse.ArgumentParser:
     propose.add_argument("--profile", default=config.sync_profile)
     propose.add_argument("--model", default="system.ai.glm-5-3-flash")
     propose.add_argument("--projects", type=int, default=3)
+    propose.add_argument(
+        "--since-days",
+        type=int,
+        default=7,
+        help="how far back to look for sessions that still need routing",
+    )
     propose.add_argument("--no-apply", action="store_true")
     propose.add_argument("--dry-run", action="store_true")
     return parser
@@ -49,6 +55,7 @@ def main(argv: list[str] | None = None) -> int:
         projects=args.projects,
         apply=not args.no_apply,
         dry_run=args.dry_run,
+        since_days=args.since_days,
     )
     print(json.dumps(result, default=str, indent=2))
     return 1 if result["errors"] else 0

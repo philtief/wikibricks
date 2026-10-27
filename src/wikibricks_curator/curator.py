@@ -124,6 +124,7 @@ def run_curator(
     projects: int = 3,
     apply: bool = True,
     dry_run: bool = False,
+    since_days: int = 7,
 ) -> dict[str, Any]:
     """Propose curation for local backlog projects and optionally apply safe groups."""
     store = SQLiteStore(database_path)
@@ -138,7 +139,7 @@ def run_curator(
     routing = route_sessions(
         store,
         chat,
-        since=datetime.now(timezone.utc) - timedelta(days=7),
+        since=datetime.now(timezone.utc) - timedelta(days=since_days),
         dry_run=dry_run,
     )
     with store.connection() as conn:

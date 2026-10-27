@@ -512,6 +512,32 @@ def test_routed_time_counts_as_new_evidence(tmp_path: Path):
     assert built["newest_evidence_at"] == (NOW + timedelta(hours=1)).isoformat()
 
 
+def test_run_curator_since_days_widens_the_routing_window(tmp_path: Path):
+    # A backfilled meeting note is older than the default window and would never route.
+    store = _store(tmp_path)
+    now = datetime.now(timezone.utc)
+    old = _ingest(store, "old-meeting", "", (now - timedelta(days=12)).isoformat())
+
+    def chat(prompt: str, request: dict[str, Any], _schema: dict[str, Any]) -> dict[str, Any]:
+        if prompt.startswith("# Route sessions"):
+            sessions = [session["session_id"] for session in request["sessions"]]
+            return {
+                "routes": [
+                    {"session_id": session, "page_path": "topics/allianz", "reason": "r"}
+                    for session in sessions
+                ]
+            }
+        return {"proposals": []}
+
+    default = run_curator(tmp_path / "wikibricks.db", chat=chat, dry_run=True)
+    widened = run_curator(tmp_path / "wikibricks.db", chat=chat, dry_run=True, since_days=30)
+
+    assert default["routing"]["sessions"] == 0
+    assert widened["routing"]["sessions"] == 1
+    assert widened["routing"]["new_topics"] == ["topics/allianz"]
+    assert old
+
+
 def test_run_curator_routes_before_backlog_and_hides_routing_errors(tmp_path: Path):
     store = _store(tmp_path)
     # run_curator routes the last 7 days of the real clock, so date the data from it.
