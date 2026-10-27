@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.14.7 - 2026-10-27
+
+- `wikibricks sync lakebase --apply-patches` downloads the remote curation
+  manifests and applies them with the configured `sync.apply_policy` (`safe` by
+  default). Before, only the MCP server's background loop applied them, and only
+  when `sync.profile` and `sync.project` were set in the config, so a scheduled
+  `sync lakebase` downloaded manifests that were never applied. A group that
+  conflicts with a newer local edit keeps the local page. A high-risk group waits
+  for review, and its run is reported on every pass.
+- `scripts/notes/meet_drive_fetch.py` also imports meeting transcripts shared as
+  Word files, which is how a Teams transcript usually reaches Drive.
+
 ## 0.14.6 - 2026-10-27
 
 - Topic routing reads past a long first line. Notes from a large meeting open with
