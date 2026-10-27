@@ -386,8 +386,9 @@ renaming a note creates a second session.
 Fetching notes from a meeting platform is a separate, opt-in step that only
 writes files into the drop folder, so a fetcher can never break ingestion.
 `scripts/notes/meet_drive_fetch.py` exports recent Google Meet "Notes by Gemini"
-and transcript documents from Drive, using the credentials `gcloud` already holds
-(the Drive read-only scope is required):
+and transcript documents from Drive, plus transcripts shared as Word files, which
+is how a Teams transcript usually reaches Drive. It uses the credentials `gcloud`
+already holds (the Drive read-only scope is required):
 
 ```bash
 python3 scripts/notes/meet_drive_fetch.py --dry-run
