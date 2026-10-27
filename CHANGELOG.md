@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.14.8 - 2026-10-27
+
+- One miscited proposal no longer discards a curation answer. A group with a
+  proposal citing evidence the request did not supply is dropped and counted as
+  `dropped_groups`, in the remote maintenance job and in the local curator; the
+  rest of the answer is applied as before.
+- The remote curation model no longer sees UUIDs it may not cite: the events'
+  entity, version and hash IDs, the pages' base versions, the search document IDs
+  and the replica ID. It had cited an event's `entity_id` as evidence, which
+  failed the weekly run.
+
 ## 0.14.7 - 2026-10-27
 
 - `wikibricks sync lakebase --apply-patches` downloads the remote curation
