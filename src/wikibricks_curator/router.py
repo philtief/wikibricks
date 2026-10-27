@@ -17,6 +17,8 @@ Chat = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
 _NEW_TOPIC = re.compile(r"^topics/[a-z0-9]+(-[a-z0-9]+)*$")
 _ROUTER_PROMPT = files("wikibricks_curator").joinpath("resources", "router.md")
 _ROUTER_SCHEMA = files("wikibricks_curator").joinpath("resources", "router.schema.json")
+# One long line, such as the attendee list of a large meeting, must not fill the excerpt.
+_EXCERPT_LINE_CHARS = 200
 
 
 def _normalize(value: str) -> str:
@@ -52,7 +54,12 @@ def _sessions(conn: Any, ids: list[str], max_chars: int) -> list[dict[str, str]]
             "session_id": row["session_id"],
             "title": row["title"],
             "workspace": row["workspace"],
-            "text": "\n".join(texts.get(row["session_id"], []))[:max_chars],
+            "text": "\n".join(
+                line[:_EXCERPT_LINE_CHARS]
+                for content in texts.get(row["session_id"], [])
+                for line in content.splitlines()
+                if line.strip()
+            )[:max_chars],
         }
         for row in sorted(rows, key=lambda row: ids.index(row["session_id"]))
     ]
@@ -66,14 +73,37 @@ def _candidates(conn: Any, generic: set[str]) -> list[dict[str, str]]:
         "WHERE p.status = 'active' "
         "AND (p.path LIKE 'topics/%' OR p.path LIKE 'projects/%') ORDER BY p.path"
     ).fetchall()
-    return [
+    pages = [
         {
             "path": row["path"],
             "title": row["title"],
             "summary": str(json.loads(row["content"]).get("summary", ""))[:200],
         }
         for row in rows
-        if not _container_name(_normalize(row["path"].rsplit("/", 1)[-1]), generic)
+    ]
+    # A routed topic gets its page from a later curator run; offer it meanwhile so the
+    # next session on the same subject reuses it instead of inventing a sibling.
+    routed: dict[str, list[str]] = {}
+    for path, title in conn.execute(
+        "SELECT t.page_path, s.title FROM session_topics t "
+        "JOIN sessions s ON s.session_id = t.session_id "
+        "WHERE (t.page_path LIKE 'topics/%' OR t.page_path LIKE 'projects/%') "
+        "AND NOT EXISTS (SELECT 1 FROM pages p WHERE p.path = t.page_path) "
+        "ORDER BY t.page_path, s.title"
+    ):
+        routed.setdefault(path, []).append(title or "")
+    pending = [
+        {
+            "path": path,
+            "title": path.rsplit("/", 1)[-1].replace("-", " "),
+            "summary": ("Routed sessions: " + "; ".join(titles))[:200],
+        }
+        for path, titles in routed.items()
+    ]
+    return [
+        candidate
+        for candidate in pages + pending
+        if not _container_name(_normalize(candidate["path"].rsplit("/", 1)[-1]), generic)
     ]
 
 

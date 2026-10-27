@@ -630,3 +630,63 @@ def test_generated_id_pages_are_neither_candidates_nor_new_topics(tmp_path: Path
     with store.connection() as conn:
         unrouted = set(unrouted_sessions(conn, since=NOW - timedelta(days=7), home=HOME))
     assert unrouted == {existing, invented}
+
+
+def test_router_excerpt_reaches_past_a_long_attendee_line(tmp_path: Path):
+    # A large meeting's notes open with every attendee on one line.
+    store = _store(tmp_path)
+    attendees = " ".join(f"Person{index} Surname" for index in range(150))
+    store.ingest_session(
+        SessionRecord(
+            harness="meeting-notes",
+            external_id="bug-bash",
+            user_id="user",
+            updated_at=_timestamp(1),
+            events=[
+                SessionEvent(
+                    "0",
+                    "user",
+                    f"Unity Gateway Bug Bash\n\n\nOct 13, 2026\n{attendees}\n\n\n"
+                    "The team tested service policies on the gateway.\n",
+                )
+            ],
+        )
+    )
+    seen: dict[str, Any] = {}
+
+    def chat(_prompt: str, request: dict[str, Any], _schema: dict[str, Any]) -> dict[str, Any]:
+        seen["text"] = request["sessions"][0]["text"]
+        return {"routes": []}
+
+    route_sessions(store, chat, since=NOW - timedelta(days=7))
+
+    assert "tested service policies" in seen["text"]
+    assert len(seen["text"]) <= 600
+
+
+def test_routed_topics_without_a_page_are_candidates(tmp_path: Path):
+    # The curator writes a page for a routed topic later; until then the router must still reuse it.
+    store = _store(tmp_path)
+    store.write_page("topics/retired", "Retired", {"summary": "s", "body": "Old."})
+    earlier = _ingest(store, "contoso-sync", "", _timestamp(30))
+    retired = _ingest(store, "retired-session", "", _timestamp(30))
+    with store.connection(write=True) as conn:
+        conn.executemany(
+            "INSERT INTO session_topics(session_id, page_path, origin, created_at) "
+            "VALUES (?, ?, 'local-curator-router', ?)",
+            [(earlier, "topics/contoso", _timestamp(29)), (retired, "topics/retired", _timestamp(29))],
+        )
+        conn.execute("UPDATE pages SET status = 'superseded' WHERE path = 'topics/retired'")
+    later = _ingest(store, "contoso-deep-dive", "", _timestamp(1))
+    seen: dict[str, Any] = {}
+
+    def chat(_prompt: str, request: dict[str, Any], _schema: dict[str, Any]) -> dict[str, Any]:
+        seen["candidates"] = {candidate["path"]: candidate for candidate in request["candidates"]}
+        return {"routes": [{"session_id": later, "page_path": "topics/contoso", "reason": "same account"}]}
+
+    result = route_sessions(store, chat, since=NOW - timedelta(days=7))
+
+    assert set(seen["candidates"]) == {"topics/contoso"}
+    assert "contoso-sync content" in seen["candidates"]["topics/contoso"]["summary"]
+    assert result["routed"] == 1
+    assert result["new_topics"] == []
