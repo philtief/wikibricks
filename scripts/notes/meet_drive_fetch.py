@@ -18,6 +18,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import os
 import re
@@ -26,12 +27,18 @@ import sys
 import urllib.error
 import urllib.parse
 import urllib.request
+import zipfile
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
+from xml.etree import ElementTree
 
 DRIVE_FILES = "https://www.googleapis.com/drive/v3/files"
 DOCUMENT_MIME = "application/vnd.google-apps.document"
+# Teams transcripts shared through Drive arrive as Word files, which the Docs export cannot convert.
+DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+_WORD = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+_MAX_DOCX_XML_BYTES = 50_000_000
 DEFAULT_OUT = Path.home() / ".wikibricks" / "inbox" / "meetings"
 # Application Default Credentials need a quota project; the field engineering one is shared.
 DEFAULT_QUOTA_PROJECT = os.environ.get("GOOGLE_CLOUD_QUOTA_PROJECT", "gcp-dev-field-eng-aiapiquota")
@@ -41,6 +48,7 @@ _SLUG = re.compile(r"[^a-z0-9]+")
 # Drive puts the Docs UI header of the notes tab at the top of the export.
 BOILERPLATE = ("\u270d\ufe0f Quick notes", "Please rate the new Quick notes tab by taking a short survey.")
 _TRAILING_DATE = re.compile(r"\s*-\s*\d{4}[/-]\d{2}[/-]\d{2}.*$")
+_DOCX_SUFFIX = re.compile(r"\.docx$", re.IGNORECASE)
 
 
 def resolve_token() -> str:
@@ -69,20 +77,21 @@ def _get(url: str, token: str, quota_project: str, *, raw: bool = False) -> Any:
         raise urllib.error.HTTPError(
             error.url, error.code, f"{error.reason}: {detail}", error.headers, None
         ) from None
-    return payload.decode("utf-8", errors="replace") if raw else json.loads(payload)
+    return payload if raw else json.loads(payload)
 
 
 def list_documents(token: str, quota_project: str, *, days: int) -> list[dict[str, Any]]:
     """List recent Meet artifact documents, whichever folder Drive keeps them in."""
     cutoff = (datetime.now(timezone.utc) - timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
     names = " or ".join(f"name contains '{artifact}'" for artifact in ARTIFACTS)
-    query = f"mimeType = '{DOCUMENT_MIME}' and trashed = false and modifiedTime > '{cutoff}' and ({names})"
+    types = f"mimeType = '{DOCUMENT_MIME}' or mimeType = '{DOCX_MIME}'"
+    query = f"({types}) and trashed = false and modifiedTime > '{cutoff}' and ({names})"
     documents: list[dict[str, Any]] = []
     page_token = None
     while True:
         parameters = {
             "q": query,
-            "fields": "nextPageToken, files(id, name, createdTime, webViewLink)",
+            "fields": "nextPageToken, files(id, name, mimeType, createdTime, webViewLink)",
             "pageSize": "100",
             "orderBy": "createdTime desc",
         }
@@ -95,20 +104,63 @@ def list_documents(token: str, quota_project: str, *, days: int) -> list[dict[st
             return documents
 
 
+def document_text(token: str, quota_project: str, document: dict[str, Any]) -> str:
+    if document.get("mimeType") == DOCX_MIME:
+        return docx_text(_get(f"{DRIVE_FILES}/{document['id']}?alt=media", token, quota_project, raw=True))
+    return export_text(token, quota_project, document["id"])
+
+
+def docx_text(payload: bytes) -> str:
+    """Read the paragraphs of a Word document with the standard library."""
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        if archive.getinfo("word/document.xml").file_size > _MAX_DOCX_XML_BYTES:
+            raise ValueError("Word document is too large to import")
+        root = ElementTree.fromstring(archive.read("word/document.xml"))
+    paragraphs = []
+    for paragraph in root.iter(f"{_WORD}p"):
+        parts = []
+        for node in paragraph.iter():
+            if node.tag == f"{_WORD}t":
+                parts.append(node.text or "")
+            elif node.tag == f"{_WORD}tab":
+                parts.append("\t")
+            elif node.tag in (f"{_WORD}br", f"{_WORD}cr"):
+                parts.append("\n")
+        paragraphs.append("".join(parts))
+    return "\n".join(paragraphs)
+
+
 def export_text(token: str, quota_project: str, file_id: str) -> str:
     parameters = urllib.parse.urlencode({"mimeType": "text/plain"})
     exported = _get(f"{DRIVE_FILES}/{file_id}/export?{parameters}", token, quota_project, raw=True)
-    lines = exported.lstrip("\ufeff").splitlines(keepends=True)
+    lines = exported.decode("utf-8", errors="replace").lstrip("\ufeff").splitlines(keepends=True)
     while lines and lines[0].strip() in BOILERPLATE:
         lines.pop(0)
     return "".join(lines)
 
 
+def _title(document: dict[str, Any]) -> str:
+    return _TRAILING_DATE.sub("", _DOCX_SUFFIX.sub("", document["name"]))
+
+
+def _sidecar(document: dict[str, Any]) -> dict[str, Any]:
+    # A Word file may come from any platform; only a Google Doc is known to be Meet's.
+    word = document.get("mimeType") == DOCX_MIME
+    sidecar = {
+        "title": _title(document),
+        "started_at": document.get("createdTime"),
+        "source_uri": document.get("webViewLink"),
+        "external_id": f"{'docx' if word else 'gmeet'}-{document['id']}",
+    }
+    if not word:
+        sidecar["platform"] = "gmeet"
+    return sidecar
+
+
 def note_name(document: dict[str, Any]) -> str:
     """Build a stable `YYYY-MM-DD--slug` name from the document."""
     date = str(document.get("createdTime", ""))[:10] or "0000-00-00"
-    title = _TRAILING_DATE.sub("", document["name"])
-    slug = _SLUG.sub("-", title.lower()).strip("-") or "meeting"
+    slug = _SLUG.sub("-", _title(document).lower()).strip("-") or "meeting"
     return f"{date}--{slug[:60]}"
 
 
@@ -133,16 +185,10 @@ def fetch(out: Path, *, days: int, dry_run: bool, quota_project: str) -> dict[st
             report["written"] += 1
             continue
         out.mkdir(parents=True, exist_ok=True)
-        note.write_text(export_text(token, quota_project, document["id"]), encoding="utf-8")
+        note.write_text(document_text(token, quota_project, document), encoding="utf-8")
         note.with_suffix(".json").write_text(
             json.dumps(
-                {
-                    "title": _TRAILING_DATE.sub("", document["name"]),
-                    "platform": "gmeet",
-                    "started_at": document.get("createdTime"),
-                    "source_uri": document.get("webViewLink"),
-                    "external_id": f"gmeet-{document['id']}",
-                },
+                _sidecar(document),
                 indent=2,
             )
             + "\n",
