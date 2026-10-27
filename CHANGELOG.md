@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.14.6 - 2026-10-27
+
+- Topic routing reads past a long first line. Notes from a large meeting open with
+  every attendee on one line, so the router saw only names and dropped or misrouted
+  the meeting. Each excerpt line is now capped at 200 characters and blank lines are
+  skipped.
+- A routed topic that has no page yet is offered to the router as a candidate, so a
+  later session on the same subject reuses it instead of inventing a sibling name.
+  Retired pages are still not offered.
+- The router prompt asks for the account or product rather than the meeting, prefers
+  a broader existing topic for the same customer, and treats a meeting, workshop, bug
+  bash or training with substance as worth keeping.
+
 ## 0.14.5 - 2026-10-27
 
 - `wikibricks-curator propose --since-days N` sets how far back topic routing
