@@ -20,7 +20,7 @@ from wikibricks.curation.protocol import content_hash
 from wikibricks.storage.sqlite_store import SQLiteStore
 from wikibricks_curator.evidence import build_request
 from wikibricks_curator.router import route_sessions
-from wikibricks_remote.proposals import _PROPOSAL_FIELDS, build_patches
+from wikibricks_remote.proposals import _PROPOSAL_FIELDS, build_patches, drop_miscited_groups
 from wikibricks_remote.resources import load_policy, load_prompt, load_schema
 
 Chat = Callable[[str, dict[str, Any], dict[str, Any]], dict[str, Any]]
@@ -159,6 +159,7 @@ def run_curator(
             "proposals": [],
             "guarded": 0,
             "dropped_links": 0,
+            "dropped_groups": 0,
             "attempts": 0,
             "run_id": None,
             "counts": {},
@@ -180,6 +181,11 @@ def run_curator(
                 raw = chat(prompt, built["request"], schema)
                 _fill_neutral_defaults(raw)
                 result["dropped_links"] = _drop_unresolvable_links(raw, built["pages"])
+                result["dropped_groups"] = drop_miscited_groups(
+                    raw,
+                    pages=built["pages"],
+                    evidence_ids=built["evidence_ids"],
+                )
                 result["guarded"] = _guard_shrinking_updates(raw, built["pages"])
                 result["proposals"] = _proposal_result(raw)
                 patches = build_patches(

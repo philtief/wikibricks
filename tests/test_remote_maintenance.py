@@ -218,6 +218,7 @@ def test_remote_maintenance_publishes_once_for_one_archive_watermark(
         "published_manifests": 1,
         "proposals": 1,
         "no_changes": 0,
+        "dropped_groups": 0,
     }
     assert repeated == {
         "status": "idle",
@@ -225,6 +226,7 @@ def test_remote_maintenance_publishes_once_for_one_archive_watermark(
         "published_manifests": 0,
         "proposals": 0,
         "no_changes": 0,
+        "dropped_groups": 0,
         "replica_ids": [],
     }
     assert calls == 1
@@ -239,6 +241,91 @@ def test_remote_maintenance_publishes_once_for_one_archive_watermark(
         "session:weekly-source"
     ]
     assert run == ("published", manifest["input_watermark"])
+
+
+def _create_page(group: str, path: str, evidence_id: str) -> dict:
+    return {
+        "group": group,
+        "operation": "create_page",
+        "path": path,
+        "title": path.rsplit("/", 1)[-1].title(),
+        "page_type": "synthesis",
+        "summary": "A curated summary.",
+        "body": "The archived source supports this synthesis.",
+        "tags": [],
+        "source_ids": [],
+        "target_path": None,
+        "evidence_ids": [evidence_id],
+        "reason": "Preserve a reusable conclusion.",
+        "risk_class": "low",
+    }
+
+
+def test_remote_model_sees_only_citable_ids(postgres_url: str, maintenance_url: str):
+    # Archive events also carry entity, version and hash IDs; the model cited one as evidence.
+    from wikibricks_remote.maintenance import run_maintenance
+    from wikibricks_remote.resources import load_policy
+
+    _archive_page(PostgresStore(postgres_url), maintenance_url, "citable")
+    seen: dict = {}
+
+    def propose(_system, request, _schema):
+        seen["request"] = request
+        return {"proposals": []}
+
+    run_maintenance(
+        PostgresStore(maintenance_url),
+        policy=replace(load_policy(), max_replicas_per_run=1),
+        proposer=propose,
+    )
+
+    request = seen["request"]
+    assert "replica_id" not in request
+    assert {key for item in request["evidence"] for key in item} == {
+        "evidence_id",
+        "sequence",
+        "entity_kind",
+        "payload",
+    }
+    assert request["current_pages"]
+    assert not any(
+        {"base_version_id", "base_content_hash"} & set(page) for page in request["current_pages"]
+    )
+
+
+def test_a_group_citing_unknown_evidence_is_dropped_and_counted(
+    postgres_url: str,
+    maintenance_url: str,
+):
+    from wikibricks_remote.maintenance import run_maintenance
+    from wikibricks_remote.resources import load_policy
+
+    remote = PostgresStore(maintenance_url)
+    _archive_page(PostgresStore(postgres_url), maintenance_url, "mixed")
+    with remote.connection() as conn:
+        entity_id = conn.execute("SELECT entity_id FROM archive_events").fetchone()[0]
+
+    def propose(_system, request, _schema):
+        return {
+            "proposals": [
+                _create_page("kept", "synthesis/kept", request["evidence"][0]["evidence_id"]),
+                # The production failure: an entity ID cited as if it were an archive event.
+                _create_page("miscited", "synthesis/miscited", f"archive-event:{entity_id}"),
+            ]
+        }
+
+    result = run_maintenance(
+        remote,
+        policy=replace(load_policy(), max_replicas_per_run=1),
+        proposer=propose,
+    )
+
+    assert result["published_manifests"] == 1
+    assert result["proposals"] == 1
+    assert result["dropped_groups"] == 1
+    with remote.connection() as conn:
+        manifest = conn.execute("SELECT manifest FROM curation_runs").fetchone()[0]
+    assert [patch["path"] for patch in manifest["patches"]] == ["synthesis/kept"]
 
 
 def test_no_change_run_advances_the_remote_watermark(

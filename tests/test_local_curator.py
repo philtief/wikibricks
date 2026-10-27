@@ -737,23 +737,33 @@ def test_run_curator_reports_errors_and_processes_other_projects(tmp_path: Path)
     assert store.get_sync_cursor("curator:passed-project")
 
 
-def test_run_curator_rejects_unknown_evidence(tmp_path: Path):
+def test_run_curator_drops_a_miscited_group_and_keeps_the_rest(tmp_path: Path):
+    # One proposal citing evidence the request never held used to discard the whole answer.
     from wikibricks_curator.curator import run_curator
 
     store = _store(tmp_path)
     _backlog_project(store, project="unknown-evidence")
 
     def chat(_prompt: str, request: dict, _schema: dict) -> dict:
-        return {"proposals": [_proposal(
+        valid = _proposal(
             operation="create_page",
             path=request["living_page"],
+            evidence_id=request["evidence"][0]["evidence_id"],
+        )
+        miscited = _proposal(
+            operation="create_page",
+            path="topics/invented-source",
             evidence_id="session-event:not-real",
-        )]}
+        ) | {"group": "miscited"}
+        return {"proposals": [valid, miscited]}
 
     result = run_curator(store.database_path, chat=chat, projects=1)
-    assert result["errors"] == 1
-    assert "unknown evidence" in result["projects"][0]["error"]
-    assert store.read_page("topics/unknown-evidence") is None
+    project = result["projects"][0]
+    assert result["errors"] == 0
+    assert project["status"] == "applied"
+    assert project["dropped_groups"] == 1
+    assert store.read_page("topics/unknown-evidence") is not None
+    assert store.read_page("topics/invented-source") is None
 
 
 def test_dry_run_reports_proposals_without_writes(tmp_path: Path):
