@@ -12,7 +12,7 @@ from psycopg.types.json import Jsonb
 
 from wikibricks.curation import build_manifest, publish_manifest
 from wikibricks.postgres_store import PostgresStore
-from wikibricks_remote.proposals import _canonical_json, archive_page, build_patches
+from wikibricks_remote.proposals import _canonical_json, archive_page, build_patches, drop_miscited_groups
 from wikibricks_remote.resources import (
     RemotePolicy,
     load_prompt,
@@ -164,6 +164,30 @@ def _record_run(
             raise RuntimeError("remote maintenance run conflicts with its archive watermark")
 
 
+# The model cites evidence by ID. Any other UUID beside it (an event's entity or version,
+# a page's base version, a search document) invites it to cite the wrong field.
+_UNCITABLE_EVIDENCE = frozenset({"entity_id", "version_id", "payload_hash"})
+_UNCITABLE_PAGE = frozenset({"base_version_id", "base_content_hash"})
+
+
+def _model_view(request: dict[str, Any]) -> dict[str, Any]:
+    """Return the request as the model sees it: only IDs it may cite."""
+    view = {key: value for key, value in request.items() if key != "replica_id"}
+    view["evidence"] = [
+        {key: value for key, value in item.items() if key not in _UNCITABLE_EVIDENCE}
+        for item in request["evidence"]
+    ]
+    view["current_pages"] = [
+        {key: value for key, value in page.items() if key not in _UNCITABLE_PAGE}
+        for page in request["current_pages"]
+    ]
+    view["similarity_candidates"] = [
+        {key: value for key, value in group.items() if key != "query_document_id"}
+        for group in request["similarity_candidates"]
+    ]
+    return view
+
+
 def run_maintenance(
     store: PostgresStore,
     *,
@@ -180,6 +204,7 @@ def run_maintenance(
         "published_manifests": 0,
         "proposals": 0,
         "no_changes": 0,
+        "dropped_groups": 0,
         "replica_ids": [],
     }
     if candidate_provider is not None:
@@ -250,12 +275,18 @@ def run_maintenance(
             replica_id,
             f"wikibricks:remote-maintenance:{watermark}:{input_digest}",
         )
-        raw_result = proposer(load_prompt(), request, load_schema())
+        raw_result = proposer(load_prompt(), _model_view(request), load_schema())
+        evidence_ids = {item["evidence_id"] for item in evidence}
+        result["dropped_groups"] += drop_miscited_groups(
+            raw_result,
+            pages=pages,
+            evidence_ids=evidence_ids,
+        )
         patches = build_patches(
             raw_result,
             run_id=run_id,
             pages=pages,
-            evidence_ids={item["evidence_id"] for item in evidence},
+            evidence_ids=evidence_ids,
             policy=policy,
         )
         manifest_hash = None

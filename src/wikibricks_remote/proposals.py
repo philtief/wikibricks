@@ -66,6 +66,45 @@ def _page_proposal(raw: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def drop_miscited_groups(
+    raw_result: dict[str, Any],
+    *,
+    pages: list[dict[str, Any]],
+    evidence_ids: set[str],
+) -> int:
+    """Remove every group with a proposal citing evidence outside the request; return the count.
+
+    One miscited proposal no longer discards the model's whole answer. A group goes as a
+    whole, so a duplicate merge is never left half applied. `build_patches` still rejects
+    anything else that is malformed.
+    """
+    proposals = raw_result.get("proposals")
+    if not isinstance(proposals, list):
+        return 0
+    known = evidence_ids | {page["evidence_id"] for page in pages}
+
+    def cites_supplied(proposal: Any) -> bool:
+        cited = proposal.get("evidence_ids") if isinstance(proposal, dict) else None
+        return (
+            isinstance(cited, list)
+            and bool(cited)
+            and all(isinstance(value, str) for value in cited)
+            and set(cited) <= known
+        )
+
+    miscited = {
+        proposal.get("group")
+        for proposal in proposals
+        if isinstance(proposal, dict) and not cites_supplied(proposal)
+    }
+    raw_result["proposals"] = [
+        proposal
+        for proposal in proposals
+        if not (isinstance(proposal, dict) and proposal.get("group") in miscited)
+    ]
+    return len(miscited)
+
+
 def build_patches(
     raw_result: dict[str, Any],
     *,
