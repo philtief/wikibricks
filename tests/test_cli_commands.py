@@ -223,6 +223,87 @@ def test_sync_lakebase_uses_a_fresh_remote_target(
     assert result == {"status": "idle", "acknowledged": 0}
 
 
+def test_sync_lakebase_apply_patches_applies_low_risk_and_lists_review(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+):
+    from uuid import uuid4
+
+    from wikibricks.curation import build_manifest, create_patch, get_or_create_replica_id, store_manifest
+
+    database = tmp_path / "wikibricks.db"
+    store = SQLiteStore(database)
+    store.migrate()
+    store.write_page("topics/contoso", "Contoso", {"summary": "s", "body": "base"}, source_ids=["session:a"])
+    state = store.current_page_state("topics/contoso")
+
+    def proposal(title: str) -> dict:
+        return {
+            "title": title,
+            "page_type": "concept",
+            "content": {"summary": title, "body": title},
+            "content_text": title,
+            "tags": [],
+            "source_ids": ["session:a"],
+            "parent_id": None,
+            "chunk_index": None,
+        }
+
+    low = create_patch(
+        operation="update_page",
+        path="topics/contoso",
+        base_version_id=state["version_id"],
+        base_content_hash=state["content_hash"],
+        proposal=proposal("Contoso, updated remotely"),
+        evidence_ids=["session:a"],
+        reason="low risk",
+        group_id=uuid4(),
+    )
+    high = create_patch(
+        operation="create_page",
+        path="topics/contoso-merged",
+        proposal=proposal("Merged"),
+        evidence_ids=["session:a"],
+        reason="needs review",
+        group_id=uuid4(),
+        risk_class="high",
+    )
+    manifest = build_manifest(
+        replica_id=get_or_create_replica_id(store),
+        input_watermark=0,
+        patches=[low, high],
+    )
+    store_manifest(store, manifest)
+    monkeypatch.setattr(
+        "wikibricks.remote.lakebase.LakebaseTarget.fresh_database_url",
+        lambda self: "remote",
+    )
+    monkeypatch.setattr(
+        "wikibricks.remote.lakebase.sync_to_archive",
+        lambda local, url, *, limit, drain, max_batches: {"status": "idle"},
+    )
+    monkeypatch.setattr(
+        "wikibricks.remote.lakebase.pull_curation_patches",
+        lambda local, url: {"received_runs": 0, "received_patches": 0},
+    )
+
+    arguments = ("sync", "lakebase", "--profile", "p", "--project", "m", "--apply-patches")
+    assert run_cli(database, *arguments) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert run_cli(database, *arguments) == 0
+    second = json.loads(capsys.readouterr().out)
+
+    assert store.read_page("topics/contoso")["title"] == "Contoso, updated remotely"
+    assert store.read_page("topics/contoso-merged") is None
+    assert [run["run_id"] for run in first["applied"]["runs"]] == [manifest["run_id"]]
+    assert first["applied"]["runs"][0]["counts"]["review_required"] == 1
+    # A run with a group waiting for review stays pending, so every pass reports it again.
+    assert second["applied"]["runs"] == [
+        {"run_id": manifest["run_id"], "counts": {"already_processed": 1, "review_required": 1}}
+    ]
+
+
 def _fake_list_sessions(response):
     calls = []
 

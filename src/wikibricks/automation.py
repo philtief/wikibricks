@@ -85,7 +85,6 @@ def run_remote_cycle(
     if not config.sync_profile or not config.sync_project:
         return {"status": "disabled"}
 
-    from wikibricks.curation import apply_run, resolve_conflict
     from wikibricks.remote.lakebase import (
         LakebaseTarget,
         pull_curation_patches,
@@ -116,10 +115,22 @@ def run_remote_cycle(
         else target.fresh_database_url()
     )
     pulled = pull_curation_patches(local, database_url)
+    return {
+        "status": "complete",
+        "archive": archive,
+        "pulled": pulled,
+        **apply_pending_runs(local, policy=config.sync_apply_policy),
+    }
+
+
+def apply_pending_runs(local: PostgresStore | SQLiteStore, *, policy: str) -> dict[str, Any]:
+    """Apply downloaded runs; a conflicting group keeps the local page."""
+    from wikibricks.curation import apply_run, resolve_conflict
+
     applications = []
     kept_local_runs: set[str] = set()
     for run_id in _pending_run_ids(local):
-        result = apply_run(local, run_id, policy=config.sync_apply_policy)
+        result = apply_run(local, run_id, policy=policy)
         applications.append(result)
         for group in result["groups"]:
             if group["status"] != "conflict":
@@ -132,12 +143,10 @@ def run_remote_cycle(
             )
             kept_local_runs.add(str(run_id))
     return {
-        "status": "complete",
-        "archive": archive,
-        "pulled": pulled,
         "applications": applications,
         "kept_local_runs": sorted(kept_local_runs),
     }
+
 
 
 def run_background_cycle(
