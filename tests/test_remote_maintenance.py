@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 
 from wikibricks.maintenance import initialize_database
+from wikibricks.models import SessionEvent, SessionRecord
 from wikibricks.postgres_store import PostgresStore
 from wikibricks.remote.lakebase import sync_to_archive
 
@@ -69,7 +70,9 @@ def test_remote_resources_are_readable_and_schema_validates_proposals():
     schema = load_schema()
     Draft202012Validator.check_schema(schema)
 
-    assert policy.max_events_per_replica == 200
+    assert policy.max_events_per_replica == 500
+    assert policy.max_batches_per_replica == 24
+    assert policy.max_event_chars == 2000
     assert policy.allowed_operations == (
         "create_page",
         "update_page",
@@ -219,6 +222,8 @@ def test_remote_maintenance_publishes_once_for_one_archive_watermark(
         "proposals": 1,
         "no_changes": 0,
         "dropped_groups": 0,
+        "batches": 1,
+        "pending_sequences": 0,
     }
     assert repeated == {
         "status": "idle",
@@ -227,6 +232,8 @@ def test_remote_maintenance_publishes_once_for_one_archive_watermark(
         "proposals": 0,
         "no_changes": 0,
         "dropped_groups": 0,
+        "batches": 0,
+        "pending_sequences": 0,
         "replica_ids": [],
     }
     assert calls == 1
@@ -352,6 +359,103 @@ def test_no_change_run_advances_the_remote_watermark(
     assert first["no_changes"] == 1
     assert repeated["status"] == "idle"
     assert calls == 1
+
+
+def _archive_session(local: PostgresStore, remote_url: str, events: list[SessionEvent]) -> int:
+    local.migrate()
+    local.clear_all()
+    remote = PostgresStore(remote_url)
+    remote.migrate()
+    remote.clear_all()
+    for summary in ("first", "second"):
+        local.write_page("topics/catch-up", "Catch up", {"summary": summary, "body": summary})
+    local.ingest_session(
+        SessionRecord(harness="omnigent", external_id="long-session", user_id="u", events=events)
+    )
+    sync_to_archive(local, remote_url)
+    with remote.connection() as conn:
+        return int(conn.execute("SELECT max(local_sequence) FROM archive_events").fetchone()[0])
+
+
+def test_remote_maintenance_reads_messages_in_batches_until_caught_up(
+    postgres_url: str,
+    maintenance_url: str,
+):
+    # Tool output is most of the archive; one bounded call a week never reached recent work.
+    from wikibricks_remote.maintenance import run_maintenance
+    from wikibricks_remote.resources import load_policy
+
+    events = []
+    for index in range(6):
+        events.append(SessionEvent(f"u{index}", "user", f"question {index} " + "x" * 3000))
+        events.append(SessionEvent(f"t{index}", "tool_result", "tool output " * 500))
+    events.append(SessionEvent("tail", "tool_call", "trailing tool call"))
+    archived = _archive_session(PostgresStore(postgres_url), maintenance_url, events)
+    remote = PostgresStore(maintenance_url)
+    seen: list[list[dict]] = []
+
+    def propose(_system, request, _schema):
+        seen.append(request["evidence"])
+        return {"proposals": []}
+
+    policy = replace(
+        load_policy(),
+        max_replicas_per_run=1,
+        max_input_chars=3000,
+        max_event_chars=1000,
+        max_batches_per_replica=2,
+    )
+    first = run_maintenance(remote, policy=policy, proposer=propose)
+    second = run_maintenance(remote, policy=policy, proposer=propose)
+
+    assert (first["batches"], second["batches"]) == (2, 2)
+    assert first["pending_sequences"] > 0
+    assert second["pending_sequences"] == 0
+    assert run_maintenance(remote, policy=policy, proposer=propose)["status"] == "idle"
+    items = [item for batch in seen for item in batch]
+    pages = [item["payload"] for item in items if item["entity_kind"] == "page_version"]
+    messages = [item["payload"] for item in items if item["entity_kind"] != "page_version"]
+    assert [page["content"]["summary"] for page in pages] == ["second"]
+    assert [message["kind"] for message in messages] == ["user"] * 6
+    assert all(len(message["content"]) == 1000 and message["content_truncated"] for message in messages)
+    assert {key for message in messages for key in message} <= {
+        "kind", "content", "content_truncated", "harness", "workspace",
+        "session_external_id", "source_created_at", "metadata",
+    }
+    with remote.connection() as conn:
+        watermark = conn.execute("SELECT max(input_watermark) FROM remote_maintenance_runs").fetchone()[0]
+    assert watermark == archived
+
+
+def test_a_window_without_messages_advances_without_a_model_call(
+    postgres_url: str,
+    maintenance_url: str,
+):
+    from wikibricks_remote.maintenance import run_maintenance
+    from wikibricks_remote.resources import load_policy
+
+    remote = PostgresStore(maintenance_url)
+    _archive_page(PostgresStore(postgres_url), maintenance_url, "tools-first")
+    policy = replace(load_policy(), max_replicas_per_run=1)
+    run_maintenance(remote, policy=policy, proposer=lambda *_: {"proposals": []})
+    local = PostgresStore(postgres_url)
+    local.ingest_session(
+        SessionRecord(
+            harness="omnigent",
+            external_id="tools-only",
+            user_id="u",
+            events=[SessionEvent("t", "tool_result", "output")],
+        )
+    )
+    sync_to_archive(local, maintenance_url)
+
+    def fail(*_):
+        raise AssertionError("no message to curate")
+
+    result = run_maintenance(remote, policy=policy, proposer=fail)
+
+    assert (result["batches"], result["no_changes"], result["pending_sequences"]) == (1, 1, 0)
+    assert run_maintenance(remote, policy=policy, proposer=fail)["status"] == "idle"
 
 
 def test_remote_maintenance_curates_from_hybrid_candidates(

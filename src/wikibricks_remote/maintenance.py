@@ -68,13 +68,24 @@ def _bounded_evidence(
     after: int,
     through: int,
     policy: RemotePolicy,
-) -> list[dict[str, Any]]:
+) -> tuple[list[dict[str, Any]], int]:
+    """Return the next batch of messages and newest page versions, and the watermark it reaches.
+
+    Tool calls, tool output, lifecycle events and receipts are most of the archive and carry
+    no curated knowledge. The batch skips them, and so does the watermark.
+    """
     rows = conn.execute(
         "SELECT event_id, local_sequence, entity_kind, entity_id, version_id, "
         "payload_hash, payload "
-        "FROM archive_events WHERE replica_id = %s AND local_sequence > %s "
-        "AND local_sequence <= %s ORDER BY local_sequence LIMIT %s",
-        (replica_id, after, through, policy.max_events_per_replica),
+        "FROM archive_events e WHERE replica_id = %s AND local_sequence > %s "
+        "AND local_sequence <= %s AND ("
+        "(entity_kind = 'session_event_version' AND payload->>'kind' = ANY(%s)) "
+        "OR (entity_kind = 'page_version' AND NOT EXISTS (SELECT 1 FROM archive_events newer "
+        "WHERE newer.replica_id = e.replica_id AND newer.entity_kind = 'page_version' "
+        "AND newer.payload->>'path' = e.payload->>'path' "
+        "AND newer.local_sequence > e.local_sequence AND newer.local_sequence <= %s))) "
+        "ORDER BY local_sequence LIMIT %s",
+        (replica_id, after, through, list(_MESSAGE_KINDS), through, policy.max_events_per_replica),
     ).fetchall()
     evidence: list[dict[str, Any]] = []
     used = 0
@@ -88,10 +99,10 @@ def _bounded_evidence(
             "payload_hash": row[5],
             "payload": dict(row[6]),
         }
-        encoded = _canonical_json(item)
+        encoded = _canonical_json(_model_evidence(item, policy.max_event_chars))
         if used + len(encoded) > policy.max_input_chars:
             if evidence:
-                break
+                return evidence, evidence[-1]["sequence"]
             item["payload"] = {
                 "truncated": True,
                 "excerpt": encoded[: max(256, policy.max_input_chars // 2)],
@@ -99,7 +110,9 @@ def _bounded_evidence(
             encoded = _canonical_json(item)
         evidence.append(item)
         used += len(encoded)
-    return evidence
+    if len(rows) == policy.max_events_per_replica:
+        return evidence, int(rows[-1][1])
+    return evidence, through
 
 
 def _current_pages(
@@ -168,15 +181,28 @@ def _record_run(
 # a page's base version, a search document) invites it to cite the wrong field.
 _UNCITABLE_EVIDENCE = frozenset({"entity_id", "version_id", "payload_hash"})
 _UNCITABLE_PAGE = frozenset({"base_version_id", "base_content_hash"})
+_MESSAGE_KINDS = ("user", "assistant")
+# A message as the model reads it: its text and where it came from.
+_MODEL_MESSAGE_FIELDS = frozenset(
+    {"kind", "content", "harness", "workspace", "session_external_id", "source_created_at", "metadata"}
+)
 
 
-def _model_view(request: dict[str, Any]) -> dict[str, Any]:
+def _model_evidence(item: dict[str, Any], max_event_chars: int) -> dict[str, Any]:
+    view = {key: value for key, value in item.items() if key not in _UNCITABLE_EVIDENCE}
+    if item["entity_kind"] == "session_event_version":
+        payload = {key: value for key, value in item["payload"].items() if key in _MODEL_MESSAGE_FIELDS}
+        content = str(payload.get("content") or "")
+        if len(content) > max_event_chars:
+            payload.update(content=content[:max_event_chars], content_truncated=True)
+        view["payload"] = payload
+    return view
+
+
+def _model_view(request: dict[str, Any], max_event_chars: int) -> dict[str, Any]:
     """Return the request as the model sees it: only IDs it may cite."""
     view = {key: value for key, value in request.items() if key != "replica_id"}
-    view["evidence"] = [
-        {key: value for key, value in item.items() if key not in _UNCITABLE_EVIDENCE}
-        for item in request["evidence"]
-    ]
+    view["evidence"] = [_model_evidence(item, max_event_chars) for item in request["evidence"]]
     view["current_pages"] = [
         {key: value for key, value in page.items() if key not in _UNCITABLE_PAGE}
         for page in request["current_pages"]
@@ -205,6 +231,8 @@ def run_maintenance(
         "proposals": 0,
         "no_changes": 0,
         "dropped_groups": 0,
+        "batches": 0,
+        "pending_sequences": 0,
         "replica_ids": [],
     }
     if candidate_provider is not None:
@@ -217,106 +245,114 @@ def run_maintenance(
             keyword_matches=0,
         )
     for replica_id, previous_watermark, available_watermark in candidates:
-        with store.connection() as conn:
-            evidence = _bounded_evidence(
-                conn,
-                replica_id=replica_id,
-                after=previous_watermark,
-                through=available_watermark,
+        for _ in range(policy.max_batches_per_replica):
+            with store.connection() as conn:
+                evidence, watermark = _bounded_evidence(
+                    conn,
+                    replica_id=replica_id,
+                    after=previous_watermark,
+                    through=available_watermark,
+                    policy=policy,
+                )
+                pages = _current_pages(
+                    conn,
+                    replica_id=replica_id,
+                    watermark=watermark,
+                    maximum=policy.max_current_pages,
+                )
+            similarity_candidates: list[dict[str, Any]] = []
+            search_report: dict[str, Any] = {"search_status": "disabled"}
+            if candidate_provider is not None:
+                selection = candidate_provider(replica_id, watermark, evidence)
+                if not isinstance(selection, CandidateSelection):
+                    raise TypeError("candidate provider must return CandidateSelection")
+                if selection.search_status not in {"available", "unavailable"}:
+                    raise ValueError("candidate provider returned an invalid search status")
+                search_report = {
+                    "search_status": selection.search_status,
+                    "projected_documents": selection.projected_documents,
+                    "embedded_documents": selection.embedded_documents,
+                    "search_queries": selection.query_count,
+                    "vector_matches": selection.vector_matches,
+                    "keyword_matches": selection.keyword_matches,
+                }
+                if selection.search_status == "available":
+                    pages = list(selection.pages)
+                    similarity_candidates = list(selection.similarity_candidates)
+                    result["search_status"] = "available"
+                for field in (
+                    "projected_documents",
+                    "embedded_documents",
+                    "search_queries",
+                    "vector_matches",
+                    "keyword_matches",
+                ):
+                    result[field] += int(search_report[field])
+            request = {
+                "replica_id": str(replica_id),
+                "previous_watermark": previous_watermark,
+                "input_watermark": watermark,
+                "current_pages": pages,
+                "evidence": evidence,
+                "similarity_candidates": similarity_candidates,
+            }
+            input_digest = hashlib.sha256(_canonical_json(request).encode()).hexdigest()
+            run_id = uuid5(
+                replica_id,
+                f"wikibricks:remote-maintenance:{watermark}:{input_digest}",
+            )
+            # A window of tool output alone still moves the watermark, without a model call.
+            raw_result = (
+                proposer(load_prompt(), _model_view(request, policy.max_event_chars), load_schema())
+                if evidence
+                else {"proposals": []}
+            )
+            evidence_ids = {item["evidence_id"] for item in evidence}
+            result["dropped_groups"] += drop_miscited_groups(
+                raw_result,
+                pages=pages,
+                evidence_ids=evidence_ids,
+            )
+            patches = build_patches(
+                raw_result,
+                run_id=run_id,
+                pages=pages,
+                evidence_ids=evidence_ids,
                 policy=policy,
             )
-            if not evidence:
-                continue
-            watermark = int(evidence[-1]["sequence"])
-            pages = _current_pages(
-                conn,
+            manifest_hash = None
+            status = "no_changes"
+            if patches:
+                manifest = build_manifest(
+                    replica_id=replica_id,
+                    input_watermark=watermark,
+                    patches=patches,
+                    run_id=run_id,
+                )
+                publish_manifest(store, manifest)
+                manifest_hash = manifest["manifest_hash"]
+                status = "published"
+                result["published_manifests"] += 1
+            else:
+                result["no_changes"] += 1
+            _record_run(
+                store,
+                run_id=run_id,
                 replica_id=replica_id,
                 watermark=watermark,
-                maximum=policy.max_current_pages,
+                input_digest=input_digest,
+                status=status,
+                proposal_count=len(patches),
+                manifest_hash=manifest_hash,
+                report=search_report,
             )
-        similarity_candidates: list[dict[str, Any]] = []
-        search_report: dict[str, Any] = {"search_status": "disabled"}
-        if candidate_provider is not None:
-            selection = candidate_provider(replica_id, watermark, evidence)
-            if not isinstance(selection, CandidateSelection):
-                raise TypeError("candidate provider must return CandidateSelection")
-            if selection.search_status not in {"available", "unavailable"}:
-                raise ValueError("candidate provider returned an invalid search status")
-            search_report = {
-                "search_status": selection.search_status,
-                "projected_documents": selection.projected_documents,
-                "embedded_documents": selection.embedded_documents,
-                "search_queries": selection.query_count,
-                "vector_matches": selection.vector_matches,
-                "keyword_matches": selection.keyword_matches,
-            }
-            if selection.search_status == "available":
-                pages = list(selection.pages)
-                similarity_candidates = list(selection.similarity_candidates)
-                result["search_status"] = "available"
-            for field in (
-                "projected_documents",
-                "embedded_documents",
-                "search_queries",
-                "vector_matches",
-                "keyword_matches",
-            ):
-                result[field] += int(search_report[field])
-        request = {
-            "replica_id": str(replica_id),
-            "previous_watermark": previous_watermark,
-            "input_watermark": watermark,
-            "current_pages": pages,
-            "evidence": evidence,
-            "similarity_candidates": similarity_candidates,
-        }
-        input_digest = hashlib.sha256(_canonical_json(request).encode()).hexdigest()
-        run_id = uuid5(
-            replica_id,
-            f"wikibricks:remote-maintenance:{watermark}:{input_digest}",
-        )
-        raw_result = proposer(load_prompt(), _model_view(request), load_schema())
-        evidence_ids = {item["evidence_id"] for item in evidence}
-        result["dropped_groups"] += drop_miscited_groups(
-            raw_result,
-            pages=pages,
-            evidence_ids=evidence_ids,
-        )
-        patches = build_patches(
-            raw_result,
-            run_id=run_id,
-            pages=pages,
-            evidence_ids=evidence_ids,
-            policy=policy,
-        )
-        manifest_hash = None
-        status = "no_changes"
-        if patches:
-            manifest = build_manifest(
-                replica_id=replica_id,
-                input_watermark=watermark,
-                patches=patches,
-                run_id=run_id,
-            )
-            publish_manifest(store, manifest)
-            manifest_hash = manifest["manifest_hash"]
-            status = "published"
-            result["published_manifests"] += 1
-        else:
-            result["no_changes"] += 1
-        _record_run(
-            store,
-            run_id=run_id,
-            replica_id=replica_id,
-            watermark=watermark,
-            input_digest=input_digest,
-            status=status,
-            proposal_count=len(patches),
-            manifest_hash=manifest_hash,
-            report=search_report,
-        )
+            result["batches"] += 1
+            result["proposals"] += len(patches)
+            previous_watermark = watermark
+            if watermark >= available_watermark:
+                break
+        result["pending_sequences"] += available_watermark - previous_watermark
         result["replicas"] += 1
-        result["proposals"] += len(patches)
         result["replica_ids"].append(str(replica_id))
     if not result["replicas"]:
         result["status"] = "idle"

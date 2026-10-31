@@ -281,7 +281,8 @@ sync:
 
 The local scheduler pushes immutable versions to Lakebase and pulls published
 curation manifests. The Databricks job reads the archive and writes data-only
-patches. It never connects to the laptop.
+patches. It never connects to the laptop. Each run reads the new messages and
+changed pages in batches of one model call each, and skips tool output.
 
 When [Lakebase Search](https://docs.databricks.com/aws/en/oltp/projects/lakebase-search)
 is enabled for the project, the weekly job performs these bounded steps:

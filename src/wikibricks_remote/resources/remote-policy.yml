@@ -2,8 +2,12 @@ version: 1
 
 selection:
   max_replicas_per_run: 10
-  max_events_per_replica: 200
-  max_input_chars: 120000
+  # Each batch is one model call; a run reads up to this many batches per replica.
+  max_batches_per_replica: 24
+  max_events_per_replica: 500
+  max_input_chars: 200000
+  # A longer message is cut to this many characters before the model reads it.
+  max_event_chars: 2000
   max_current_pages: 200
 
 publishing:
@@ -33,4 +37,4 @@ search:
 model:
   # Unset: Claude 5.5 models reject temperature.
   temperature: null
-  max_output_tokens: 8192
+  max_output_tokens: 16000
