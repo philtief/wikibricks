@@ -14,8 +14,10 @@ import yaml
 @dataclass(frozen=True, slots=True)
 class RemotePolicy:
     max_replicas_per_run: int
+    max_batches_per_replica: int
     max_events_per_replica: int
     max_input_chars: int
+    max_event_chars: int
     max_current_pages: int
     max_proposals_per_replica: int
     allowed_operations: tuple[str, ...]
@@ -57,8 +59,10 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         )
     policy = RemotePolicy(
         max_replicas_per_run=int(selection["max_replicas_per_run"]),
+        max_batches_per_replica=int(selection["max_batches_per_replica"]),
         max_events_per_replica=int(selection["max_events_per_replica"]),
         max_input_chars=int(selection["max_input_chars"]),
+        max_event_chars=int(selection["max_event_chars"]),
         max_current_pages=int(selection["max_current_pages"]),
         max_proposals_per_replica=int(publishing["max_proposals_per_replica"]),
         allowed_operations=tuple(publishing["allowed_operations"]),
@@ -75,8 +79,10 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
     )
     numeric_limits = (
         policy.max_replicas_per_run,
+        policy.max_batches_per_replica,
         policy.max_events_per_replica,
         policy.max_input_chars,
+        policy.max_event_chars,
         policy.max_current_pages,
         policy.max_proposals_per_replica,
         policy.max_search_chunk_chars,

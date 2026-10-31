@@ -226,11 +226,18 @@ Local hygiene runs without Databricks:
 - Retention removes a session only after every immutable event version has a
   committed archive acknowledgement.
 
-The weekly remote job uses a fixed archive watermark and bounded policy values
-from `src/wikibricks_remote/resources/remote-policy.yml`. It validates model
-output against the proposal contract and publishes one immutable manifest per
-replica. A run with no proposals records its watermark, so the next run does
-not analyze the same evidence again. Remote analysis never connects to the
+The weekly remote job reads the archive in batches, with bounded policy values
+from `src/wikibricks_remote/resources/remote-policy.yml`. A batch holds user
+and assistant messages, each cut to `max_event_chars`, and the newest version of
+each changed page. Tool calls, tool output, and lifecycle events make up most of
+the archive and are skipped. Each batch is one model call: the job validates the
+output against the proposal contract and publishes at most one immutable
+manifest. A run reads up to `max_batches_per_replica` batches per replica and
+reports the archive sequences it has not reached as `pending_sequences`. A batch
+with no proposals records its watermark, so the next run does not analyze the
+same evidence again. Batches in one run do not see each other's proposals. When
+two of them change the same page, the second conflicts with the first on apply
+and the safe policy keeps the local page. Remote analysis never connects to the
 local database.
 
 With Lakebase Search enabled, the job projects bounded page and conversation
