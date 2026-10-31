@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.15.0 - 2026-10-31
+
+- The weekly remote maintenance job catches up with the archive. It made one
+  model call over the oldest unread events, and tool output is about 90% of the
+  archive, so a run read 20 to 41 events and the watermark stood at 131 of
+  110,324 sequences. A batch now holds user and assistant messages, each cut to
+  `max_event_chars` (2,000), and the newest version of each changed page; the
+  watermark moves past tool calls, tool output and lifecycle events. A run reads
+  up to `max_batches_per_replica` (24) batches, one model call each, and reports
+  `batches` and `pending_sequences`. A window with no messages advances without
+  a model call.
+- Remote policy: `max_input_chars` 200,000 (was 120,000), `max_events_per_replica`
+  500 (was 200), `max_output_tokens` 16,000 (was 8,192). A custom `--policy` file
+  needs the new `selection.max_batches_per_replica` and `selection.max_event_chars`
+  keys.
+
 ## 0.14.8 - 2026-10-27
 
 - One miscited proposal no longer discards a curation answer. A group with a
