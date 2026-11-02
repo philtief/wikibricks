@@ -262,6 +262,11 @@ def build_parser(config: "WikiBricksConfig | None" = None) -> argparse.ArgumentP
     vacuum = commands.add_parser("vacuum", help="Vacuum and analyze local memory")
     vacuum.set_defaults(handler=_command_vacuum)
 
+    browse = commands.add_parser("browse", help="Read the wiki in a local, read-only web view")
+    browse.add_argument("--host", default="127.0.0.1")
+    browse.add_argument("--port", type=int, default=8765)
+    browse.set_defaults(handler=_command_browse)
+
     migrate = commands.add_parser(
         "migrate-postgres",
         help="Copy an existing PostgreSQL memory database into SQLite",
@@ -432,6 +437,15 @@ def _command_vacuum(args: argparse.Namespace) -> int:
 
     vacuum_database(_target(args))
     print("WikiBricks vacuum complete.")
+    return 0
+
+
+def _command_browse(args: argparse.Namespace) -> int:
+    if args.database_url:
+        raise SystemExit("wikibricks browse reads the local SQLite store, not --database-url")
+    from wikibricks.browse import serve
+
+    serve(args.database_path, host=args.host, port=args.port)
     return 0
 
 
