@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.15.1 - 2026-11-02
+
+- The weekly remote job waits for a curation answer. The first batched run, on
+  1 November, failed in both attempts: a batch's Sonnet call took 110 seconds, the
+  Databricks SDK's 60-second read timeout fired, and the SDK retried the whole
+  call until its 300-second limit. The workspace client now uses the new
+  `model.timeout_seconds` (600) as its HTTP timeout.
+- A run starts no batch after the new `selection.max_run_seconds` (2,700), so 24
+  batches of about two minutes each stay below the job's 3,600-second timeout.
+  The rest of the archive is reported as `pending_sequences`.
+- A custom `--policy` file needs both new keys.
+
 ## 0.15.0 - 2026-10-31
 
 - The weekly remote maintenance job catches up with the archive. It made one
