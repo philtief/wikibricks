@@ -8,6 +8,8 @@ selection:
   max_input_chars: 200000
   # A longer message is cut to this many characters before the model reads it.
   max_event_chars: 2000
+  # No batch starts after this many seconds, below the job's 3600 s timeout.
+  max_run_seconds: 2700
   max_current_pages: 200
 
 publishing:
@@ -38,3 +40,5 @@ model:
   # Unset: Claude 5.5 models reject temperature.
   temperature: null
   max_output_tokens: 16000
+  # A full batch takes about two minutes to answer; the SDK default read timeout is 60 s.
+  timeout_seconds: 600

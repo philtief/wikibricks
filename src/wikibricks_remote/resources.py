@@ -18,6 +18,7 @@ class RemotePolicy:
     max_events_per_replica: int
     max_input_chars: int
     max_event_chars: int
+    max_run_seconds: int
     max_current_pages: int
     max_proposals_per_replica: int
     allowed_operations: tuple[str, ...]
@@ -31,6 +32,7 @@ class RemotePolicy:
     pages_per_query: int
     temperature: float | None
     max_output_tokens: int
+    model_timeout_seconds: int
 
 
 def _resource_text(name: str) -> str:
@@ -63,6 +65,7 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         max_events_per_replica=int(selection["max_events_per_replica"]),
         max_input_chars=int(selection["max_input_chars"]),
         max_event_chars=int(selection["max_event_chars"]),
+        max_run_seconds=int(selection["max_run_seconds"]),
         max_current_pages=int(selection["max_current_pages"]),
         max_proposals_per_replica=int(publishing["max_proposals_per_replica"]),
         allowed_operations=tuple(publishing["allowed_operations"]),
@@ -76,6 +79,7 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         pages_per_query=int(search["pages_per_query"]),
         temperature=None if model["temperature"] is None else float(model["temperature"]),
         max_output_tokens=int(model["max_output_tokens"]),
+        model_timeout_seconds=int(model["timeout_seconds"]),
     )
     numeric_limits = (
         policy.max_replicas_per_run,
@@ -83,6 +87,7 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         policy.max_events_per_replica,
         policy.max_input_chars,
         policy.max_event_chars,
+        policy.max_run_seconds,
         policy.max_current_pages,
         policy.max_proposals_per_replica,
         policy.max_search_chunk_chars,
@@ -93,6 +98,7 @@ def load_policy(path: str | Path | None = None) -> RemotePolicy:
         policy.max_query_documents,
         policy.pages_per_query,
         policy.max_output_tokens,
+        policy.model_timeout_seconds,
     )
     if any(value < 1 for value in numeric_limits):
         raise ValueError("remote policy limits must be positive")

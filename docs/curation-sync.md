@@ -232,8 +232,10 @@ and assistant messages, each cut to `max_event_chars`, and the newest version of
 each changed page. Tool calls, tool output, and lifecycle events make up most of
 the archive and are skipped. Each batch is one model call: the job validates the
 output against the proposal contract and publishes at most one immutable
-manifest. A run reads up to `max_batches_per_replica` batches per replica and
-reports the archive sequences it has not reached as `pending_sequences`. A batch
+manifest. A run reads up to `max_batches_per_replica` batches per replica,
+starts no batch after `max_run_seconds`, and reports the archive sequences it
+has not reached as `pending_sequences`. A batch's model call takes about two
+minutes, so the client waits up to the model's `timeout_seconds` for an answer. A batch
 with no proposals records its watermark, so the next run does not analyze the
 same evidence again. Batches in one run do not see each other's proposals. When
 two of them change the same page, the second conflicts with the first on apply

@@ -73,6 +73,8 @@ def test_remote_resources_are_readable_and_schema_validates_proposals():
     assert policy.max_events_per_replica == 500
     assert policy.max_batches_per_replica == 24
     assert policy.max_event_chars == 2000
+    assert policy.max_run_seconds == 2700
+    assert policy.model_timeout_seconds == 600
     assert policy.allowed_operations == (
         "create_page",
         "update_page",
@@ -425,6 +427,39 @@ def test_remote_maintenance_reads_messages_in_batches_until_caught_up(
     with remote.connection() as conn:
         watermark = conn.execute("SELECT max(input_watermark) FROM remote_maintenance_runs").fetchone()[0]
     assert watermark == archived
+
+
+def test_remote_maintenance_starts_no_batch_after_its_run_deadline(
+    postgres_url: str,
+    maintenance_url: str,
+    monkeypatch: pytest.MonkeyPatch,
+):
+    # A batch's model call takes about two minutes; 24 of them overran the job timeout.
+    import wikibricks_remote.maintenance as maintenance
+    from wikibricks_remote.resources import load_policy
+
+    events = [SessionEvent(f"u{index}", "user", f"question {index} " + "x" * 3000) for index in range(6)]
+    _archive_session(PostgresStore(postgres_url), maintenance_url, events)
+    clock = [0.0]
+    monkeypatch.setattr(maintenance.time, "monotonic", lambda: clock[0])
+
+    def slow_propose(_system, _request, _schema):
+        clock[0] += 100
+        return {"proposals": []}
+
+    policy = replace(
+        load_policy(),
+        max_replicas_per_run=1,
+        max_input_chars=3000,
+        max_event_chars=1000,
+        max_run_seconds=150,
+    )
+    result = maintenance.run_maintenance(
+        PostgresStore(maintenance_url), policy=policy, proposer=slow_propose
+    )
+
+    assert result["batches"] == 2
+    assert result["pending_sequences"] > 0
 
 
 def test_a_window_without_messages_advances_without_a_model_call(
