@@ -339,6 +339,16 @@ def _search(store: _ReadOnlyStore, query: dict[str, list[str]]) -> str:
     hits = store.search(text, num_results=50) if text.strip() else []
     if not with_sessions:
         hits = [hit for hit in hits if hit["page_type"] != "session"]
+    # A page reads best by its summary card; a session has only its matching snippet.
+    paths = [hit["path"] for hit in hits if hit["page_type"] != "session"]
+    with store.connection() as conn:
+        rows = conn.execute(
+            "SELECT p.path, v.content FROM pages p "
+            "JOIN page_versions v ON v.version_id = p.current_version_id "
+            f"WHERE p.path IN ({','.join('?' for _ in paths)})",
+            paths,
+        ).fetchall()
+    summaries = {row[0]: str(json.loads(row[1]).get("summary") or "") for row in rows}
     toggle = (
         f'<a href="/search?q={quote(text)}">Pages only</a>'
         if with_sessions
@@ -348,7 +358,7 @@ def _search(store: _ReadOnlyStore, query: dict[str, list[str]]) -> str:
         _card(
             hit["path"],
             hit["title"],
-            hit.get("snippet") or "",
+            summaries.get(hit["path"]) or hit.get("snippet") or "",
             f'<span class="chip">{escape(hit["page_type"])}</span>{escape(hit["path"])}',
         )
         for hit in hits
@@ -391,11 +401,20 @@ def _session(page: dict[str, Any], *, with_tools: bool) -> str:
     )
     body = (
         f"<h1>{escape(page['title'])}</h1><p class=\"meta\"><span class=\"chip\">session</span>"
-        f"{_date(page['created_at'])} · {len(messages)} messages · {toggle}</p>"
+        f"{_date(page['created_at'])} · {len(messages)} message{'' if len(messages) == 1 else 's'}"
+        f"{' · ' + toggle if toggle else ''}</p>"
         + capped
         + "".join(items)
     )
     return _layout(page["title"], body)
+
+
+def _without_title(body: str, title: str) -> str:
+    """Drop a leading `# Title` line that repeats the page title shown above it."""
+    match = re.match(r"\s*# (.+)\n", body)
+    if match and match[1].strip().casefold() == title.strip().casefold():
+        return body[match.end() :]
+    return body
 
 
 def _page(store: _ReadOnlyStore, path: str, query: dict[str, list[str]]) -> tuple[int, str]:
@@ -434,7 +453,7 @@ def _page(store: _ReadOnlyStore, path: str, query: dict[str, list[str]]) -> tupl
         f'<p class="meta"><span class="chip">{escape(page["page_type"])}</span>{escape(page["path"])} · '
         f"v{page['version']} · updated {_date(page['updated_at'])} by {escape(page['created_by'])} {tags}</p>"
         f'<p class="summary">{escape(str(content.get("summary") or ""))}</p>'
-        f'<div class="body">{render_markdown(str(content.get("body") or ""))}</div>'
+        f'<div class="body">{render_markdown(_without_title(str(content.get("body") or ""), page["title"]))}</div>'
         '<div class="links">'
         + _section("Links to", len(outgoing), f"<ul>{outgoing_items}</ul>")
         + _section("Linked from", len(backlinks), f"<ul>{backlink_items}</ul>")

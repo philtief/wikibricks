@@ -273,6 +273,26 @@ wikibricks-curator digest \
 `--dry-run` reports the pages without writing. The command exits with an error
 only when every page in the run failed.
 
+## Browse the wiki
+
+`wikibricks browse` serves a read-only view of the local store at
+`http://127.0.0.1:8765/`:
+
+```bash
+wikibricks browse            # --port 9000 to change the port
+```
+
+- The home page lists the pages created or changed in the last seven days with
+  their summaries, the meetings imported, and the curation groups that wait for
+  review, with the commands to apply them.
+- Search shows a page by its summary. Sessions are hidden unless you include them.
+- A page shows its summary, the rendered body, the pages it links to and from,
+  and its version history.
+- A session shows its user and assistant messages; tool output opens on request.
+
+The browser opens the database read-only and never writes. It answers requests
+only for its own host name, and its pages run no scripts.
+
 ## Optional Lakebase curation
 
 Local memory does not need Lakebase. Configure it only when you want a remote

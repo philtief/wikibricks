@@ -40,7 +40,10 @@ def _store(tmp_path: Path) -> SQLiteStore:
     store.write_page(
         "topics/contoso",
         "Contoso",
-        {"summary": "Contoso chose Lakebase.", "body": "## Key points\n\n- Lakebase\n\n<script>x</script>"},
+        {
+            "summary": "Contoso chose Lakebase.",
+            "body": "# Contoso\n\n## Key points\n\n- Lakebase\n\n<script>x</script>",
+        },
         page_type="entity",
     )
     store.write_page("synthesis/plan", "Plan", {"summary": "The plan.", "body": "Builds on [[topics/contoso]]."})
@@ -80,8 +83,10 @@ def test_browse_shows_digest_search_pages_and_sessions_read_only(tmp_path: Path)
     assert "Contoso chose Lakebase." in home and 'href="/page/topics/contoso"' in home
     assert "Contoso weekly sync" in home
     assert 'href="/page/topics/contoso"' in search and session_path not in search
+    assert "Contoso chose Lakebase." in search and "Key points" not in search  # the card, not a snippet
     assert session_path in with_sessions
     assert "<h2>Key points</h2>" in page and "<script>" not in page
+    assert page.count("<h1>") == 1  # the body's own title line is not repeated
     assert 'href="/page/synthesis/plan"' in page  # backlink
     assert "Contoso migration status" in session and "raw tool output" not in session
     assert missing == 404
