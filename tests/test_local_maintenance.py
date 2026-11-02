@@ -235,6 +235,31 @@ def test_sqlite_curation_reports_pages_without_a_card_or_key_points(tmp_path: Pa
     ]
 
 
+def test_sqlite_search_repair_takes_the_write_lock_only_to_repair(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    # Rebuilding the session index held the write lock for minutes, and the daily import failed.
+    database_path = tmp_path / "memory.db"
+    store = _populate_store(database_path)
+    statements: list[str] = []
+    connection = SQLiteStore.connection
+
+    @contextmanager
+    def traced(self, *args, **kwargs):
+        with connection(self, *args, **kwargs) as conn:
+            conn.set_trace_callback(statements.append)
+            yield conn
+
+    monkeypatch.setattr(SQLiteStore, "connection", traced)
+    assert store.repair_search_indexes() == (0, 0)
+    assert "BEGIN IMMEDIATE" not in statements
+
+    with store.connection(write=True) as conn:
+        conn.execute("DELETE FROM session_search_fts")
+    curate_database(database_path)
+    assert [hit["page_type"] for hit in WikiClient(database_path).search("second")] == ["session"]
+
+
 def _database_url(base_url: str, database: str) -> str:
     params = conninfo_to_dict(base_url)
     params["dbname"] = database

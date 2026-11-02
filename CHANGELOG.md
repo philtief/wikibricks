@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.15.2 - 2026-11-02
+
+- `wikibricks curate` no longer holds the SQLite write lock to rebuild the
+  full-text indexes. Every run deleted and reinserted both indexes in one write
+  transaction, 36 seconds on a 1.9 GB store, and any concurrent import or MCP
+  write failed with `database is locked` after the 5-second busy timeout. On
+  2 November an MCP server's background curate overlapped the daily import that
+  way. An index is now rebuilt only when its row count differs from its chunks,
+  and the check runs on a read connection. On a copy of that store a full curate
+  took 9 seconds instead of about two minutes.
+
 ## 0.15.1 - 2026-11-02
 
 - The weekly remote job waits for a curation answer. The first batched run, on
