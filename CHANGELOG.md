@@ -1,5 +1,21 @@
 # Changelog
 
+## 0.16.0 - 2026-11-02
+
+- Pages have a reader-facing layout. A summary is at most 280 characters. A body
+  of 1,000 characters or more opens with `## Key points`, three to seven
+  one-fact bullets, below an optional `# Title` line. The layout is in the MCP
+  instructions, the `wiki_write_page` schema, the skill, and the local and
+  remote curation prompts. Living project pages put `## Key points` before
+  `## Current state`.
+- `wikibricks curate` reports pages that break the layout as `undigested_pages`.
+- `wikibricks-curator digest --limit N` gives up to N of those pages, most
+  recently updated first, a new summary and key points from one model call each.
+  It replaces only the summary and the key-points section, keeps the rest of the
+  body, and applies the update with the safe policy. A reply over a limit is
+  retried once with its measured lengths.
+- Run `wikibricks install` again to refresh the installed skill text.
+
 ## 0.15.2 - 2026-11-02
 
 - `wikibricks curate` no longer holds the SQLite write lock to rebuild the
