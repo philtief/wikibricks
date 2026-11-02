@@ -618,14 +618,41 @@ class SQLiteStore:
             ).fetchone()
         return bool(lease and lease["owner"] == owner and lease["expires_at"] == expires)
 
+    @staticmethod
+    def _search_repairs(conn: sqlite3.Connection) -> tuple[list, list, list[tuple[str, str]]]:
+        page_rows = conn.execute(
+            "SELECT v.version_id, v.content_text FROM pages p "
+            "JOIN page_versions v ON v.version_id = p.current_version_id "
+            "WHERE p.status = 'active' AND NOT EXISTS ("
+            "SELECT 1 FROM page_search_chunks c WHERE c.version_id = v.version_id)"
+        ).fetchall()
+        session_rows = conn.execute(
+            "SELECT v.version_id, v.content FROM session_events e "
+            "JOIN session_event_versions v ON v.version_id = e.current_version_id "
+            "WHERE e.active = 1 AND NOT EXISTS ("
+            "SELECT 1 FROM session_search_chunks c WHERE c.version_id = v.version_id)"
+        ).fetchall()
+        # New chunks get their full-text rows on insert, so an index only drifts from its
+        # chunks after outside damage.
+        drifted = [
+            (table, fts_table)
+            for table, fts_table in (
+                ("page_search_chunks", "page_search_fts"),
+                ("session_search_chunks", "session_search_fts"),
+            )
+            if conn.execute(f"SELECT count(*) FROM {table}").fetchone()[0]
+            != conn.execute(f"SELECT count(*) FROM {fts_table}").fetchone()[0]
+        ]
+        return page_rows, session_rows, drifted
+
     def repair_search_indexes(self) -> tuple[int, int]:
+        # Check on a read connection first: on a large store the scan takes seconds, and the
+        # write lock would make every concurrent import or MCP write time out.
+        with self.connection() as conn:
+            if not any(self._search_repairs(conn)):
+                return 0, 0
         with self.connection(write=True) as conn:
-            page_rows = conn.execute(
-                "SELECT v.version_id, v.content_text FROM pages p "
-                "JOIN page_versions v ON v.version_id = p.current_version_id "
-                "WHERE p.status = 'active' AND NOT EXISTS ("
-                "SELECT 1 FROM page_search_chunks c WHERE c.version_id = v.version_id)"
-            ).fetchall()
+            page_rows, session_rows, drifted = self._search_repairs(conn)
             for row in page_rows:
                 _insert_chunks(
                     conn,
@@ -634,12 +661,6 @@ class SQLiteStore:
                     version_id=row["version_id"],
                     text=row["content_text"],
                 )
-            session_rows = conn.execute(
-                "SELECT v.version_id, v.content FROM session_events e "
-                "JOIN session_event_versions v ON v.version_id = e.current_version_id "
-                "WHERE e.active = 1 AND NOT EXISTS ("
-                "SELECT 1 FROM session_search_chunks c WHERE c.version_id = v.version_id)"
-            ).fetchall()
             for row in session_rows:
                 _insert_chunks(
                     conn,
@@ -648,16 +669,12 @@ class SQLiteStore:
                     version_id=row["version_id"],
                     text=row["content"],
                 )
-            conn.execute("DELETE FROM page_search_fts")
-            conn.execute(
-                "INSERT INTO page_search_fts(version_id, chunk_text) "
-                "SELECT version_id, chunk_text FROM page_search_chunks ORDER BY chunk_id"
-            )
-            conn.execute("DELETE FROM session_search_fts")
-            conn.execute(
-                "INSERT INTO session_search_fts(version_id, chunk_text) "
-                "SELECT version_id, chunk_text FROM session_search_chunks ORDER BY chunk_id"
-            )
+            for table, fts_table in drifted:
+                conn.execute(f"DELETE FROM {fts_table}")
+                conn.execute(
+                    f"INSERT INTO {fts_table}(version_id, chunk_text) "
+                    f"SELECT version_id, chunk_text FROM {table} ORDER BY chunk_id"
+                )
         return len(page_rows), len(session_rows)
 
     def ingest_session(self, record: SessionRecord) -> IngestResult:
