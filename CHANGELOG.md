@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.17.1 - 2026-11-02
+
+- Every page gets a summary within the limit. `wikibricks curate` reports an
+  empty summary as `summary_missing`, and `wikibricks-curator digest` writes one.
+  When both model replies are still over a limit, `digest` shortens them: the
+  summary to its last full sentence within 280 characters, or to the last whole
+  word, and each key point to 200 characters. A page waits for the next run only
+  when the model returns no usable reply.
+
 ## 0.17.0 - 2026-11-02
 
 - `wikibricks browse` serves a read-only web view of the local store at
