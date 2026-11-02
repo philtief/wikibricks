@@ -48,29 +48,34 @@ and `src/wikibricks_remote/resources/curation.md` (the weekly remote job).
 
 ### Hygiene report
 
-`wikibricks curate` reports pages that break the contract: a summary over 280
-characters, or a body without `## Key points`. The report is deterministic and
-changes nothing, because the library never calls a model.
+`wikibricks curate` reports pages that break the contract as `undigested_pages`:
+a summary over 280 characters, or a body of 1,000 characters or more that does
+not open with `## Key points`. A leading `# Title` line may stay above the key
+points. The report is deterministic and changes nothing, because the library
+never calls a model.
 
 ### Backfill
 
-The curator rewrites the reported pages through the existing guarded
-`update_page` path: base version and content hash must match, and the old
-version stays in history. At 130 pages of roughly 3,200 characters each, that
-is a few curator calls. The run happens once, after the prompt change ships.
+`wikibricks-curator digest` rewrites the reported pages through the existing
+guarded `update_page` path: base version and content hash must match, and the
+old version stays in history. The model returns only a summary and three to
+seven key points. The code replaces the summary and the key-points section and
+leaves the rest of the body unchanged, so no detail can be lost. A reply over a
+limit is retried once with the measured lengths and a lower target.
 
-### Generated digests
+On 2 November 2026, 126 of 130 curated pages broke the contract. On a copy of
+the live store, GLM 5.3 Flash rewrote 20 of 20 pages with the retry: every body
+was intact and every page met the contract. The daily job runs the command for
+10 pages a night after a one-time backfill.
 
-Two deterministic pages, built by `wikibricks curate` the way `_meta/index` is:
+### Digest view
 
-- `_meta/digest` lists pages created or changed in the last seven days, with
-  their cards, grouped by top-level hub; the meetings imported; and the remote
-  curation groups that wait for review.
-- A hub is a `topics/` page with three or more outgoing links. Its digest
-  section lists each linked page with its card. The curator keeps hubs current;
-  the digest only arranges what the hubs already link.
-
-Neither page needs a model call, so `wikibricks curate` rebuilds both every day.
+The browse UI computes the digest when the home page loads: pages created or
+changed in the last seven days with their cards, the meetings imported, and the
+remote curation groups that wait for review. It is not stored as a page. A
+stored `_meta/digest` would change every day, and every version goes to the
+outbox and Lakebase, where the weekly job reads `_meta` pages as evidence.
+`_meta/index` already has 50 versions.
 
 ## Part 2: browse UI
 
@@ -107,7 +112,7 @@ dependencies stay `mcp` and `PyYAML`.
 
 | Screen | Content |
 |---|---|
-| Home | The `_meta/digest` view: changed this week as cards with a new or updated badge, waiting for review, hubs |
+| Home | The digest view: changed this week as cards with a new or updated badge, meetings imported, waiting for review |
 | Search | Full-text search over pages; filters for page type, tag, and path prefix; sessions hidden unless toggled |
 | Page | Card, key points, rendered body; type, tags, version, updated time, writer; sources linking to sessions; typed outgoing links and backlinks, one hop; version history with a diff |
 | Session | A recorded session's messages, with tool output collapsed |
@@ -126,8 +131,8 @@ write path that checks the base version and content hash, as #5 requires.
 
 ## Milestones
 
-1. Page contract in the three prompts, the hygiene report, and `_meta/digest`.
-2. Backfill run over the reported pages.
+1. Page contract in the prompts, the hygiene report, and `wikibricks-curator digest`.
+2. Backfill run over the reported pages, then 10 pages a night.
 3. `wikibricks browse`: home, search, and page views.
 4. Review screen and version diffs.
 5. Optional: the Databricks App from #6, reusing the views.

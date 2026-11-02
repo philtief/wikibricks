@@ -17,10 +17,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wikibricks-curator")
     commands = parser.add_subparsers(dest="command", required=True)
     propose = commands.add_parser("propose", help="Propose local curation updates")
-    propose.add_argument("--database-path", type=Path, default=config.database_path)
-    propose.add_argument("--base-url", required=True)
-    propose.add_argument("--profile", default=config.sync_profile)
-    propose.add_argument("--model", default="system.ai.glm-5-3-flash")
+    digest = commands.add_parser(
+        "digest", help="Give pages a short summary and key points, keeping the body"
+    )
+    for command in (propose, digest):
+        command.add_argument("--database-path", type=Path, default=config.database_path)
+        command.add_argument("--base-url", required=True)
+        command.add_argument("--profile", default=config.sync_profile)
+        command.add_argument("--model", default="system.ai.glm-5-3-flash")
+        command.add_argument("--dry-run", action="store_true")
+    digest.add_argument("--limit", type=int, default=10)
     propose.add_argument("--projects", type=int, default=3)
     propose.add_argument(
         "--since-days",
@@ -29,7 +35,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="how far back to look for sessions that still need routing",
     )
     propose.add_argument("--no-apply", action="store_true")
-    propose.add_argument("--dry-run", action="store_true")
     return parser
 
 
@@ -48,6 +53,14 @@ def main(argv: list[str] | None = None) -> int:
             token=token,
             model=args.model,
         )
+
+    if args.command == "digest":
+        from wikibricks_curator.digest import run_digest
+
+        result = run_digest(args.database_path, chat=chat, limit=args.limit, dry_run=args.dry_run)
+        print(json.dumps(result, default=str, indent=2))
+        # One page the model keeps getting wrong waits for the next run.
+        return 1 if result["pages"] and result["errors"] == len(result["pages"]) else 0
 
     result = run_curator(
         args.database_path,

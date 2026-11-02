@@ -888,6 +888,20 @@ def test_cli_propose_binds_gateway_and_reports_errors(
     output = json.loads(capsys.readouterr().out)
     assert output["errors"] == 1
 
+    store.write_page("topics/cli-digest", "CLI digest", {"summary": "d" * 400, "body": "Short."})
+    digest = ["digest", "--database-path", str(database_path), "--base-url", "https://gateway.example"]
+    monkeypatch.setattr(
+        cli,
+        "chat_json",
+        lambda *_args, **_kwargs: {"summary": "Card.", "key_points": ["one", "two", "three"]},
+    )
+    assert cli.main([*digest, "--limit", "1"]) == 0
+    assert json.loads(capsys.readouterr().out)["counts"] == {"applied": 1}
+    store.write_page("topics/cli-digest-error", "CLI digest error", {"summary": "e" * 400, "body": "Short."})
+    monkeypatch.setattr(cli, "chat_json", failing_chat_json)
+    # Every page failing points at the gateway, not at one stubborn page.
+    assert cli.main(digest) == 1
+
 
 def test_store_manifest_is_idempotent(tmp_path: Path):
     from uuid import uuid4
@@ -1073,3 +1087,54 @@ def test_one_retry_after_an_invalid_model_reply(tmp_path: Path):
 
     assert project["status"] == "applied", project["error"]
     assert project["attempts"] == 2
+
+
+def test_run_digest_adds_a_card_and_key_points_and_keeps_the_body(tmp_path: Path):
+    from wikibricks.curation.digest import with_key_points
+    from wikibricks_curator.digest import run_digest
+
+    store = _store(tmp_path)
+    body = " ".join(["The account chose Lakebase on 3 October 2026."] * 40)
+    store.write_page("topics/contoso", "Contoso", {"summary": "s" * 400, "body": body})
+    store.write_page(
+        "topics/fabrikam",
+        "Fabrikam",
+        {"summary": "f" * 400, "body": "## Key points\n\n- stale\n\n## Detail\n\n" + body},
+    )
+    titled = "# Northwind\n\nIntro paragraph.\n\n### Detail\n\n" + body
+    store.write_page("topics/northwind", "Northwind", {"summary": "n" * 400, "body": titled})
+    store.write_page("topics/rejected", "Rejected", {"summary": "r" * 400, "body": body})
+    store.write_page("topics/digested", "Digested", {"summary": "card", "body": "Short."})
+    requested: list[str] = []
+    feedback: list[list[str]] = []
+
+    def chat(_prompt: str, request: dict, _schema: dict) -> dict:
+        requested.append(request["path"])
+        feedback.append(request.get("problems", []))
+        if request["path"] == "topics/rejected":
+            return {"summary": "too long " * 40, "key_points": ["one", "two", "three"]}
+        return {"summary": "Chose Lakebase.", "key_points": ["Lakebase chosen", "3 October 2026", "Owner: data team"]}
+
+    result = run_digest(store.database_path, chat=chat, limit=10)
+
+    assert sorted(set(requested)) == [
+        "topics/contoso", "topics/fabrikam", "topics/northwind", "topics/rejected",
+    ]
+    assert result["errors"] == 1
+    assert result["counts"] == {"applied": 3}
+    points = "## Key points\n\n- Lakebase chosen\n- 3 October 2026\n- Owner: data team\n\n"
+    contoso = store.read_page("topics/contoso")
+    assert contoso["content"] == {"summary": "Chose Lakebase.", "body": points + body}
+    assert store.history("topics/contoso")[0]["created_by"] == "local-curator"
+    assert store.read_page("topics/fabrikam")["content"]["body"] == points + "## Detail\n\n" + body
+    assert store.read_page("topics/rejected")["content"]["summary"] == "r" * 400
+    # A title line stays on top, and a second rewrite replaces only the key points.
+    northwind = store.read_page("topics/northwind")["content"]["body"]
+    assert northwind == "# Northwind\n\n" + points + "Intro paragraph.\n\n### Detail\n\n" + body
+    assert with_key_points(northwind, ["Lakebase chosen", "3 October 2026", "Owner: data team"]) == northwind
+    requested.clear()
+    again = run_digest(store.database_path, chat=chat, limit=10)
+    assert requested == ["topics/rejected", "topics/rejected"]
+    assert feedback[-2:] == [[], ["summary has 359 characters; shorten it to about 200 (the limit is 280)"]]
+    assert again["errors"] == 1
+

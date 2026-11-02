@@ -213,6 +213,28 @@ def test_sqlite_curation_repairs_search_and_reports_hygiene(tmp_path: Path):
     assert WikiClient(database_path).search("repair marker")[0]["page_type"] == "session"
 
 
+def test_sqlite_curation_reports_pages_without_a_card_or_key_points(tmp_path: Path):
+    database_path = tmp_path / "memory.db"
+    store = SQLiteStore(database_path)
+    store.migrate()
+    long_body = "Detail. " * 150
+    store.write_page("topics/long-summary", "Long summary", {"summary": "x" * 281, "body": "short"})
+    store.write_page("topics/no-key-points", "No key points", {"summary": "card", "body": long_body})
+    store.write_page(
+        "topics/digested",
+        "Digested",
+        {"summary": "card", "body": "## Key points\n\n- one\n- two\n- three\n\n" + long_body},
+    )
+    store.write_page("topics/short", "Short", {"summary": "card", "body": "A short page."})
+
+    result = curate_database(database_path)
+
+    assert sorted(result["undigested_pages"], key=lambda page: page["path"]) == [
+        {"path": "topics/long-summary", "problems": ["summary_too_long"]},
+        {"path": "topics/no-key-points", "problems": ["no_key_points"]},
+    ]
+
+
 def _database_url(base_url: str, database: str) -> str:
     params = conninfo_to_dict(base_url)
     params["dbname"] = database
@@ -322,6 +344,7 @@ def test_local_curation_repairs_search_and_reports_wiki_hygiene(postgres_url: st
         {"paths": ["topics/duplicate-a", "topics/duplicate-b"], "count": 2}
     ]
     assert set(first["orphan_pages"]) == {"topics/duplicate-a", "topics/duplicate-b"}
+    assert first["undigested_pages"] == []
     assert second["repaired_page_search_versions"] == 0
     assert second["repaired_session_search_versions"] == 0
     assert len(store.history("_meta/index")) == 1
