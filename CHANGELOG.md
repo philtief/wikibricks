@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.17.0 - 2026-11-02
+
+- `wikibricks browse` serves a read-only web view of the local store at
+  `http://127.0.0.1:8765/`. The home page lists pages created or changed in the
+  last seven days by their summaries, the meetings imported, and the curation
+  groups waiting for review with their commands. Search shows pages by summary
+  and hides sessions unless included. A page shows its summary, rendered body,
+  links in both directions, and version history. A session shows its messages
+  with tool output collapsed. The view opens SQLite read-only, answers only its
+  own host name, runs no scripts, and adds no dependency.
+
 ## 0.16.0 - 2026-11-02
 
 - Pages have a reader-facing layout. A summary is at most 280 characters. A body
