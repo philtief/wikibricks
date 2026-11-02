@@ -270,6 +270,10 @@ wikibricks-curator digest \
   --profile PROFILE --limit 10
 ```
 
+A page without a summary gets one. If both model replies are still too long, the
+command shortens them itself: the summary to its last full sentence within 280
+characters, or to the last whole word, and each key point to 200 characters. A
+page is left for the next run only when the model returns no usable reply.
 `--dry-run` reports the pages without writing. The command exits with an error
 only when every page in the run failed.
 

@@ -226,12 +226,14 @@ def test_sqlite_curation_reports_pages_without_a_card_or_key_points(tmp_path: Pa
         {"summary": "card", "body": "## Key points\n\n- one\n- two\n- three\n\n" + long_body},
     )
     store.write_page("topics/short", "Short", {"summary": "card", "body": "A short page."})
+    store.write_page("topics/no-summary", "No summary", {"summary": " ", "body": "A short page."})
 
     result = curate_database(database_path)
 
     assert sorted(result["undigested_pages"], key=lambda page: page["path"]) == [
         {"path": "topics/long-summary", "problems": ["summary_too_long"]},
         {"path": "topics/no-key-points", "problems": ["no_key_points"]},
+        {"path": "topics/no-summary", "problems": ["summary_missing"]},
     ]
 
 
