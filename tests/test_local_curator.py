@@ -1107,12 +1107,15 @@ def test_run_digest_adds_a_card_and_key_points_and_keeps_the_body(tmp_path: Path
     store.write_page("topics/digested", "Digested", {"summary": "card", "body": "Short."})
     requested: list[str] = []
     feedback: list[list[str]] = []
+    kept = ("word " * 30).strip() + "."
+    overshoot = f"{kept} {'too long ' * 40}".strip()
 
     def chat(_prompt: str, request: dict, _schema: dict) -> dict:
         requested.append(request["path"])
         feedback.append(request.get("problems", []))
         if request["path"] == "topics/rejected":
-            return {"summary": "too long " * 40, "key_points": ["one", "two", "three"]}
+            # Every reply overshoots: the page still gets a summary within the limit.
+            return {"summary": overshoot, "key_points": ["one", "two", "three"]}
         return {"summary": "Chose Lakebase.", "key_points": ["Lakebase chosen", "3 October 2026", "Owner: data team"]}
 
     result = run_digest(store.database_path, chat=chat, limit=10)
@@ -1120,21 +1123,23 @@ def test_run_digest_adds_a_card_and_key_points_and_keeps_the_body(tmp_path: Path
     assert sorted(set(requested)) == [
         "topics/contoso", "topics/fabrikam", "topics/northwind", "topics/rejected",
     ]
-    assert result["errors"] == 1
-    assert result["counts"] == {"applied": 3}
+    assert result["errors"] == 0
+    assert result["counts"] == {"applied": 4}
+    assert {page["path"]: page["status"] for page in result["pages"]}["topics/rejected"] == "shortened"
     points = "## Key points\n\n- Lakebase chosen\n- 3 October 2026\n- Owner: data team\n\n"
     contoso = store.read_page("topics/contoso")
     assert contoso["content"] == {"summary": "Chose Lakebase.", "body": points + body}
     assert store.history("topics/contoso")[0]["created_by"] == "local-curator"
     assert store.read_page("topics/fabrikam")["content"]["body"] == points + "## Detail\n\n" + body
-    assert store.read_page("topics/rejected")["content"]["summary"] == "r" * 400
+    assert store.read_page("topics/rejected")["content"]["summary"] == kept
     # A title line stays on top, and a second rewrite replaces only the key points.
     northwind = store.read_page("topics/northwind")["content"]["body"]
     assert northwind == "# Northwind\n\n" + points + "Intro paragraph.\n\n### Detail\n\n" + body
     assert with_key_points(northwind, ["Lakebase chosen", "3 October 2026", "Owner: data team"]) == northwind
+    assert feedback[requested.index("topics/rejected") + 1] == [
+        f"summary has {len(overshoot)} characters; shorten it to about 200 (the limit is 280)"
+    ]
     requested.clear()
-    again = run_digest(store.database_path, chat=chat, limit=10)
-    assert requested == ["topics/rejected", "topics/rejected"]
-    assert feedback[-2:] == [[], ["summary has 359 characters; shorten it to about 200 (the limit is 280)"]]
-    assert again["errors"] == 1
+    assert run_digest(store.database_path, chat=chat, limit=10)["pages"] == []
+    assert requested == []
 

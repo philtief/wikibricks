@@ -57,6 +57,34 @@ def _problems(reply: Any) -> list[str]:
     return problems
 
 
+def _shorten(text: str, limit: int) -> str:
+    """Cut to the last full sentence within the limit, or else to the last whole word."""
+    text = text.strip()
+    if len(text) <= limit:
+        return text
+    sentence_end = text[: limit + 1].rfind(". ")
+    if sentence_end >= limit // 2:
+        return text[: sentence_end + 1]
+    return text[: limit - 1].rsplit(" ", 1)[0].rstrip(",;:") + "…"
+
+
+def _shortened(reply: Any) -> dict[str, Any] | None:
+    """Fit a reply that is right except for its lengths, so no page stays without a summary."""
+    if not isinstance(reply, dict):
+        return None
+    summary = reply.get("summary")
+    points = reply.get("key_points")
+    if not isinstance(summary, str) or not summary.strip() or not isinstance(points, list):
+        return None
+    points = [point for point in points if isinstance(point, str) and point.strip()][:7]
+    if len(points) < 3:
+        return None
+    return {
+        "summary": _shorten(summary, SUMMARY_MAX_CHARS),
+        "key_points": [_shorten(point, _KEY_POINT_MAX_CHARS) for point in points],
+    }
+
+
 def _proposal(page: dict[str, Any], reply: dict[str, Any]) -> dict[str, Any]:
     return {
         "group": page["path"],
@@ -110,7 +138,8 @@ def run_digest(
             "summary": str(page["content"].get("summary") or ""),
             "body": str(page["content"].get("body") or ""),
         }
-        reply, error, attempt_request = None, None, request
+        reply, error, attempt_request, candidate = None, None, request, None
+        status = "dry_run" if dry_run else "proposed"
         # The model cannot count characters; the retry names what to shorten.
         for _attempt in (1, 2):
             try:
@@ -124,11 +153,13 @@ def run_digest(
                 break
             error = "; ".join(problems)
             attempt_request = {**request, "rejected_reply": candidate, "problems": problems}
+        if reply is None and (reply := _shortened(candidate)) is not None:
+            status = "shortened"
         if reply is None:
             results.append({**item, "status": "error", "error": error})
             continue
         proposals.append(_proposal(page, reply))
-        results.append({**item, "status": "dry_run" if dry_run else "proposed"})
+        results.append({**item, "status": status})
     counts: dict[str, int] = {}
     run_id = None
     if proposals and not dry_run:

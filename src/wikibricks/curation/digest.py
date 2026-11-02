@@ -28,7 +28,9 @@ def _split_title(body: str) -> tuple[str, str]:
 
 def digest_problems(summary: str, body: str) -> list[str]:
     problems = []
-    if len(summary) > SUMMARY_MAX_CHARS:
+    if not summary.strip():
+        problems.append("summary_missing")
+    elif len(summary) > SUMMARY_MAX_CHARS:
         problems.append("summary_too_long")
     opening = _split_title(body)[1].lstrip()
     if len(body) >= KEY_POINTS_MIN_BODY_CHARS and not opening.startswith(KEY_POINTS_HEADING):
