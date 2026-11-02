@@ -152,3 +152,29 @@ The weekly schedule remained paused.
 | File | SHA-256 |
 |---|---|
 | `wikibricks-0.11.0-py3-none-any.whl` | `8f502ea225a00db4b8a5857ca038f2b2206a6b9441260e11c5c7d05b484627a6` |
+
+## Weekly run failure, 2026-11-01
+
+The first batched run (0.15.0, job `316681275072287`, run `713034947700904`)
+failed after 14.1 minutes in both attempts with `TimeoutError: Timed out after
+0:05:00` in `serving_endpoints.query`. Batch 1 completed: it advanced the
+watermark from 131 to 1,368 and published one proposal. Batch 2 (sequences
+1,368 to 2,393) was projected and embedded, and every model call hit the SDK's
+60-second read timeout. The SDK retried the call until its 300-second retry
+limit.
+
+A read-only local replay of batch 2 with a 900-second HTTP timeout published
+nothing:
+
+| Measure | Value |
+|---|---|
+| Messages and page versions | 246 |
+| Current pages | 17 |
+| Request characters | 351,901: evidence 204,793, pages 42,259, similarity 104,736 |
+| Model call | 110 s, `databricks-claude-sonnet-5-5` |
+| Output characters | 23,186 |
+| Proposals | 6: 5 `create_page`, 1 `update_page`; 0 dropped groups; 6 valid patches |
+
+0.15.1 builds the workspace client with `model.timeout_seconds` (600) as its
+HTTP timeout and starts no batch after `selection.max_run_seconds` (2,700), so
+24 batches of about two minutes each stay below the job's 3,600-second timeout.

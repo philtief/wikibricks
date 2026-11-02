@@ -147,10 +147,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     from databricks.sdk import WorkspaceClient
+    from databricks.sdk.config import Config
 
     args = build_parser().parse_args(argv)
     policy = load_policy(args.policy)
-    workspace = WorkspaceClient()
+    workspace = WorkspaceClient(config=Config(http_timeout_seconds=policy.model_timeout_seconds))
     store = PostgresStore(_database_url(workspace, args))
     search = LakebaseHybridSearch(
         store,

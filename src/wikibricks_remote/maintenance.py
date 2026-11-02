@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import time
 from collections.abc import Callable
 from typing import Any
 from uuid import UUID, uuid5
@@ -244,8 +245,11 @@ def run_maintenance(
             vector_matches=0,
             keyword_matches=0,
         )
+    deadline = time.monotonic() + policy.max_run_seconds
     for replica_id, previous_watermark, available_watermark in candidates:
         for _ in range(policy.max_batches_per_replica):
+            if time.monotonic() >= deadline:
+                break
             with store.connection() as conn:
                 evidence, watermark = _bounded_evidence(
                     conn,

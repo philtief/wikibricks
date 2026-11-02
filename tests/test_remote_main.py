@@ -91,8 +91,16 @@ def test_main_resolves_endpoints_and_rejects_a_non_object_model_response(
         status=SimpleNamespace(hosts=SimpleNamespace(host="lakebase.example"))
     )
 
+    client_configs: list[dict[str, Any]] = []
+
+    class FakeConfig:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
     class FakeWorkspace:
-        def __init__(self):
+        def __init__(self, *, config):
+            client_configs.append(config.kwargs)
+
             def model_response(**request):
                 queries.append(request)
                 if "messages" in request:
@@ -143,6 +151,7 @@ def test_main_resolves_endpoints_and_rejects_a_non_object_model_response(
             )
 
     monkeypatch.setattr("databricks.sdk.WorkspaceClient", FakeWorkspace)
+    monkeypatch.setattr("databricks.sdk.config.Config", FakeConfig)
     monkeypatch.setattr(remote_main, "PostgresStore", FakeStore)
     monkeypatch.setattr(remote_main, "LakebaseHybridSearch", FakeSearch)
 
@@ -183,6 +192,8 @@ def test_main_resolves_endpoints_and_rejects_a_non_object_model_response(
     selection = json.loads(capsys.readouterr().out)
 
     assert exit_code == 0
+    # A curation call runs for minutes; the SDK's 60 s read timeout retried it until it failed.
+    assert client_configs == [{"http_timeout_seconds": policy.model_timeout_seconds}]
     assert endpoint_calls == ["projects/memory/branches/staging/endpoints/east"]
     assert len(queries) == 2
     assert queries[0]["name"] == "curator"
