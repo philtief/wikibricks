@@ -47,8 +47,8 @@
       "properties": {
         "path": {"type": "string", "description": "Page path containing a slash."},
         "title": {"type": "string", "description": "Human-readable title."},
-        "summary": {"type": "string", "description": "Concise summary."},
-        "body": {"type": "string", "description": "Full Markdown body."},
+        "summary": {"type": "string", "description": "At most 280 characters: what the page covers and its current state."},
+        "body": {"type": "string", "description": "Full Markdown body. From 1,000 characters, open with ## Key points: three to seven one-fact bullets."},
         "page_type": {
           "type": "string",
           "description": "entity | concept | synthesis | comparison",

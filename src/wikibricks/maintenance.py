@@ -15,6 +15,7 @@ from typing import Any
 
 from wikibricks.client import WikiClient
 from wikibricks.curation.backlog import load_curation_backlog
+from wikibricks.curation.digest import undigested_pages
 from wikibricks.curation.mentions import new_mention_edges
 from wikibricks.storage.content import insert_search_chunks
 from wikibricks.storage.sqlite_store import SQLiteStore
@@ -206,6 +207,7 @@ def curate_database(
                 "OR l.target_page_id = p.page_id) ORDER BY p.path"
             ).fetchall()
             curation_backlog = load_curation_backlog(conn)
+            undigested = undigested_pages(conn)
         result = {
             "ok": True,
             "index": index_result,
@@ -217,6 +219,7 @@ def curate_database(
             ],
             "orphan_pages": [row[0] for row in orphan_rows],
             "curation_backlog": curation_backlog,
+            "undigested_pages": undigested,
             "pruned_sessions": 0,
             "linked_pages": linked_pages,
             "pending_outbox": store.outbox_count(),
@@ -272,6 +275,7 @@ def curate_database(
             "OR l.target_page_id = p.page_id) ORDER BY p.path"
         ).fetchall()
         curation_backlog = load_curation_backlog(conn)
+        undigested = undigested_pages(conn)
 
     pruned_sessions = 0
     if prune_archived_sessions_after_days is not None:
@@ -318,6 +322,7 @@ def curate_database(
         ],
         "orphan_pages": [row[0] for row in orphan_rows],
         "curation_backlog": curation_backlog,
+        "undigested_pages": undigested,
         "pruned_sessions": pruned_sessions,
         "linked_pages": linked_pages,
         "pending_outbox": store.outbox_count(),

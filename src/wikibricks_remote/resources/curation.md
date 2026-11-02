@@ -11,7 +11,9 @@ Follow these rules:
 2. Update an existing page when it already owns the topic. Create a page only
    when the knowledge has no clear home.
 3. Treat `summary` and `body` as complete replacements. Preserve useful facts
-   from the current page when proposing an update.
+   from the current page when proposing an update. Keep the `summary` to 280
+   characters: what the page covers and its current state. Open a body of 1,000
+   characters or more with `## Key points`: three to seven bullets, one fact each.
 4. Use `similarity_candidates` to find pages to compare. Vector, keyword, and
    fused ranks are retrieval metadata. Base each decision on the supplied page
    content and archived evidence.

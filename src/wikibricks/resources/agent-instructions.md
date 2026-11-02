@@ -45,8 +45,16 @@ maximum depth of four levels.
 | `synthesis/` | Answers filed from agent work |
 | `_meta/` | Generated index and maintenance pages |
 
-Each page has a `page_type`, a short `summary`, and a Markdown `body`. Keep
-claims specific. Preserve source paths or source IDs when available. Reuse
+Each page has a `page_type`, a `summary`, and a Markdown `body`. Readers see
+the summary and the first lines of the body first:
+
+- The `summary` is at most 280 characters, one or two sentences: what the page
+  covers and its current state, decision, or outcome.
+- A body of 1,000 characters or more opens with `## Key points`: three to seven
+  bullets, one fact each, such as a decision, number, date, owner, or next step.
+  The detail follows.
+
+Keep claims specific. Preserve source paths or source IDs when available. Reuse
 existing tags and use lowercase, hyphen-separated tag names.
 
 ## Cross-references

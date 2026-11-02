@@ -254,6 +254,25 @@ wikibricks sync plan RUN_ID
 wikibricks sync apply RUN_ID --policy all
 ```
 
+### Readable pages
+
+A page opens with a summary of at most 280 characters. A body of 1,000
+characters or more starts with `## Key points`: three to seven bullets, one fact
+each. `wikibricks curate` lists pages that break this layout as
+`undigested_pages`. `wikibricks-curator digest` asks the model for a new summary
+and key points for up to `--limit` of them, most recently updated first (default
+10). It replaces only the summary and the key-points section, leaves the rest of
+the body unchanged, and applies the update with the safe policy:
+
+```bash
+wikibricks-curator digest \
+  --base-url https://YOUR-DATABRICKS-WORKSPACE/serving-endpoints \
+  --profile PROFILE --limit 10
+```
+
+`--dry-run` reports the pages without writing. The command exits with an error
+only when every page in the run failed.
+
 ## Optional Lakebase curation
 
 Local memory does not need Lakebase. Configure it only when you want a remote

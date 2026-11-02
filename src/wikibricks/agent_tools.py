@@ -43,8 +43,9 @@ def make_agent_tools(database_path: str | None = None) -> dict:
         Args:
             path: Wiki page path. Must contain a slash, e.g. ``topics/my-topic``.
             title: Human-readable title.
-            summary: One-sentence summary.
-            body: Full page body (markdown).
+            summary: At most 280 characters: what the page covers and its state.
+            body: Full page body (markdown). From 1,000 characters, open with
+                ``## Key points``: three to seven one-fact bullets.
             page_type: One of ``entity``, ``concept``, ``synthesis``, ``comparison``.
             tags: Optional list of tag strings.
             created_by: Attribution recorded on the page.
