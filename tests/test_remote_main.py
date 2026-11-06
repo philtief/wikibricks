@@ -258,6 +258,16 @@ def test_json_content_rejects_empty_and_non_object_responses():
         _json_content(empty_content)
     with pytest.raises(RuntimeError, match="must be a JSON object"):
         _json_content(non_object)
+    cut_off = SimpleNamespace(
+        choices=[
+            SimpleNamespace(
+                message=SimpleNamespace(content='{"proposals": [{"body": "cut'),
+                finish_reason="length",
+            )
+        ]
+    )
+    with pytest.raises(RuntimeError, match="not valid JSON.*finish_reason=length"):
+        _json_content(cut_off)
 
     assert _json_content(fenced) == {"ok": True}
 

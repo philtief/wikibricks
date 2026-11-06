@@ -47,7 +47,14 @@ def _json_content(response: Any) -> dict[str, Any]:
     if text.startswith("```"):
         lines = text.splitlines()
         text = "\n".join(lines[1:-1])
-    value, _ = json.JSONDecoder().raw_decode(text)
+    try:
+        value, _ = json.JSONDecoder().raw_decode(text)
+    except ValueError as exc:
+        finish = getattr(response.choices[0], "finish_reason", None)
+        raise RuntimeError(
+            f"curation model output is not valid JSON ({exc}); "
+            f"{len(text)} characters, finish_reason={finish}"
+        ) from exc
     if not isinstance(value, dict):
         raise RuntimeError("curation model output must be a JSON object")
     return value
