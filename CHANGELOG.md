@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.17.2 - 2026-11-06
+
+- One bad model answer no longer fails the weekly remote job. The manual run on
+  5 November failed in both attempts: once on an `add_link` to a page the request
+  did not supply, once on a JSON reply cut off at character 16,839. The job now
+  drops any group the validator rejects, for any reason, and keeps the rest of
+  the answer; the batch report records each dropped group and its reason. A reply
+  that cannot be read is retried once, and its error names the reply length and
+  the model's `finish_reason`.
+
 ## 0.17.1 - 2026-11-02
 
 - Every page gets a summary within the limit. `wikibricks curate` reports an
