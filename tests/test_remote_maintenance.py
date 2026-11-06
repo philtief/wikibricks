@@ -302,10 +302,12 @@ def test_remote_model_sees_only_citable_ids(postgres_url: str, maintenance_url: 
     )
 
 
-def test_a_group_citing_unknown_evidence_is_dropped_and_counted(
+def test_one_bad_answer_or_group_does_not_fail_the_run(
     postgres_url: str,
     maintenance_url: str,
 ):
+    # Production failures: a cut-off JSON reply, an entity ID cited as evidence, and a
+    # link to a page the request never held. Each one used to fail the whole run.
     from wikibricks_remote.maintenance import run_maintenance
     from wikibricks_remote.resources import load_policy
 
@@ -313,13 +315,26 @@ def test_a_group_citing_unknown_evidence_is_dropped_and_counted(
     _archive_page(PostgresStore(postgres_url), maintenance_url, "mixed")
     with remote.connection() as conn:
         entity_id = conn.execute("SELECT entity_id FROM archive_events").fetchone()[0]
+    calls = 0
 
     def propose(_system, request, _schema):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            json.loads('{"proposals": [{"body": "cut off')
+        evidence_id = request["evidence"][0]["evidence_id"]
+        page = request["current_pages"][0]
         return {
             "proposals": [
-                _create_page("kept", "synthesis/kept", request["evidence"][0]["evidence_id"]),
-                # The production failure: an entity ID cited as if it were an archive event.
+                _create_page("kept", "synthesis/kept", evidence_id),
                 _create_page("miscited", "synthesis/miscited", f"archive-event:{entity_id}"),
+                _create_page("unknown-link", "synthesis/linked", evidence_id),
+                {
+                    **_create_page("unknown-link", page["path"], evidence_id),
+                    "operation": "add_link",
+                    "target_path": "synthesis/not-in-the-request",
+                    "link_type": "related",
+                },
             ]
         }
 
@@ -329,12 +344,15 @@ def test_a_group_citing_unknown_evidence_is_dropped_and_counted(
         proposer=propose,
     )
 
+    assert calls == 2
     assert result["published_manifests"] == 1
     assert result["proposals"] == 1
-    assert result["dropped_groups"] == 1
+    assert result["dropped_groups"] == 2
     with remote.connection() as conn:
         manifest = conn.execute("SELECT manifest FROM curation_runs").fetchone()[0]
+        report = conn.execute("SELECT report FROM remote_maintenance_runs").fetchone()[0]
     assert [patch["path"] for patch in manifest["patches"]] == ["synthesis/kept"]
+    assert sorted(report["dropped_groups"]) == ["miscited", "unknown-link"]
 
 
 def test_no_change_run_advances_the_remote_watermark(

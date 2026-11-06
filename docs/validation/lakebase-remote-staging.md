@@ -178,3 +178,20 @@ nothing:
 0.15.1 builds the workspace client with `model.timeout_seconds` (600) as its
 HTTP timeout and starts no batch after `selection.max_run_seconds` (2,700), so
 24 batches of about two minutes each stay below the job's 3,600-second timeout.
+
+## Manual run, 2026-11-05
+
+Run `245851343639797` (0.16.0) failed in both attempts. Each attempt published its
+finished batches first, so the run still advanced the watermark from 1,368 to
+11,242 of 125,324 sequences: 11 batches and 45 proposals. The next local sync
+applied 40 groups, left 4 for review, and kept 1 local page on a conflict.
+
+| Attempt | Batches | Failure |
+|---|---|---|
+| 1 | 1,368 to 6,098 | `ValueError: link paths do not exist`: an `add_link` to a page the request did not supply |
+| 2 | 6,098 to 11,242 | `JSONDecodeError: Unterminated string` at character 16,839 of the model reply |
+
+0.17.2 drops any group that `build_patches` rejects and records the reason in
+the batch report as `dropped_groups`. It retries one unreadable reply, and its
+error names the reply length and `finish_reason`.
+

@@ -13,7 +13,7 @@ from psycopg.types.json import Jsonb
 
 from wikibricks.curation import build_manifest, publish_manifest
 from wikibricks.postgres_store import PostgresStore
-from wikibricks_remote.proposals import _canonical_json, archive_page, build_patches, drop_miscited_groups
+from wikibricks_remote.proposals import _canonical_json, archive_page, build_patches, drop_invalid_groups
 from wikibricks_remote.resources import (
     RemotePolicy,
     load_prompt,
@@ -306,17 +306,25 @@ def run_maintenance(
                 f"wikibricks:remote-maintenance:{watermark}:{input_digest}",
             )
             # A window of tool output alone still moves the watermark, without a model call.
-            raw_result = (
-                proposer(load_prompt(), _model_view(request, policy.max_event_chars), load_schema())
-                if evidence
-                else {"proposals": []}
-            )
+            raw_result = {"proposals": []}
+            if evidence:
+                view = _model_view(request, policy.max_event_chars)
+                try:
+                    raw_result = proposer(load_prompt(), view, load_schema())
+                except (ValueError, RuntimeError):
+                    # The reply varies between calls; one retry absorbs a cut-off answer.
+                    raw_result = proposer(load_prompt(), view, load_schema())
             evidence_ids = {item["evidence_id"] for item in evidence}
-            result["dropped_groups"] += drop_miscited_groups(
+            dropped = drop_invalid_groups(
                 raw_result,
+                run_id=run_id,
                 pages=pages,
                 evidence_ids=evidence_ids,
+                policy=policy,
             )
+            result["dropped_groups"] += len(dropped)
+            if dropped:
+                search_report = {**search_report, "dropped_groups": dropped}
             patches = build_patches(
                 raw_result,
                 run_id=run_id,

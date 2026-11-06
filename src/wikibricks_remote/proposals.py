@@ -105,6 +105,45 @@ def drop_miscited_groups(
     return len(miscited)
 
 
+def drop_invalid_groups(
+    raw_result: dict[str, Any],
+    *,
+    run_id: UUID,
+    pages: list[dict[str, Any]],
+    evidence_ids: set[str],
+    policy: RemotePolicy,
+) -> dict[str, str]:
+    """Remove every group `build_patches` would reject; return each group's reason.
+
+    One bad proposal no longer fails the run. A group goes as a whole, so a duplicate
+    merge is never left half applied. A malformed answer as a whole still raises.
+    """
+    proposals = raw_result.get("proposals")
+    if set(raw_result) != {"proposals"} or not isinstance(proposals, list):
+        return {}
+    groups: dict[Any, list[Any]] = {}
+    for proposal in proposals:
+        groups.setdefault(proposal.get("group") if isinstance(proposal, dict) else None, []).append(proposal)
+    rejected: dict[str, str] = {}
+    for group, members in groups.items():
+        try:
+            build_patches(
+                {"proposals": members},
+                run_id=run_id,
+                pages=pages,
+                evidence_ids=evidence_ids,
+                policy=policy,
+            )
+        except ValueError as exc:
+            rejected[str(group)] = str(exc)[:300]
+    raw_result["proposals"] = [
+        proposal
+        for proposal in proposals
+        if str(proposal.get("group") if isinstance(proposal, dict) else None) not in rejected
+    ]
+    return rejected
+
+
 def build_patches(
     raw_result: dict[str, Any],
     *,
